@@ -60,5 +60,5 @@ app.*.map.json
 
 /lib/firebase_options.dart
 
-# Junk
-.DS_Store
+# Allows packages to be local path dependencies per developer
+pubspec_overrides.yaml

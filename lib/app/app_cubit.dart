@@ -63,7 +63,9 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
           : (AppConfigBase.networkRequiredOverride == 'true');
 
       if (!isNetworkRequiredOrOverriden) {
-        logd('Network connection not required during app start');
+        logd(
+            'Network connection not required during app start - setting networkStatus to connected');
+        emitSafe(state.copyWith(networkStatus: NetworkStatus.connected));
         await _finalizeAppStartup();
       } else {
         logd('Checking network connection as required during app start');
@@ -267,9 +269,15 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       networkErrorMessage: '',
     ));
 
-    if (networkRequired) {
+    final isNetworkRequiredOrOverriden = (AppConfigBase.networkRequiredOverride == 'null')
+        ? networkRequired
+        : (AppConfigBase.networkRequiredOverride == 'true');
+
+    if (isNetworkRequiredOrOverriden) {
       await _initializeNetworkChecking();
     } else {
+      logd('Network connection not required during retry - setting networkStatus to connected');
+      emitSafe(state.copyWith(networkStatus: NetworkStatus.connected));
       await _finalizeAppStartup();
     }
   }
