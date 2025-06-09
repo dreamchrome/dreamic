@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:dreamic/app/helpers/app_version_update_service.dart';
 import 'package:dreamic/utils/logger.dart';
+import 'package:dreamic/presentation/helpers/app_reloader/appreloader.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class AppUpdateBanner extends StatelessWidget {
@@ -65,8 +67,12 @@ class AppUpdateBanner extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     updateInfo.isRequired
-                        ? 'Please update to version ${updateInfo.targetVersion} to continue using the app.'
-                        : 'Version ${updateInfo.targetVersion} is now available.',
+                        ? kIsWeb
+                            ? 'Please refresh to version ${updateInfo.targetVersion} to continue using the app.'
+                            : 'Please update to version ${updateInfo.targetVersion} to continue using the app.'
+                        : kIsWeb
+                            ? 'Version ${updateInfo.targetVersion} is now available.'
+                            : 'Version ${updateInfo.targetVersion} is now available.',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: updateInfo.isRequired
                               ? Theme.of(context).colorScheme.onErrorContainer
@@ -78,7 +84,7 @@ class AppUpdateBanner extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             ElevatedButton(
-              onPressed: () => _launchAppStore(updateInfo.appStoreUrl),
+              onPressed: () => kIsWeb ? reloadApp() : _launchAppStore(updateInfo.appStoreUrl),
               style: ElevatedButton.styleFrom(
                 backgroundColor: updateInfo.isRequired
                     ? Theme.of(context).colorScheme.error
@@ -87,7 +93,7 @@ class AppUpdateBanner extends StatelessWidget {
                     ? Theme.of(context).colorScheme.onError
                     : Theme.of(context).colorScheme.onPrimary,
               ),
-              child: const Text('Update'),
+              child: Text(kIsWeb ? 'Refresh' : 'Update'),
             ),
             if (showCloseButton && !updateInfo.isRequired) ...[
               const SizedBox(width: 8),
@@ -221,7 +227,13 @@ class AppUpdateDialog extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            updateInfo.isRequired ? 'Update Required' : 'Update Available',
+            updateInfo.isRequired
+                ? kIsWeb
+                    ? 'Refresh Required'
+                    : 'Update Required'
+                : kIsWeb
+                    ? 'Refresh Available'
+                    : 'Update Available',
           ),
         ],
       ),
@@ -231,8 +243,12 @@ class AppUpdateDialog extends StatelessWidget {
         children: [
           Text(
             updateInfo.isRequired
-                ? 'An update is required to continue using the app. Please update to version ${updateInfo.targetVersion}.'
-                : 'A new version (${updateInfo.targetVersion}) is available. Would you like to update now?',
+                ? kIsWeb
+                    ? 'An update is required to continue using the app. Please refresh to version ${updateInfo.targetVersion}.'
+                    : 'An update is required to continue using the app. Please update to version ${updateInfo.targetVersion}.'
+                : kIsWeb
+                    ? 'A new version (${updateInfo.targetVersion}) is available. Would you like to refresh now?'
+                    : 'A new version (${updateInfo.targetVersion}) is available. Would you like to update now?',
           ),
           const SizedBox(height: 16),
           Text(
@@ -249,15 +265,18 @@ class AppUpdateDialog extends StatelessWidget {
           ),
         ElevatedButton(
           onPressed: () {
-            // Navigator.of(context).pop();
-            _launchAppStore(updateInfo.appStoreUrl);
+            if (kIsWeb) {
+              reloadApp();
+            } else {
+              _launchAppStore(updateInfo.appStoreUrl);
+            }
           },
           style: ElevatedButton.styleFrom(
             backgroundColor: updateInfo.isRequired
                 ? Theme.of(context).colorScheme.error
                 : Theme.of(context).colorScheme.primary,
           ),
-          child: const Text('Update Now'),
+          child: Text(kIsWeb ? 'Refresh Now' : 'Update Now'),
         ),
       ],
     );

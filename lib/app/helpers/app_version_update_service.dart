@@ -480,10 +480,16 @@ class AppVersionUpdateService {
 
     // Try to fetch latest remote config if possible
     try {
-      if (!kIsWeb &&
-          (!AppConfigBase.doUseBackendEmulator || AppConfigBase.doOverrideUseLiveRemoteConfig)) {
+      // Updated condition to allow web platform force fetch
+      if (!AppConfigBase.doUseBackendEmulator || AppConfigBase.doOverrideUseLiveRemoteConfig) {
         logd(
             '⚠️ Attempting to fetch latest Remote Config for force check (counts toward 5/hour limit)...');
+
+        // Web platform can fetch, but with additional logging
+        if (kIsWeb) {
+          logd('🌐 Force fetching on web platform...');
+        }
+
         await FirebaseRemoteConfig.instance.fetchAndActivate();
         logd('✅ Remote Config refreshed for force check');
       } else if (AppConfigBase.doUseBackendEmulator &&

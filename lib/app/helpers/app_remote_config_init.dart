@@ -28,6 +28,7 @@ import 'package:dreamic/data/repos/remote_config_repo_mockimpl.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
 import 'package:dreamic/data/repos/remote_config_repo_liveimple.dart';
+import 'package:dreamic/app/helpers/web_remote_config_refresh_service.dart';
 import 'package:get_it/get_it.dart';
 
 Future<void> appInitRemoteConfig({
@@ -42,6 +43,53 @@ Future<void> appInitRemoteConfig({
     await _initLiveRemoteConfig(
       additionalDefaultConfigs: additionalDefaultConfigs,
     );
+  }
+}
+
+/// Force a fetch on web platforms for initial startup
+/// Web platforms need this explicit fetch since real-time listeners don't work
+Future<void> webForceInitialFetch() async {
+  if (!kIsWeb) {
+    return;
+  }
+
+  logd('🌐 Web platform: Forcing initial Remote Config fetch...');
+
+  try {
+    // Set minimal fetch interval for immediate fetch
+    await FirebaseRemoteConfig.instance.setConfigSettings(
+      RemoteConfigSettings(
+        fetchTimeout: const Duration(seconds: 10),
+        minimumFetchInterval: Duration.zero,
+      ),
+    );
+
+    // Force fetch and activate
+    final result = await FirebaseRemoteConfig.instance.fetchAndActivate();
+    logd('🌐 Web initial fetch result: $result');
+
+    // Check value source
+    final testValue = FirebaseRemoteConfig.instance.getValue('minimumAppVersionRecommendedApple');
+    logd('🌐 Web fetch value source: ${testValue.source}');
+    logd('🌐 Web fetch value: "${testValue.asString()}"');
+
+    // Reset fetch interval
+    await FirebaseRemoteConfig.instance.setConfigSettings(
+      RemoteConfigSettings(
+        fetchTimeout: const Duration(seconds: 10),
+        minimumFetchInterval: kDebugMode ? const Duration(seconds: 10) : const Duration(hours: 1),
+      ),
+    );
+
+    if (testValue.source == ValueSource.valueRemote) {
+      logd('✅ Web platform successfully fetched Remote Config values from server');
+    } else {
+      logd(
+          '⚠️ Web platform using default values - Remote Config may not be set up in Firebase Console');
+    }
+  } catch (e) {
+    logd('⚠️ Web platform initial fetch failed: $e');
+    logd('ℹ️ Continuing with default values');
   }
 }
 
@@ -92,6 +140,14 @@ Future<void> _initLiveRemoteConfig({
   // If it fails, we'll just continue with defaults
   await _attemptFirebaseFetch();
 
+  // For web platforms, force an additional fetch since real-time listeners don't work
+  if (kIsWeb) {
+    await webForceInitialFetch();
+
+    // Initialize the web refresh service for periodic updates
+    await WebRemoteConfigRefreshService.instance.initialize();
+  }
+
   // Verify Remote Config is operational
   await _verifyRemoteConfigInitialization();
 }
@@ -117,6 +173,11 @@ Future<void> _attemptFirebaseFetch() async {
         FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedApple');
     logd('📱 Value BEFORE fetch - minimumAppVersionRecommendedApple: $beforeValue');
 
+    // Check platform-specific behavior
+    if (kIsWeb) {
+      logd('🌐 Running on web platform - attempting fetch (should work on web)');
+    }
+
     // Try to fetch from Firebase
     final fetchResult = await FirebaseRemoteConfig.instance.fetchAndActivate();
 
@@ -132,6 +193,11 @@ Future<void> _attemptFirebaseFetch() async {
 
     if (fetchResult) {
       logd('✅ Firebase Remote Config fetch successful - using server values where available');
+
+      // Log value sources for debugging
+      final valueSource =
+          FirebaseRemoteConfig.instance.getValue('minimumAppVersionRecommendedApple').source;
+      logd('🔍 Value source after fetch: $valueSource');
     } else {
       logd('⚠️ Firebase Remote Config fetch returned false (cached values or throttled)');
     }
@@ -264,6 +330,23 @@ Future<void> testRemoteConfigValues() async {
     logd('📱 Version Required Apple: "$requiredApple"');
     logd('📱 Version Recommended Apple: "$recommendedApple"');
 
+    // Test web-specific values
+    if (kIsWeb) {
+      final requiredWeb = FirebaseRemoteConfig.instance.getString('minimumAppVersionRequiredWeb');
+      final recommendedWeb =
+          FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedWeb');
+      logd('🌐 Version Required Web: "$requiredWeb"');
+      logd('🌐 Version Recommended Web: "$recommendedWeb"');
+
+      // Check value sources on web
+      final webRequiredSource =
+          FirebaseRemoteConfig.instance.getValue('minimumAppVersionRequiredWeb').source;
+      final webRecommendedSource =
+          FirebaseRemoteConfig.instance.getValue('minimumAppVersionRecommendedWeb').source;
+      logd('🔍 Web Required source: $webRequiredSource');
+      logd('🔍 Web Recommended source: $webRecommendedSource');
+    }
+
     // Test feature flags
     final calsyncGoogle = FirebaseRemoteConfig.instance.getBool('calsyncEnableGoogle');
     final communityTutorial = FirebaseRemoteConfig.instance.getBool('communityTutorialEnabled');
@@ -293,6 +376,12 @@ Future<void> testRemoteConfigValues() async {
     final valueSource =
         FirebaseRemoteConfig.instance.getValue('minimumAppVersionRecommendedApple').source;
     logd('🔍 Value source for minimumAppVersionRecommendedApple: $valueSource');
+
+    // Web-specific status
+    if (kIsWeb) {
+      final refreshServiceStatus = WebRemoteConfigRefreshService.instance.getStatus();
+      logd('🌐 Web refresh service status: $refreshServiceStatus');
+    }
 
     logd('✅ Remote Config test completed');
   } catch (e) {
