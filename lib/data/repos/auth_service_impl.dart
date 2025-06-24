@@ -1022,7 +1022,7 @@ class AuthServiceImpl implements AuthServiceInt {
 
       return right(result.data['exists'] as bool);
     } catch (e) {
-      Logr.lt(StackTrace.current, 'Error checking if email exists in auth: $e');
+      loge(StackTrace.current, 'Error checking if email exists in auth: $e');
       return left(AuthServiceSignInFailure.unexpected);
     }
   }
@@ -1057,7 +1057,7 @@ class AuthServiceImpl implements AuthServiceInt {
 
       return right((AccessCodeCheckReturn.valid, data['welcomeMessage']));
     } catch (e) {
-      Logr.lt(StackTrace.current, e.toString());
+      loge(StackTrace.current, e.toString());
       return const Left(RepositoryFailure.unexpected);
     }
   }

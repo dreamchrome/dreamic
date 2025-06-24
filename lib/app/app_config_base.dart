@@ -278,17 +278,25 @@ class AppConfigBase {
   //   return _firebaseFunctionTimeoutSecsLong!;
   // }
 
+  static bool? _lockOrientationToPortraitDefault;
+  static set lockOrientationToPortraitDefault(bool value) => _lockOrientationToPortraitDefault = value;
   static bool? _lockOrientationToPortrait;
   static bool get lockOrientationToPortrait {
     _lockOrientationToPortrait ??=
-        const String.fromEnvironment('LOCK_ORIENTATION_PORTRAIT', defaultValue: 'false') == 'true';
+        const String.fromEnvironment('LOCK_ORIENTATION_PORTRAIT', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('LOCK_ORIENTATION_PORTRAIT', defaultValue: 'false') == 'true'
+            : (_lockOrientationToPortraitDefault ?? false);
     return _lockOrientationToPortrait!;
   }
 
+  static bool? _lockOrientationToLandscapeDefault;
+  static set lockOrientationToLandscapeDefault(bool value) => _lockOrientationToLandscapeDefault = value;
   static bool? _lockOrientationToLandscape;
   static bool get lockOrientationToLandscape {
     _lockOrientationToLandscape ??=
-        const String.fromEnvironment('LOCK_ORIENTATION_LANDSCAPE', defaultValue: 'false') == 'true';
+        const String.fromEnvironment('LOCK_ORIENTATION_LANDSCAPE', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('LOCK_ORIENTATION_LANDSCAPE', defaultValue: 'false') == 'true'
+            : (_lockOrientationToLandscapeDefault ?? false);
     return _lockOrientationToLandscape!;
   }
 
@@ -316,17 +324,25 @@ class AppConfigBase {
     return _backendEmulatorRemoteAddress!;
   }
 
+  static int? _backendEmulatorStartingPortDefault;
+  static set backendEmulatorStartingPortDefault(int value) => _backendEmulatorStartingPortDefault = value;
   static int? _backendEmulatorStartingPort;
   static int get backendEmulatorStartingPort {
-    _backendEmulatorStartingPort ??= int.parse(
-        const String.fromEnvironment('BACKEND_EMULATOR_STARTING_PORT', defaultValue: '5001'));
+    _backendEmulatorStartingPort ??= 
+        const int.fromEnvironment('BACKEND_EMULATOR_STARTING_PORT', defaultValue: -1) != -1
+            ? const int.fromEnvironment('BACKEND_EMULATOR_STARTING_PORT', defaultValue: -1)
+            : (_backendEmulatorStartingPortDefault ?? 5001);
     return _backendEmulatorStartingPort!;
   }
 
+  static String? _backendRegionDefault;
+  static set backendRegionDefault(String value) => _backendRegionDefault = value;
   static String? _backendRegion;
   static String get backendRegion {
-    _backendRegion ??= const String.fromEnvironment('BACKEND_REGION',
-        defaultValue: kReleaseMode ? 'us-central1' : 'us-central1');
+    _backendRegion ??=
+        const String.fromEnvironment('BACKEND_REGION', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('BACKEND_REGION', defaultValue: '')
+            : (_backendRegionDefault ?? (kReleaseMode ? 'us-central1' : 'us-central1'));
     return _backendRegion!;
   }
 
@@ -390,18 +406,15 @@ class AppConfigBase {
     return _debugDeepStateMode!;
   }
 
+  static bool? _useFCMDefault;
+  static set useFCMDefault(bool value) => _useFCMDefault = value;
   static bool? _useFCM;
   static bool get useFCM {
-    _useFCM ??= const String.fromEnvironment('USE_FCM', defaultValue: 'true') == 'true';
+    _useFCM ??=
+        const String.fromEnvironment('USE_FCM', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('USE_FCM', defaultValue: 'true') == 'true'
+            : (_useFCMDefault ?? true);
     return _useFCM!;
-  }
-
-  static bool? _outputDebugLogging;
-  static bool get outputDebugLogging {
-    _outputDebugLogging ??= const String.fromEnvironment('OUTPUT_DEBUG_LOGGING',
-            defaultValue: kDebugMode ? 'true' : 'false') ==
-        'true';
-    return _outputDebugLogging!;
   }
 
   static String? _networkRequiredOverride;
@@ -418,10 +431,14 @@ class AppConfigBase {
     return _signoutOnReload!;
   }
 
+  static bool? _useCookieFederatedAuthDefault;
+  static set useCookieFederatedAuthDefault(bool value) => _useCookieFederatedAuthDefault = value;
   static bool? _useCookieFederatedAuth;
   static bool get useCookieFederatedAuth {
     _useCookieFederatedAuth ??=
-        const String.fromEnvironment('USE_COOKIE_FEDERATED_AUTH', defaultValue: 'false') == 'true';
+        const String.fromEnvironment('USE_COOKIE_FEDERATED_AUTH', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('USE_COOKIE_FEDERATED_AUTH', defaultValue: 'false') == 'true'
+            : (_useCookieFederatedAuthDefault ?? false);
     return _useCookieFederatedAuth!;
   }
 

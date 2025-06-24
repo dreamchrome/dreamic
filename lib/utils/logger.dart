@@ -10,9 +10,10 @@ enum LogLevel {
   error,
 }
 
+@Deprecated('Use Logger class instead')
 class Logr {
   static ld(String message) {
-    if (AppConfigBase.outputDebugLogging) {
+    if (AppConfigBase.logLevel.index <= LogLevel.debug.index) {
       debugPrint('Logr: $message');
     }
   }

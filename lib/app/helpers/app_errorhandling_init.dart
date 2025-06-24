@@ -12,12 +12,12 @@ Future<void> appInitErrorHandling() async {
   // Disable analytics and crashlytics for web
   if (AppConfigBase.doUseBackendEmulator || kIsWeb) {
     FlutterError.onError = (details) {
-      Logr.lt(details.stack ?? StackTrace.current, details.exceptionAsString());
+      loge(details.stack ?? StackTrace.current, details.exceptionAsString());
     };
 
     //TODO: implement this for release, maybe crashlytics
     PlatformDispatcher.instance.onError = (exception, stackTrace) {
-      Logr.lt(stackTrace, exception.toString());
+      loge(stackTrace, exception.toString());
       return true;
     };
   } else {

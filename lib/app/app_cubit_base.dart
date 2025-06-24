@@ -35,7 +35,7 @@
 
 //   //     emitSafe(state.copyWith(unreadNotificationsCount: count ?? 0));
 //   //   } catch (e) {
-//   //     Logr.lt(StackTrace.current, 'updateUnreadNotificationsCount error: $e');
+//   //     loge(StackTrace.current, 'updateUnreadNotificationsCount error: $e');
 //   //   }
 //   // }
 
