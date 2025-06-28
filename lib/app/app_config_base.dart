@@ -3,11 +3,12 @@
 import 'dart:io';
 
 import 'package:cloud_functions/cloud_functions.dart';
-// import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
 import 'package:dreamic/utils/get_it_utils.dart';
 import 'package:dreamic/utils/logger.dart';
+import 'package:dreamic/utils/device_utils.dart';
+import 'package:dreamic/utils/network_utils.dart';
 
 // import 'platform_helpers/platform_helpers_stub.dart' as platform_helper;
 
@@ -320,12 +321,100 @@ class AppConfigBase {
   }
 
   static String? _backendEmulatorRemoteAddress;
+  static bool _emulatorAddressInitialized = false;
+
   static String get backendEmulatorRemoteAddress {
-    _backendEmulatorRemoteAddress ??= const String.fromEnvironment(
-        'BACKEND_EMULATOR_REMOTE_ADDRESS',
-        defaultValue: (kIsWeb && kDebugMode) ? '127.0.0.1' : '10.0.2.2');
-    // defaultValue: '127.0.0.1');
+    if (_backendEmulatorRemoteAddress == null) {
+      const envValue = String.fromEnvironment('BACKEND_EMULATOR_REMOTE_ADDRESS');
+      if (envValue.isNotEmpty) {
+        _backendEmulatorRemoteAddress = envValue;
+      } else {
+        _backendEmulatorRemoteAddress = _getDefaultEmulatorAddress();
+      }
+    }
     return _backendEmulatorRemoteAddress!;
+  }
+
+  /// Initialize the emulator address with automatic discovery if needed
+  /// Call this before connecting to Firebase emulators
+  static Future<void> initializeEmulatorAddress() async {
+    if (_emulatorAddressInitialized) {
+      return; // Already initialized
+    }
+
+    // Check if environment variable is set first
+    const envValue = String.fromEnvironment('BACKEND_EMULATOR_REMOTE_ADDRESS');
+    if (envValue.isNotEmpty) {
+      _backendEmulatorRemoteAddress = envValue;
+      logd('Using environment-specified emulator address: $envValue');
+      _emulatorAddressInitialized = true;
+      return;
+    }
+
+    try {
+      // Check if we're running on an emulator/simulator
+      final isEmulator = await DeviceUtils.isRunningOnEmulator();
+      logd('Running on emulator/simulator: $isEmulator');
+
+      if (isEmulator) {
+        // Use platform-specific emulator addresses
+        _backendEmulatorRemoteAddress = _getPlatformDefaultEmulatorAddress();
+        logd('Using platform default emulator address: $_backendEmulatorRemoteAddress');
+      } else {
+        // Physical device - discover the host machine IP
+        logd('Physical device detected, discovering Firebase emulator host...');
+
+        final discoveredIp =
+            await NetworkUtils.discoverFirebaseEmulatorHost(port: backendEmulatorFunctionsPort);
+
+        if (discoveredIp != null) {
+          _backendEmulatorRemoteAddress = discoveredIp;
+          logd('Using discovered emulator host: $discoveredIp');
+        } else {
+          _backendEmulatorRemoteAddress = _getPlatformDefaultEmulatorAddress();
+          logw(
+              'Could not discover emulator host, using platform default: $_backendEmulatorRemoteAddress');
+        }
+      }
+    } catch (e) {
+      _backendEmulatorRemoteAddress = _getPlatformDefaultEmulatorAddress();
+      loge(
+          'Error during emulator address initialization: $e, using default: $_backendEmulatorRemoteAddress');
+    } finally {
+      _emulatorAddressInitialized = true;
+    }
+  }
+
+  static String _getDefaultEmulatorAddress() {
+    // If we have already initialized the address, return it
+    if (_backendEmulatorRemoteAddress != null) {
+      return _backendEmulatorRemoteAddress!;
+    }
+
+    // Otherwise return platform default
+    return _getPlatformDefaultEmulatorAddress();
+  }
+
+  /// Get the default emulator address based on platform
+  static String _getPlatformDefaultEmulatorAddress() {
+    // Web apps always use localhost
+    if (kIsWeb) {
+      return '127.0.0.1';
+    }
+
+    // For mobile platforms, use appropriate emulator/simulator defaults
+    if (!kIsWeb) {
+      if (Platform.isIOS) {
+        // iOS Simulator uses localhost
+        return '127.0.0.1';
+      } else if (Platform.isAndroid) {
+        // Android Emulator uses special IP for host machine
+        return '10.0.2.2';
+      }
+    }
+
+    // Default fallback
+    return '127.0.0.1';
   }
 
   static int? _backendEmulatorStartingPortDefault;
@@ -592,21 +681,5 @@ class AppConfigBase {
   // Determined at run time
   //
 
-  static bool? _isSimulatorDevice;
-  static bool get isSimulatorDevice {
-    // return _isSimulatorDevice!;
-    return false;
-  }
-
-  static Future<bool> _isRunningOnIOSSimulator() async {
-    if (kIsWeb) {
-      return false;
-    }
-    // if (Platform.isIOS) {
-    //   final deviceInfoPlugin = DeviceInfoPlugin();
-    //   final iosInfo = await deviceInfoPlugin.iosInfo;
-    //   return !iosInfo.isPhysicalDevice;
-    // }
-    return false;
-  }
+  // Note: Simulator/emulator detection is now handled in _getDefaultEmulatorAddress()
 }

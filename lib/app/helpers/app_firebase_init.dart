@@ -25,6 +25,8 @@ Future<FirebaseApp> appInitFirebase(
 
 Future<void> appInitConnectToFirebaseEmulatorIfNecessary(FirebaseApp fbApp) async {
   if (AppConfigBase.doUseBackendEmulator) {
+    // Initialize the emulator address with automatic discovery
+    await AppConfigBase.initializeEmulatorAddress();
     return await _connectToFirebaseEmulator(fbApp);
   }
   return;
