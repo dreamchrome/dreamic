@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_functions/cloud_functions.dart';
@@ -42,6 +43,7 @@ class AuthServiceImpl implements AuthServiceInt {
   bool _hasAuthStateChangeListenerRunAtLeastOnce = false;
   bool _hasInitializedFCM = false;
   String? _accessCodeCached;
+  bool _isCheckingLoginState = false;
 
   // @override
   // /// Stream of [UserPrivate] which will emit the current user when
@@ -102,28 +104,35 @@ class AuthServiceImpl implements AuthServiceInt {
     }
   }
 
+  // Update auth state change handler to complete the completer
   Future<void> handleAuthStateChanges(fb_auth.User? fbUser) async {
     logd('handleAuthStateChanges called');
 
-    // currentFbUser = fbUser;
+    final wasAuthenticated = fbUser != null;
 
     if (fbUser == null) {
       logd('fbUser is null during handleAuthStateChanges');
-      // _hasGottenUserPrivate = false;
-      // currentUserPrivate = UserPrivate();
-      // GetIt.I.get<InputRepoInt>().clearCache();
+      _updateCachedState(false);
       _hasAuthStateChangeListenerRunAtLeastOnce = true;
+
+      // Complete the auth state completer if it's waiting
+      if (_authStateCompleter != null && !_authStateCompleter!.isCompleted) {
+        _authStateCompleter!.complete(false);
+      }
+
       signOut(useFbAuthAlso: false);
     } else {
       logd('fbUser is NOT null during handleAuthStateChanges');
-      // await refreshCurrentUser();
-      //TODO: added this here but not sure it needs to do this again...
+      _updateCachedState(true);
       _hasAuthStateChangeListenerRunAtLeastOnce = true;
+
+      // Complete the auth state completer if it's waiting
+      if (_authStateCompleter != null && !_authStateCompleter!.isCompleted) {
+        _authStateCompleter!.complete(true);
+      }
+
       await onAuthenticated?.call(fbUser.uid);
     }
-
-    // Well, I moved this up because it needs to run at a very exact time
-    // _hasAuthStateChangeListenerRunAtLeastOnce = true;
   }
 
   Future<void> handleTokenChanges(fb_auth.User? fbUser) async {
@@ -177,97 +186,377 @@ class AuthServiceImpl implements AuthServiceInt {
     }
   }
 
+  // Add method to force refresh auth state
+  Future<bool> forceRefreshAuthState() async {
+    _lastTokenValidation = null;
+    _lastKnownAuthState = null;
+    // Don't reuse any existing completer for forced refresh
+    _loginCheckCompleter = null;
+    return await isLoggedInAsync();
+  }
+
+  // Update sign out to clear cached state
+  @override
+  Future<Either<AuthServiceSignOutFailure, Unit>> signOut({bool useFbAuthAlso = true}) async {
+    // Clear cached auth state immediately
+    _updateCachedState(false);
+
+    // Cancel any pending completers
+    if (_loginCheckCompleter != null && !_loginCheckCompleter!.isCompleted) {
+      _loginCheckCompleter!.completeError('User signed out');
+    }
+
+    // ...existing signOut code...
+    try {
+      if (useFbAuthAlso) {
+        await _fbAuth.signOut();
+      }
+
+      // Call the optional callback
+      await onLoggedOut?.call();
+
+      // Clear the cookie on the server if using federated auth
+      if (AppConfigBase.useCookieFederatedAuth) {
+        final http.Client client = http.Client();
+
+        final response = await client
+            .get(Uri.parse(RepoHelpers.getFunctionUrl(_fbAuth.app, 'authfunctions-signout')));
+
+        if (response.statusCode == 204) {
+          logd('Cleared cookie successfully');
+        } else {
+          logd('Failed to clear cookie!!');
+          // Don't return error for cookie clear failure
+        }
+      }
+
+      // Clear the stored user info
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+
+      await prefs.remove(sharedPrefKeyFcmToken);
+      await prefs.remove(sharedPrefKeyTimezone);
+
+      _hasInitializedFCM = false;
+      _accessCodeCached = null;
+    } on fb_auth.FirebaseAuthException catch (e) {
+      loge(e);
+      return left(AuthServiceSignOutFailure.unexpected);
+    } catch (e) {
+      loge(e);
+      return left(AuthServiceSignOutFailure.unexpected);
+    }
+
+    return right(unit);
+  }
+
   // @override
   // bool isLoggedIn() {
   //   return _fbAuth.currentUser != null;
   // }
 
+  // Completer
+  Completer<bool>? _loginCheckCompleter;
+
+  // For caching and state management
+  DateTime? _lastTokenValidation;
+  bool? _lastKnownAuthState;
+  static const Duration _tokenValidationInterval = Duration(minutes: 5);
+  static const Duration _quickCheckInterval = Duration(seconds: 30);
+
   @override
   Future<bool> isLoggedInAsync() async {
-    await waitForCanCheckLoginState();
-
-    var isAuthed = _fbAuth.currentUser != null;
-    // logd('isLoggedInAsync isAuthed: $isAuthed');
-
-    // DevOnly login if provided, on here if in preview mode!!
-    //TODO: This is a hack, but it works for now
-    if (isAuthed == false &&
-        (AppConfigBase.devOnlyUid.isNotEmpty || AppConfigBase.devOnlyAutoGenerateNewUser == true)) {
-      // && AppConfigBase.editorPreviewMode) {
-      await signInWithDevOnly();
-      // await refreshCurrentUser();
-      isAuthed = true;
-    }
-
-    // See if we have a valid cookie to use for auth from a different subdomain
-    if (isAuthed == false &&
-        AppConfigBase.doUseBackendEmulator == false &&
-        AppConfigBase.useCookieFederatedAuth == true) {
-      // Create the client
-      final http.Client client = http.Client();
-      //TODO: temp disabled
-      // if (client is BrowserClient) {
-      //   client.withCredentials = true;
-      // }
-
-      // Make the request
-      final response = await client
-          .get(Uri.parse(RepoHelpers.getFunctionUrl(_fbAuth.app, 'authfunctions-checkstatus')));
-
-      // Check the response
-      if (response.statusCode == 200) {
-        logd('isLoggedInAsync: Cookie is valid, logging in...');
-        await _fbAuth.signInWithCustomToken(jsonDecode(response.body)['customToken']);
-        isAuthed = true;
-      } else {
-        loge('isLoggedInAsync: Cookie is NOT valid or not present');
+    // Check if another check is in progress
+    if (_loginCheckCompleter != null && !_loginCheckCompleter!.isCompleted) {
+      logd('isLoggedInAsync: Already checking login state, waiting for completion...');
+      try {
+        // Wait for the existing check to complete and return its result
+        return await _loginCheckCompleter!.future;
+      } catch (e) {
+        logd('isLoggedInAsync: Error waiting for existing check: $e');
+        // If the existing check failed, fall through to perform our own check
       }
     }
 
-    return isAuthed;
+    // Create a new completer for this check
+    _loginCheckCompleter = Completer<bool>();
+
+    try {
+      // Use cached state for very frequent calls (within 30 seconds)
+      if (_shouldUseQuickCache()) {
+        logd('isLoggedInAsync: Using quick cached auth state');
+        _loginCheckCompleter!.complete(_lastKnownAuthState!);
+        return _lastKnownAuthState!;
+      }
+
+      await waitForCanCheckLoginState();
+
+      // Quick check if no user
+      if (_fbAuth.currentUser == null) {
+        final result = await _handleUnauthenticatedState();
+        _updateCachedState(result);
+        _loginCheckCompleter!.complete(result);
+        return result;
+      }
+
+      // For less frequent calls, do a lightweight check
+      if (_shouldUseLightweightCheck()) {
+        logd('isLoggedInAsync: Performing lightweight token check');
+        bool isValid = await _performLightweightTokenCheck();
+        if (isValid) {
+          _updateCachedState(true);
+          _loginCheckCompleter!.complete(true);
+          return true;
+        }
+      }
+
+      // Full validation with network check
+      bool isTokenValid = await _performFullTokenValidation();
+
+      if (isTokenValid) {
+        _updateCachedState(true);
+        _loginCheckCompleter!.complete(true);
+        return true;
+      } else {
+        // Token is invalid, try alternative auth methods
+        final result = await _handleInvalidToken();
+        _updateCachedState(result);
+        _loginCheckCompleter!.complete(result);
+        return result;
+      }
+    } catch (e) {
+      logd('isLoggedInAsync: Unexpected error: $e');
+
+      // On error, trust Firebase's auth state
+      bool fbAuthState = _fbAuth.currentUser != null;
+      if (fbAuthState && _lastKnownAuthState == true) {
+        // If Firebase says we're logged in and we were logged in before, trust it
+        _loginCheckCompleter!.complete(true);
+        return true;
+      }
+
+      _loginCheckCompleter!.completeError(e);
+      return fbAuthState;
+    } finally {
+      // Clean up the completer after a short delay
+      Future.delayed(const Duration(milliseconds: 100), () {
+        _loginCheckCompleter = null;
+      });
+    }
   }
 
-  // @override
-  // bool canCheckLoginState() {
-  //   logd('canCheckLoginState() called...and it is: $_hasGottenUserPrivate');
-  //   return _hasGottenUserPrivate;
-  // }
+  bool _shouldUseQuickCache() {
+    if (_lastTokenValidation == null || _lastKnownAuthState != true) {
+      return false;
+    }
+
+    final timeSinceLastValidation = DateTime.now().difference(_lastTokenValidation!);
+    return timeSinceLastValidation < _quickCheckInterval;
+  }
+
+  bool _shouldUseLightweightCheck() {
+    if (_lastTokenValidation == null) {
+      return true;
+    }
+
+    final timeSinceLastValidation = DateTime.now().difference(_lastTokenValidation!);
+    return timeSinceLastValidation < _tokenValidationInterval;
+  }
+
+  void _updateCachedState(bool isAuthenticated) {
+    _lastKnownAuthState = isAuthenticated;
+    _lastTokenValidation = DateTime.now();
+  }
+
+  Future<bool> _performLightweightTokenCheck() async {
+    try {
+      // Get token without forcing refresh - uses cached token if valid
+      final token = await _fbAuth.currentUser!.getIdToken(false);
+      return token != null;
+    } catch (e) {
+      logd('_performLightweightTokenCheck failed: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _performFullTokenValidation() async {
+    try {
+      // Only force refresh if we haven't validated recently
+      final shouldForceRefresh = _lastTokenValidation == null ||
+          DateTime.now().difference(_lastTokenValidation!) > _tokenValidationInterval;
+
+      logd('_performFullTokenValidation: forceRefresh=$shouldForceRefresh');
+
+      // This will use Firebase's automatic token management
+      final token = await _fbAuth.currentUser!
+          .getIdToken(shouldForceRefresh)
+          .timeout(const Duration(seconds: 10));
+
+      if (token != null) {
+        logd('isLoggedInAsync: Token validated successfully');
+        return true;
+      }
+      return false;
+    } on TimeoutException {
+      logd('_performFullTokenValidation: Timeout - assuming valid if was valid before');
+      // On timeout, trust last known state
+      return _lastKnownAuthState ?? false;
+    } catch (e) {
+      logd('_performFullTokenValidation failed: $e');
+
+      // Check if it's a network error
+      if (_isNetworkError(e)) {
+        logd('Network error detected, trusting Firebase auth state');
+        // For network errors, trust Firebase's local auth state
+        return _fbAuth.currentUser != null;
+      }
+
+      return false;
+    }
+  }
+
+  bool _isNetworkError(dynamic error) {
+    final errorString = error.toString().toLowerCase();
+    return errorString.contains('network') ||
+        errorString.contains('timeout') ||
+        errorString.contains('connection') ||
+        errorString.contains('unavailable') ||
+        errorString.contains('fetch') ||
+        errorString.contains('xmlhttprequest');
+  }
+
+  Future<bool> _handleInvalidToken() async {
+    logd('isLoggedInAsync: Handling invalid token');
+
+    // Try cookie auth first
+    if (AppConfigBase.doUseBackendEmulator == false &&
+        AppConfigBase.useCookieFederatedAuth == true) {
+      try {
+        final cookieAuthResult = await _attemptCookieAuth();
+        if (cookieAuthResult) {
+          return true;
+        }
+      } catch (e) {
+        logd('Cookie auth failed: $e');
+      }
+    }
+
+    // Only sign out if we're certain the session is invalid
+    logd('isLoggedInAsync: Session confirmed invalid, signing out');
+    await signOut(useFbAuthAlso: true);
+    return false;
+  }
+
+  Future<bool> _handleUnauthenticatedState() async {
+    // Try DevOnly login if configured
+    if (AppConfigBase.devOnlyUid.isNotEmpty || AppConfigBase.devOnlyAutoGenerateNewUser == true) {
+      try {
+        await signInWithDevOnly();
+        return true;
+      } catch (e) {
+        logd('DevOnly sign in failed: $e');
+      }
+    }
+
+    // Try cookie auth
+    if (AppConfigBase.doUseBackendEmulator == false &&
+        AppConfigBase.useCookieFederatedAuth == true) {
+      try {
+        final cookieAuthResult = await _attemptCookieAuth();
+        if (cookieAuthResult) {
+          return true;
+        }
+      } catch (e) {
+        logd('Cookie auth failed: $e');
+      }
+    }
+
+    return false;
+  }
+
+  Future<bool> _attemptCookieAuth() async {
+    final http.Client client = http.Client();
+
+    try {
+      final response = await client
+          .get(Uri.parse(RepoHelpers.getFunctionUrl(_fbAuth.app, 'authfunctions-checkstatus')))
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        logd('_attemptCookieAuth: Cookie is valid, logging in...');
+        await _fbAuth.signInWithCustomToken(jsonDecode(response.body)['customToken']);
+        return true;
+      } else {
+        logd('_attemptCookieAuth: Cookie is NOT valid or not present');
+        return false; // Add this line
+      }
+    } catch (e) {
+      logd('_attemptCookieAuth: Cookie auth failed: $e');
+      return false; // Add this line
+    }
+  }
+
+  // Update waitForCanCheckLoginState to also use a Completer
+  Completer<bool>? _authStateCompleter;
 
   @override
   Future<bool> waitForCanCheckLoginState() async {
     logd('waitForCanCheckLoginState called');
 
-    const maxMilliseconds = 5000;
-    int currentMilliseconds = 0;
-
-    // while (_hasTriedToGetCurrentUserPrivate == false) {
-    while (_hasAuthStateChangeListenerRunAtLeastOnce == false &&
-        currentMilliseconds < maxMilliseconds) {
-      if (currentMilliseconds >= maxMilliseconds) {
-        debugPrint('waitForCanCheckLoginState timed out');
-
-        // signOut();
-        // return false;
-        final currentUser = _fbAuth.currentUser;
-
-        if (currentUser != null) {
-          // Reload the current user to force authStateChanges to trigger
-          await currentUser.reload();
-        } else {
-          // Sign out to force authStateChanges to trigger
-          //TODO: I guess we sign out here because we can't get the user???
-          signOut();
-          return false;
-        }
-      }
-      debugPrint('waitForCanCheckLoginState loop');
-      await Future.delayed(const Duration(milliseconds: 50));
-      currentMilliseconds += 50;
+    // If we already have auth state, return immediately
+    if (_hasAuthStateChangeListenerRunAtLeastOnce) {
+      return _fbAuth.currentUser != null;
     }
 
-    // logd('waitForCanCheckLoginState FINISHED');
+    // Check if we're already waiting
+    if (_authStateCompleter != null && !_authStateCompleter!.isCompleted) {
+      logd('waitForCanCheckLoginState: Already waiting, reusing existing completer');
+      return await _authStateCompleter!.future;
+    }
 
-    return _fbAuth.currentUser != null;
+    // Create a new completer
+    _authStateCompleter = Completer<bool>();
+
+    // Set up a timeout
+    Timer? timeoutTimer;
+    timeoutTimer = Timer(const Duration(seconds: 5), () async {
+      if (_authStateCompleter != null && !_authStateCompleter!.isCompleted) {
+        logw('waitForCanCheckLoginState timed out');
+
+        try {
+          final currentUser = _fbAuth.currentUser;
+
+          if (currentUser != null) {
+            // Reload the current user to force authStateChanges to trigger
+            await currentUser.reload();
+            _hasAuthStateChangeListenerRunAtLeastOnce = true;
+            if (!_authStateCompleter!.isCompleted) {
+              // Add this check
+              _authStateCompleter!.complete(true);
+            }
+          } else {
+            // Sign out to force authStateChanges to trigger
+            await signOut();
+            _hasAuthStateChangeListenerRunAtLeastOnce = true;
+            if (!_authStateCompleter!.isCompleted) {
+              // Add this check
+              _authStateCompleter!.complete(false);
+            }
+          }
+        } catch (e) {
+          logd('waitForCanCheckLoginState: Error during timeout handling: $e');
+          _hasAuthStateChangeListenerRunAtLeastOnce = true;
+          if (!_authStateCompleter!.isCompleted) {
+            // Add this check
+            _authStateCompleter!.complete(false);
+          }
+        }
+      }
+    });
+
+    // Wait for auth state to be ready
+    final result = await _authStateCompleter!.future;
+    timeoutTimer.cancel();
+    return result;
   }
 
   // @override
@@ -1116,58 +1405,6 @@ class AuthServiceImpl implements AuthServiceInt {
       loge(e);
       return left(AuthServiceSignInFailure.unexpected);
     }
-  }
-
-  @override
-  Future<Either<AuthServiceSignOutFailure, Unit>> signOut({bool useFbAuthAlso = true}) async {
-    try {
-      if (useFbAuthAlso) {
-        await _fbAuth.signOut();
-      }
-
-      // Call the optional callback
-      await onLoggedOut?.call();
-
-      // Clear the cookie on the server if using federated auth
-      if (AppConfigBase.useCookieFederatedAuth) {
-        final http.Client client = http.Client();
-        //TODO: temp disabled
-        // if (client is BrowserClient) {
-        //   client.withCredentials = true;
-        // }
-
-        //TODO: not sure if this should be open to the public
-        final response = await client
-            .get(Uri.parse(RepoHelpers.getFunctionUrl(_fbAuth.app, 'authfunctions-signout')));
-
-        if (response.statusCode == 204) {
-          logd('Cleared cookie successfully');
-        } else {
-          logd('Faild to clear cookie!!');
-          return left(AuthServiceSignOutFailure.unexpected);
-        }
-      }
-
-      // Clear the stored user info
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-
-      await prefs.remove(sharedPrefKeyFcmToken);
-      await prefs.remove(sharedPrefKeyTimezone);
-
-      _hasInitializedFCM = false;
-      _accessCodeCached = null;
-      //TODO: do we do this here? Or will the listeners take care of it?
-      // currentFbUserCredentials = null;
-      // currentFbUser = null;
-    } on fb_auth.FirebaseAuthException catch (e) {
-      loge(e);
-      return left(AuthServiceSignOutFailure.unexpected);
-    } catch (e) {
-      loge(e);
-      return left(AuthServiceSignOutFailure.unexpected);
-    }
-
-    return right(unit);
   }
 
   //
