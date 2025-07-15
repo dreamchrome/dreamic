@@ -17,6 +17,9 @@ class AppConfigBase {
   /// Do this in main
   ///
   static init() async {
+    // Initialize iOS simulator detection for proper FCM configuration
+    await initializeIOSSimulatorDetection();
+
     //TOOD: make this work on the web
     // _isSimulatorDevice ??= (String.fromEnvironment('IS_SIMULATOR_DEVICE_OVERRIDE',
     //         defaultValue: (await _isRunningOnIOSSimulator()) ? 'true' : 'false')) ==
@@ -337,6 +340,8 @@ class AppConfigBase {
 
   /// Initialize the emulator address with automatic discovery if needed
   /// Call this before connecting to Firebase emulators
+  /// This is separate from the main init because it is expensive and should not block app startup outside
+  /// of using the Firebase emulator
   static Future<void> initializeEmulatorAddress() async {
     if (_emulatorAddressInitialized) {
       return; // Already initialized
@@ -502,11 +507,40 @@ class AppConfigBase {
   static bool? _useFCMDefault;
   static set useFCMDefault(bool value) => _useFCMDefault = value;
   static bool? _useFCM;
+  static bool? _isIOSSimulator;
+
+  /// Initialize iOS simulator detection state for FCM configuration
+  /// Call this during app initialization to ensure proper FCM defaults
+  static Future<void> initializeIOSSimulatorDetection() async {
+    if (_isIOSSimulator != null) {
+      return; // Already initialized
+    }
+
+    try {
+      if (!kIsWeb && Platform.isIOS) {
+        _isIOSSimulator = await DeviceUtils.isRunningOnEmulator();
+      } else {
+        _isIOSSimulator = false;
+      }
+    } catch (e) {
+      loge('Error detecting iOS simulator status: $e');
+      _isIOSSimulator = false;
+    }
+  }
+
   static bool get useFCM {
     _useFCM ??= const String.fromEnvironment('USE_FCM', defaultValue: '').isNotEmpty
         ? const String.fromEnvironment('USE_FCM', defaultValue: 'true') == 'true'
-        : (_useFCMDefault ?? true);
+        : (_useFCMDefault ?? _getDefaultFCMValue());
     return _useFCM!;
+  }
+
+  static bool _getDefaultFCMValue() {
+    // Default to false if running on iOS simulator, true otherwise
+    if (_isIOSSimulator == true) {
+      return false;
+    }
+    return true;
   }
 
   static String? _networkRequiredOverride;

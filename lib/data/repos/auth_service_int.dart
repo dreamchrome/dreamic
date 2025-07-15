@@ -9,6 +9,9 @@ abstract class AuthServiceInt {
 
   AuthServiceInt(Function(Future<void>) onAuthenticated, Function(Future<void>) onRefreshed);
 
+  /// Stream that emits true when user is logged in, false when logged out
+  Stream<bool> get isLoggedInStream;
+
   // Stream<AuthenticationStatus> get user async* {}
 
   // Future<Either<RepositoryFailure, UserPrivate>> getCurrentUserPrivate();

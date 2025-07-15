@@ -10,37 +10,6 @@ enum LogLevel {
   error,
 }
 
-@Deprecated('Use Logger class instead')
-class Logr {
-  static ld(String message) {
-    if (AppConfigBase.logLevel.index <= LogLevel.debug.index) {
-      debugPrint('Logr: $message');
-    }
-  }
-
-  static le(Object e) {
-    debugPrint('Logr EXCEPTION: ${e.toString()}');
-    _crashReport(e);
-  }
-
-  static lt(StackTrace? trace, Object e) {
-    logd('EXCEPTION: ${e.toString()}');
-    logd('TRACE: ');
-    logd((trace ?? StackTrace.current).toString());
-    _crashReport(e, trace: trace);
-  }
-
-  //
-  // Private methods
-  //
-
-  static _crashReport(Object e, {StackTrace? trace}) {
-    if (!AppConfigBase.doUseBackendEmulator && !kIsWeb) {
-      FirebaseCrashlytics.instance.recordError(e, trace ?? StackTrace.current);
-    }
-  }
-}
-
 class Logger {
   static Function(String message)? _onLogFunction;
 

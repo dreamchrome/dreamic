@@ -12,7 +12,7 @@ abstract class CubitBase<T extends CubitBaseState> extends Cubit<T> with SafeEmi
   //   if (!isClosed) {
   //     emitSafe(state);
   //   } else {
-  //     Logr.le(
+  //     loge(
   //       'Cubit was closed, could not emit state but avoided exception with SafeEmitMixin: $state',
   //     );
   //   }

@@ -33,6 +33,9 @@ class AuthServiceImpl implements AuthServiceInt {
   Future<void> Function(String? uid)? onAuthenticated;
   Future<void> Function()? onRefreshed;
   Future<void> Function()? onLoggedOut;
+
+  /// Whether to use Firebase FCM for push notifications
+  /// This is the general setting, which can be disabled by the app config setting, but not overridden to enable FCM by the app config.
   bool useFirebaseFCM;
   HttpsCallable mainCallable = AppConfigBase.firebaseFunctionCallable('mainCallable');
   HttpsCallable authCallable = AppConfigBase.firebaseFunctionCallable('authMainCallable');
@@ -43,7 +46,10 @@ class AuthServiceImpl implements AuthServiceInt {
   bool _hasAuthStateChangeListenerRunAtLeastOnce = false;
   bool _hasInitializedFCM = false;
   String? _accessCodeCached;
-  bool _isCheckingLoginState = false;
+  final StreamController<bool> _isLoggedInStreamController = StreamController<bool>.broadcast();
+
+  @override
+  Stream<bool> get isLoggedInStream => _isLoggedInStreamController.stream;
 
   // @override
   // /// Stream of [UserPrivate] which will emit the current user when
@@ -104,16 +110,24 @@ class AuthServiceImpl implements AuthServiceInt {
     }
   }
 
+  // Add dispose method to clean up the stream controller
+  void dispose() {
+    _isLoggedInStreamController.close();
+  }
+
   // Update auth state change handler to complete the completer
   Future<void> handleAuthStateChanges(fb_auth.User? fbUser) async {
     logd('handleAuthStateChanges called');
 
-    final wasAuthenticated = fbUser != null;
+    // final wasAuthenticated = fbUser != null;
 
     if (fbUser == null) {
       logd('fbUser is null during handleAuthStateChanges');
       _updateCachedState(false);
       _hasAuthStateChangeListenerRunAtLeastOnce = true;
+
+      // Emit to the stream
+      _isLoggedInStreamController.add(false);
 
       // Complete the auth state completer if it's waiting
       if (_authStateCompleter != null && !_authStateCompleter!.isCompleted) {
@@ -125,6 +139,9 @@ class AuthServiceImpl implements AuthServiceInt {
       logd('fbUser is NOT null during handleAuthStateChanges');
       _updateCachedState(true);
       _hasAuthStateChangeListenerRunAtLeastOnce = true;
+
+      // Emit to the stream
+      _isLoggedInStreamController.add(true);
 
       // Complete the auth state completer if it's waiting
       if (_authStateCompleter != null && !_authStateCompleter!.isCompleted) {
@@ -149,8 +166,12 @@ class AuthServiceImpl implements AuthServiceInt {
       // await refreshCurrentUser();
 
       if (useFirebaseFCM) {
-        // Initialize FCM
-        await initFCM();
+        // Initialize FCM if app config allows it
+        if (AppConfigBase.useFCM) {
+          await initFCM();
+        } else {
+          logd('FCM is disabled in AppConfigBase, not initializing FCM');
+        }
       }
     }
 
@@ -203,7 +224,7 @@ class AuthServiceImpl implements AuthServiceInt {
 
     // Cancel any pending completers
     if (_loginCheckCompleter != null && !_loginCheckCompleter!.isCompleted) {
-      _loginCheckCompleter!.completeError('User signed out');
+      _safeCompleteLoginCheckWithError('User signed out');
     }
 
     // ...existing signOut code...
@@ -257,6 +278,20 @@ class AuthServiceImpl implements AuthServiceInt {
   // Completer
   Completer<bool>? _loginCheckCompleter;
 
+  /// Safely completes the login check completer if it exists and hasn't been completed yet
+  void _safeCompleteLoginCheck(bool result) {
+    if (_loginCheckCompleter != null && !_loginCheckCompleter!.isCompleted) {
+      _loginCheckCompleter!.complete(result);
+    }
+  }
+
+  /// Safely completes the login check completer with an error if it exists and hasn't been completed yet
+  void _safeCompleteLoginCheckWithError(Object error) {
+    if (_loginCheckCompleter != null && !_loginCheckCompleter!.isCompleted) {
+      _loginCheckCompleter!.completeError(error);
+    }
+  }
+
   // For caching and state management
   DateTime? _lastTokenValidation;
   bool? _lastKnownAuthState;
@@ -284,7 +319,7 @@ class AuthServiceImpl implements AuthServiceInt {
       // Use cached state for very frequent calls (within 30 seconds)
       if (_shouldUseQuickCache()) {
         logd('isLoggedInAsync: Using quick cached auth state');
-        _loginCheckCompleter!.complete(_lastKnownAuthState!);
+        _safeCompleteLoginCheck(_lastKnownAuthState!);
         return _lastKnownAuthState!;
       }
 
@@ -294,7 +329,7 @@ class AuthServiceImpl implements AuthServiceInt {
       if (_fbAuth.currentUser == null) {
         final result = await _handleUnauthenticatedState();
         _updateCachedState(result);
-        _loginCheckCompleter!.complete(result);
+        _safeCompleteLoginCheck(result);
         return result;
       }
 
@@ -304,7 +339,7 @@ class AuthServiceImpl implements AuthServiceInt {
         bool isValid = await _performLightweightTokenCheck();
         if (isValid) {
           _updateCachedState(true);
-          _loginCheckCompleter!.complete(true);
+          _safeCompleteLoginCheck(true);
           return true;
         }
       }
@@ -314,13 +349,13 @@ class AuthServiceImpl implements AuthServiceInt {
 
       if (isTokenValid) {
         _updateCachedState(true);
-        _loginCheckCompleter!.complete(true);
+        _safeCompleteLoginCheck(true);
         return true;
       } else {
         // Token is invalid, try alternative auth methods
         final result = await _handleInvalidToken();
         _updateCachedState(result);
-        _loginCheckCompleter!.complete(result);
+        _safeCompleteLoginCheck(result);
         return result;
       }
     } catch (e) {
@@ -330,11 +365,11 @@ class AuthServiceImpl implements AuthServiceInt {
       bool fbAuthState = _fbAuth.currentUser != null;
       if (fbAuthState && _lastKnownAuthState == true) {
         // If Firebase says we're logged in and we were logged in before, trust it
-        _loginCheckCompleter!.complete(true);
+        _safeCompleteLoginCheck(true);
         return true;
       }
 
-      _loginCheckCompleter!.completeError(e);
+      _safeCompleteLoginCheckWithError(e);
       return fbAuthState;
     } finally {
       // Clean up the completer after a short delay
@@ -365,6 +400,11 @@ class AuthServiceImpl implements AuthServiceInt {
   void _updateCachedState(bool isAuthenticated) {
     _lastKnownAuthState = isAuthenticated;
     _lastTokenValidation = DateTime.now();
+
+    // Also emit to the stream
+    if (!_isLoggedInStreamController.isClosed) {
+      _isLoggedInStreamController.add(isAuthenticated);
+    }
   }
 
   Future<bool> _performLightweightTokenCheck() async {
@@ -723,7 +763,7 @@ class AuthServiceImpl implements AuthServiceInt {
         },
         verificationFailed: (FirebaseAuthException fe) {
           // Handle failed verification
-          Logr.le('verificationFaild: $fe');
+          loge(fe, 'verificationFaild');
 
           if (fe.code == 'invalid-phone-number') {
             verificationFailed(PhoneAuthError.invalidPhoneNumber);
@@ -749,7 +789,7 @@ class AuthServiceImpl implements AuthServiceInt {
         },
       );
     } on FirebaseException catch (fe) {
-      Logr.le(fe);
+      loge(fe);
       if (fe.code == 'invalid-phone-number') {
         return left(PhoneAuthError.invalidPhoneNumber);
       } else if (fe.code == 'user-disabled') {
@@ -887,7 +927,7 @@ class AuthServiceImpl implements AuthServiceInt {
           //TODO: should this be "firebase_auth/user-not-found" now?
           // if (f.message == 'user-not-found') {
           // Delay
-          Logr.le(f);
+          loge(f);
           // } else {
           // rethrow;
           // }
@@ -1263,7 +1303,7 @@ class AuthServiceImpl implements AuthServiceInt {
 
         return right(unit);
       } on fb_auth.FirebaseAuthException catch (e) {
-        Logr.le(e);
+        loge(e);
         switch (e.code) {
           case 'invalid-action-code':
             return left(AuthServiceEmailLinkFailure.invalidCode);
@@ -1468,7 +1508,7 @@ class AuthServiceImpl implements AuthServiceInt {
         }
       }
       if (apnsToken == null) {
-        Logr.le('APNS token was not set after waiting.');
+        loge('APNS token was not set after waiting.');
         // Optionally: return or throw here
       }
     }
@@ -1484,7 +1524,7 @@ class AuthServiceImpl implements AuthServiceInt {
         await _updateTokenOnServer(newToken, oldToken ?? "");
         await prefs.setString(sharedPrefKeyFcmToken, newToken);
       } catch (e) {
-        Logr.le('Error updating FCM token on server: $e');
+        loge('Error updating FCM token on server: $e');
       }
     }
 
@@ -1496,7 +1536,7 @@ class AuthServiceImpl implements AuthServiceInt {
           await _updateTokenOnServer(newToken, oldToken ?? "");
           await prefs.setString(sharedPrefKeyFcmToken, newToken);
         } catch (e) {
-          Logr.le('Error updating FCM token on server: $e');
+          loge('Error updating FCM token on server: $e');
         }
       });
     }
