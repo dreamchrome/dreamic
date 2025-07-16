@@ -35,20 +35,35 @@ class NetworkUtils {
       return '127.0.0.1';
     }
 
-    // Try common local network ranges
-    final ipRanges = [
-      '192.168.2.', // Common home networks
-      '172.20.10.', // iOS hotspot range
-      '192.168.1.', // Most common home networks
-      '192.168.0.', // Common router default
-      '10.0.0.', // Some corporate networks
-      '10.0.1.', // Alternative corporate setup
-      '172.16.0.', // Docker/VPN networks
-      '192.168.43.', // Android hotspot range
-    ];
+    // Get device IP addresses to determine which subnets to scan
+    final deviceIps = await getDeviceIpAddresses();
+    final subnetsToScan = <String>{};
 
-    // Test each IP range with priority IPs first
-    for (final range in ipRanges) {
+    // Extract subnets from device IPs
+    for (final deviceIp in deviceIps) {
+      final subnet = _getSubnetFromIp(deviceIp);
+      if (subnet.isNotEmpty) {
+        subnetsToScan.add(subnet);
+        logd('Will scan subnet $subnet (from device IP: $deviceIp)');
+      }
+    }
+
+    // If no device IPs found, fall back to common ranges
+    if (subnetsToScan.isEmpty) {
+      logd('No device IPs found, using common network ranges');
+      subnetsToScan.addAll([
+        '192.168.1.', // Common home networks
+        '172.20.10.', // iOS hotspot range
+        '192.168.0.', // Common router default
+        '10.0.0.', // Some corporate networks
+        '10.0.1.', // Alternative corporate setup
+        '172.16.0.', // Docker/VPN networks
+        '192.168.43.', // Android hotspot range
+      ]);
+    }
+
+    // Test each subnet with priority IPs first
+    for (final range in subnetsToScan) {
       // Test common host IPs first (router gateway, common static IPs)
       final priorityIPs = [1, 100, 101, 102, 2, 10, 20, 50];
 
@@ -62,7 +77,7 @@ class NetworkUtils {
       }
 
       // If priority IPs don't work, scan the full range (but limit it for performance)
-      for (int i = 3; i <= 254; i++) {
+      for (int i = 2; i <= 254; i++) {
         if (priorityIPs.contains(i)) continue; // Skip already tested IPs
 
         final address = '$range$i';
@@ -124,8 +139,9 @@ class NetworkUtils {
   /// Test if Firebase emulator is accessible at the given address
   static Future<bool> _testConnection(String address, int port) async {
     try {
+      logd('Testing connection to $address:$port...');
       final socket =
-          await Socket.connect(address, port, timeout: const Duration(milliseconds: 150));
+          await Socket.connect(address, port, timeout: const Duration(milliseconds: 350));
 
       socket.destroy();
       return true;
@@ -135,8 +151,10 @@ class NetworkUtils {
     }
   }
 
-  /// Get the device's current IP address (for debugging)
-  static Future<String?> getDeviceIpAddress() async {
+  /// Get all device IP addresses (for debugging and network discovery)
+  static Future<List<String>> getDeviceIpAddresses() async {
+    final addresses = <String>[];
+
     try {
       final interfaces = await NetworkInterface.list();
 
@@ -146,14 +164,29 @@ class NetworkUtils {
               !address.isLoopback &&
               !address.address.startsWith('169.254')) {
             // Exclude link-local
-            return address.address;
+            addresses.add(address.address);
           }
         }
       }
     } catch (e) {
-      logw('Error getting device IP: $e');
+      logw('Error getting device IPs: $e');
     }
 
-    return null;
+    return addresses;
+  }
+
+  /// Get the device's current IP address (for debugging) - returns first valid IP
+  static Future<String?> getDeviceIpAddress() async {
+    final addresses = await getDeviceIpAddresses();
+    return addresses.isNotEmpty ? addresses.first : null;
+  }
+
+  /// Extract subnet from IP address (e.g., "192.168.1.100" -> "192.168.1.")
+  static String _getSubnetFromIp(String ipAddress) {
+    final parts = ipAddress.split('.');
+    if (parts.length >= 3) {
+      return '${parts[0]}.${parts[1]}.${parts[2]}.';
+    }
+    return '';
   }
 }
