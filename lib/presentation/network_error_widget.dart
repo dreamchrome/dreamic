@@ -28,7 +28,7 @@ class NetworkErrorWidget extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               Text(
-                'No Internet Connection',
+                'No Connection',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -47,7 +47,7 @@ class NetworkErrorWidget extends StatelessWidget {
                     context.read<AppCubit>().retryNetworkConnection();
                   },
                   icon: const Icon(Icons.refresh),
-                  label: const Text('Try Again'),
+                  label: const Text('Retry'),
                   style: ElevatedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 32,

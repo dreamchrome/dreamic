@@ -178,7 +178,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
           appStatus: AppStatus.networkError,
           networkStatus: NetworkStatus.none,
           networkErrorMessage:
-              'Unable to connect to the internet. Please check your connection and try again.',
+              'Unable to connect to the server. Please check your connection and try again.',
           showNetworkRetry: true,
         ));
       }

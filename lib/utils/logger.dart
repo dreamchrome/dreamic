@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../app/app_config_base.dart';
 
 enum LogLevel {
+  debugVerbose,
   debug,
   info,
   warn,
@@ -22,7 +23,22 @@ class Logger {
       // final timestamp = DateTime.now().toIso8601String();
       // final prefix = level.name.toUpperCase();
       // debugPrint('[$timestamp] $prefix: $message');
-      debugPrint(message);
+      if (level == LogLevel.debugVerbose) {
+        debugPrint('DEBUGVERBOSE: $message');
+
+        //  else if (level == LogLevel.debug) {
+        //   debugPrint('DEBUG: $message');
+        // } else if (level == LogLevel.info) {
+        //   debugPrint('INFO: $message');
+        // } else if (level == LogLevel.warn) {
+        //   debugPrint('WARN: $message');
+        // } else if (level == LogLevel.error) {
+        //   debugPrint('ERROR: $message');
+        // }
+      } else {
+        // debugPrint('${level.name}: $message');
+        debugPrint(message);
+      }
       _onLogFunction?.call(message);
     }
   }
@@ -56,6 +72,7 @@ class Logger {
 }
 
 // Convenience methods
+void logv(String message) => Logger.log(LogLevel.debugVerbose, message);
 void logd(String message) => Logger.log(LogLevel.debug, message);
 void logi(String message) => Logger.log(LogLevel.info, message);
 void logw(String message) => Logger.log(LogLevel.warn, message);

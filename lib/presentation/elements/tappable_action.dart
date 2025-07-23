@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:dreamic/app/app_cubit.dart';
+import 'package:dreamic/utils/logger.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 class TappableActionGroupManager {
@@ -24,6 +25,7 @@ class TappableActionGroupManager {
 
   void setGroupDisabled(String? groupId, bool isDisabled) {
     if (groupId == null) return;
+    logv('TappableActionGroupManager: ${isDisabled ? 'Disabling' : 'Enabling'} group "$groupId"');
     _getNotifier(groupId).value = isDisabled;
   }
 
@@ -94,6 +96,8 @@ class _TappableActionState extends State<TappableAction> {
 
   Future<void> _handleTap() async {
     if (widget.onTap != null) {
+      logv(
+          'TappableAction: Executing tap${widget.groupId != null ? ' (group: ${widget.groupId})' : ''}');
       TappableActionGroupManager().setGroupDisabled(widget.groupId, true);
       setState(() {
         _isDisabledByMinDuration = true;
@@ -130,14 +134,40 @@ class _TappableActionState extends State<TappableAction> {
               ? _handleTap
               : null;
 
+          // Log network-related tap blocking
+          if (widget.onTap != null &&
+              widget.requireNetwork &&
+              state.networkStatus != NetworkStatus.connected) {
+            logd(
+                'TappableAction: Tap ignored due to network requirement (status: ${state.networkStatus})${widget.groupId != null ? ' (group: ${widget.groupId})' : ''}');
+          }
+
           // During delay, if disableVisuallyDuringFirstDelay is true, disable onTap visually;
           // otherwise, allow appearance of pressability but ignore tap.
           if (_isDelayed) {
-            effectiveOnTap = widget.disableVisuallyDuringFirstDelay ? null : () {};
+            if (widget.disableVisuallyDuringFirstDelay) {
+              logv(
+                  'TappableAction: Tap disabled visually during initial delay${widget.groupId != null ? ' (group: ${widget.groupId})' : ''}');
+              effectiveOnTap = null;
+            } else {
+              logd(
+                  'TappableAction: Tap ignored during initial delay (visual feedback allowed)${widget.groupId != null ? ' (group: ${widget.groupId})' : ''}');
+              effectiveOnTap = () {};
+            }
           }
 
           if (_isDisabledByMinDuration || groupNotifier.value) {
-            effectiveOnTap = widget.disableVisuallyDuringDebouncing ? null : () {};
+            String reason =
+                _isDisabledByMinDuration ? 'minimum duration not elapsed' : 'group disabled';
+            if (widget.disableVisuallyDuringDebouncing) {
+              logv(
+                  'TappableAction: Tap disabled visually due to $reason${widget.groupId != null ? ' (group: ${widget.groupId})' : ''}');
+              effectiveOnTap = null;
+            } else {
+              logd(
+                  'TappableAction: Tap ignored due to $reason (visual feedback allowed)${widget.groupId != null ? ' (group: ${widget.groupId})' : ''}');
+              effectiveOnTap = () {};
+            }
           }
 
           // Use debouncer or bypass.
@@ -288,6 +318,7 @@ class _TapDebouncerState extends State<TapDebouncer> {
                           final cooldown = widget.cooldown;
 
                           if (cooldown != null) {
+                            logv('TapDebouncer: Applying cooldown of ${cooldown.inMilliseconds}ms');
                             await Future<void>.delayed(cooldown);
                           }
                         },
@@ -295,7 +326,10 @@ class _TapDebouncerState extends State<TapDebouncer> {
             );
           }
 
-          final disabledChild = widget.builder(context, null);
+          // When busy, return a disabled button but only log when actually tapped
+          final disabledChild = widget.builder(context, () async {
+            logd('TapDebouncer: Tap ignored - button is busy (debouncing in progress)');
+          });
 
           if (widget.waitBuilder == null) {
             return disabledChild;
@@ -321,6 +355,7 @@ class DebouncerHandler {
   /// Process onTap function
   Future<void> onTap(Future<void> Function() function) async {
     try {
+      logv('TapDebouncer: Processing tap');
       _add(true);
 
       await function();
