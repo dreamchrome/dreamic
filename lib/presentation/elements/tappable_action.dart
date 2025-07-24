@@ -4,16 +4,41 @@ import 'package:dreamic/app/app_cubit.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
-class TappableActionGroupManager {
+class TappableActionGroupManager with WidgetsBindingObserver {
   static final TappableActionGroupManager _instance = TappableActionGroupManager._internal();
 
   factory TappableActionGroupManager() {
     return _instance;
   }
 
-  TappableActionGroupManager._internal();
+  TappableActionGroupManager._internal() {
+    // Listen to app lifecycle events for automatic group cleanup
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   final Map<String, ValueNotifier<bool>> _groupNotifiers = {};
+  final Map<String, Set<Object>> _groupWidgets = {}; // Track widgets using each group
+  final Map<String, Timer?> _groupResetTimers = {}; // Auto-reset timers
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+
+    // Reset all groups when app resumes - this handles browser back navigation edge cases
+    if (state == AppLifecycleState.resumed) {
+      logv('TappableActionGroupManager: App resumed, resetting all disabled groups');
+      resetAllGroups();
+    }
+  }
+
+  /// Clean up resources when disposed
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    for (final timer in _groupResetTimers.values) {
+      timer?.cancel();
+    }
+    _groupResetTimers.clear();
+  }
 
   ValueNotifier<bool> _getNotifier(String groupId) =>
       _groupNotifiers.putIfAbsent(groupId, () => ValueNotifier<bool>(false));
@@ -27,11 +52,76 @@ class TappableActionGroupManager {
     if (groupId == null) return;
     logv('TappableActionGroupManager: ${isDisabled ? 'Disabling' : 'Enabling'} group "$groupId"');
     _getNotifier(groupId).value = isDisabled;
+
+    // If enabling, cancel any pending reset timer
+    if (!isDisabled) {
+      _groupResetTimers[groupId]?.cancel();
+      _groupResetTimers[groupId] = null;
+    }
   }
 
   ValueNotifier<bool> getGroupNotifier(String? groupId) {
     if (groupId == null) return ValueNotifier<bool>(false);
     return _getNotifier(groupId);
+  }
+
+  /// Register a widget as using this group
+  void registerWidget(String? groupId, Object widget) {
+    if (groupId == null) return;
+    _groupWidgets.putIfAbsent(groupId, () => {}).add(widget);
+    logv(
+        'TappableActionGroupManager: Registered widget for group "$groupId" (${_groupWidgets[groupId]?.length} total)');
+
+    // If there's a pending auto-reset timer for this group, cancel it since we have active widgets again
+    if (_groupResetTimers[groupId] != null) {
+      logv(
+          'TappableActionGroupManager: Cancelling auto-reset timer for group "$groupId" - new widget registered');
+      _groupResetTimers[groupId]?.cancel();
+      _groupResetTimers[groupId] = null;
+
+      // If the group is disabled and we now have widgets, immediately enable it
+      if (isGroupDisabled(groupId)) {
+        logd(
+            'TappableActionGroupManager: Auto-enabling group "$groupId" - new widget registered while group was disabled');
+        setGroupDisabled(groupId, false);
+      }
+    }
+  }
+
+  /// Unregister a widget from this group
+  void unregisterWidget(String? groupId, Object widget) {
+    if (groupId == null) return;
+    _groupWidgets[groupId]?.remove(widget);
+    logv(
+        'TappableActionGroupManager: Unregistered widget from group "$groupId" (${_groupWidgets[groupId]?.length ?? 0} remaining)');
+
+    // If no widgets left in group and group is disabled, schedule auto-reset
+    if ((_groupWidgets[groupId]?.isEmpty ?? true) && isGroupDisabled(groupId)) {
+      logv('TappableActionGroupManager: Scheduling auto-reset for empty disabled group "$groupId"');
+      _groupResetTimers[groupId]?.cancel();
+      _groupResetTimers[groupId] = Timer(const Duration(milliseconds: 100), () {
+        // Double-check the group is still empty and disabled
+        if ((_groupWidgets[groupId]?.isEmpty ?? true) && isGroupDisabled(groupId)) {
+          logd('TappableActionGroupManager: Auto-resetting empty group "$groupId"');
+          setGroupDisabled(groupId, false);
+        }
+      });
+    }
+  }
+
+  /// Force reset a group (useful for navigation scenarios)
+  void resetGroup(String? groupId) {
+    if (groupId == null) return;
+    logd('TappableActionGroupManager: Force resetting group "$groupId"');
+    setGroupDisabled(groupId, false);
+  }
+
+  /// Reset all groups (useful for major navigation changes)
+  void resetAllGroups() {
+    logd('TappableActionGroupManager: Resetting all groups');
+    for (final groupId in _groupNotifiers.keys.toList()) {
+      setGroupDisabled(groupId, false);
+    }
   }
 }
 
@@ -74,6 +164,10 @@ class _TappableActionState extends State<TappableAction> {
   @override
   void initState() {
     super.initState();
+
+    // Register this widget with the group manager
+    TappableActionGroupManager().registerWidget(widget.groupId, this);
+
     if (widget.delayBeforeFirstTapDuration != null) {
       setState(() {
         _isDelayed = true;
@@ -89,8 +183,23 @@ class _TappableActionState extends State<TappableAction> {
   }
 
   @override
+  void didUpdateWidget(TappableAction oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // Handle group ID changes
+    if (oldWidget.groupId != widget.groupId) {
+      TappableActionGroupManager().unregisterWidget(oldWidget.groupId, this);
+      TappableActionGroupManager().registerWidget(widget.groupId, this);
+    }
+  }
+
+  @override
   void dispose() {
     _minDurationTimer?.cancel();
+
+    // Unregister this widget from the group manager
+    TappableActionGroupManager().unregisterWidget(widget.groupId, this);
+
     super.dispose();
   }
 
