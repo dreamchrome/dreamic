@@ -12,9 +12,7 @@ class TimestampConverter implements JsonConverter<DateTime, Object> {
       Map<Object?, Object?> timestampMap = timestamp;
       int seconds = timestampMap['_seconds'] as int;
       int nanoseconds = timestampMap['_nanoseconds'] as int;
-      return DateTime.fromMicrosecondsSinceEpoch(
-        seconds * 1000000 + nanoseconds ~/ 1000
-      );
+      return DateTime.fromMicrosecondsSinceEpoch(seconds * 1000000 + nanoseconds ~/ 1000);
     }
     return DateTime.fromMillisecondsSinceEpoch(0);
   }
@@ -136,8 +134,7 @@ class TimestampCreationConverter implements JsonConverter<DateTime?, Object?> {
   }
 
   @override
-  Object? toJson(DateTime? date) =>
-      date == null ? FieldValue.serverTimestamp() : Timestamp.fromDate(date);
+  Object? toJson(DateTime? date) => date == null ? FieldValue.serverTimestamp() : null;
 }
 
 class TimestampModifiedConverter implements JsonConverter<DateTime, Object> {
