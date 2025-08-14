@@ -18,7 +18,7 @@ class AppConfigBase {
   ///
   static init() async {
     // Initialize iOS simulator detection for proper FCM configuration
-    await initializeIOSSimulatorDetection();
+    await _initializeSimulatorDetection();
 
     //TOOD: make this work on the web
     // _isSimulatorDevice ??= (String.fromEnvironment('IS_SIMULATOR_DEVICE_OVERRIDE',
@@ -507,26 +507,6 @@ class AppConfigBase {
   static bool? _useFCMDefault;
   static set useFCMDefault(bool value) => _useFCMDefault = value;
   static bool? _useFCM;
-  static bool? _isIOSSimulator;
-
-  /// Initialize iOS simulator detection state for FCM configuration
-  /// Call this during app initialization to ensure proper FCM defaults
-  static Future<void> initializeIOSSimulatorDetection() async {
-    if (_isIOSSimulator != null) {
-      return; // Already initialized
-    }
-
-    try {
-      if (!kIsWeb && Platform.isIOS) {
-        _isIOSSimulator = await DeviceUtils.isRunningOnEmulator();
-      } else {
-        _isIOSSimulator = false;
-      }
-    } catch (e) {
-      loge('Error detecting iOS simulator status: $e');
-      _isIOSSimulator = false;
-    }
-  }
 
   static bool get useFCM {
     _useFCM ??= const String.fromEnvironment('USE_FCM', defaultValue: '').isNotEmpty
@@ -537,7 +517,7 @@ class AppConfigBase {
 
   static bool _getDefaultFCMValue() {
     // Default to false if running on iOS simulator, true otherwise
-    if (_isIOSSimulator == true) {
+    if (isIOSSimulator == true) {
       return false;
     }
     return true;
@@ -715,5 +695,54 @@ class AppConfigBase {
   // Determined at run time
   //
 
-  // Note: Simulator/emulator detection is now handled in _getDefaultEmulatorAddress()
+  static bool? _isIOSSimulator;
+  static bool? _isAndroidSimulator;
+  static bool? _isSimulatorDevice;
+
+  /// Initialize iOS simulator detection state for FCM configuration
+  /// Call this during app initialization to ensure proper FCM defaults
+
+  static bool get isIOSSimulator {
+    if (_isSimulatorDevice == null) {
+      throw Exception(
+          'Simulator detection not initialized. Call _initializeSimulatorDetection first.');
+    }
+
+    _isIOSSimulator ??= !kIsWeb && Platform.isIOS && _isSimulatorDevice!;
+
+    return _isIOSSimulator!;
+  }
+
+  static bool get isAndroidSimulator {
+    if (_isSimulatorDevice == null) {
+      throw Exception(
+          'Simulator detection not initialized. Call _initializeSimulatorDetection first.');
+    }
+
+    _isAndroidSimulator ??= !kIsWeb && Platform.isAndroid && _isSimulatorDevice!;
+
+    return _isAndroidSimulator!;
+  }
+
+  static bool get isSimulatorDevice {
+    if (_isSimulatorDevice == null) {
+      throw Exception(
+          'Simulator detection not initialized. Call _initializeSimulatorDetection first.');
+    }
+
+    return _isSimulatorDevice!;
+  }
+
+  static Future<void> _initializeSimulatorDetection() async {
+    if (_isSimulatorDevice != null) {
+      return; // Already initialized
+    }
+
+    try {
+      _isSimulatorDevice = await DeviceUtils.isRunningOnEmulator();
+    } catch (e) {
+      loge('Error detecting simulator status: $e');
+      _isSimulatorDevice = false;
+    }
+  }
 }
