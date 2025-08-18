@@ -53,7 +53,7 @@ Future<void> webForceInitialFetch() async {
     return;
   }
 
-  logd('🌐 Web platform: Forcing initial Remote Config fetch...');
+  logv('🌐 Web platform: Forcing initial Remote Config fetch...');
 
   try {
     // Set minimal fetch interval for immediate fetch
@@ -66,12 +66,12 @@ Future<void> webForceInitialFetch() async {
 
     // Force fetch and activate
     final result = await FirebaseRemoteConfig.instance.fetchAndActivate();
-    logd('🌐 Web initial fetch result: $result');
+    logv('🌐 Web initial fetch result: $result');
 
     // Check value source
     final testValue = FirebaseRemoteConfig.instance.getValue('minimumAppVersionRecommendedApple');
-    logd('🌐 Web fetch value source: ${testValue.source}');
-    logd('🌐 Web fetch value: "${testValue.asString()}"');
+    logv('🌐 Web fetch value source: ${testValue.source}');
+    logv('🌐 Web fetch value: "${testValue.asString()}"');
 
     // Reset fetch interval
     await FirebaseRemoteConfig.instance.setConfigSettings(
@@ -84,12 +84,12 @@ Future<void> webForceInitialFetch() async {
     if (testValue.source == ValueSource.valueRemote) {
       logd('✅ Web platform successfully fetched Remote Config values from server');
     } else {
-      logd(
+      logv(
           '⚠️ Web platform using default values - Remote Config may not be set up in Firebase Console');
     }
   } catch (e) {
     logd('⚠️ Web platform initial fetch failed: $e');
-    logd('ℹ️ Continuing with default values');
+    logv('ℹ️ Continuing with default values');
   }
 }
 
@@ -105,7 +105,7 @@ Future<void> _initLiveRemoteConfig({
       ? const Duration(seconds: 10) // 10 seconds in debug mode
       : const Duration(hours: 1); // 1 hour in release mode
 
-  logd('🔧 Configuring Remote Config - Debug mode: $kDebugMode, Fetch interval: $fetchInterval');
+  logv('🔧 Configuring Remote Config - Debug mode: $kDebugMode, Fetch interval: $fetchInterval');
 
   // Always set defaults first - this ensures we always have usable values
   final allDefaults = {
@@ -113,7 +113,7 @@ Future<void> _initLiveRemoteConfig({
     ...?additionalDefaultConfigs,
   };
 
-  logd('📋 Setting Remote Config defaults for ${allDefaults.length} parameters');
+  logv('📋 Setting Remote Config defaults for ${allDefaults.length} parameters');
 
   try {
     await FirebaseRemoteConfig.instance.setConfigSettings(
@@ -129,7 +129,7 @@ Future<void> _initLiveRemoteConfig({
     // Verify defaults are accessible
     final testDefault =
         FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedApple');
-    logd('📱 Default value verification - minimumAppVersionRecommendedApple: $testDefault');
+    logv('📱 Default value verification - minimumAppVersionRecommendedApple: $testDefault');
   } catch (e) {
     loge('❌ Failed to set Remote Config defaults: $e');
     loge('⚠️ This is a critical error - app may not function properly');
@@ -156,26 +156,26 @@ Future<void> _initLiveRemoteConfig({
 /// This is completely optional - if it fails, the app continues with defaults
 Future<void> _attemptFirebaseFetch() async {
   try {
-    logd('🔄 Attempting optional fetch from Firebase Remote Config...');
+    logv('🔄 Attempting optional fetch from Firebase Remote Config...');
 
     // Log Firebase project info for debugging
     final app = FirebaseRemoteConfig.instance.app;
-    logd('🔥 Firebase project: ${app.options.projectId}, app: ${app.name}');
+    logv('🔥 Firebase project: ${app.options.projectId}, app: ${app.name}');
 
     // Check last fetch time for debugging
     final lastFetchTime = FirebaseRemoteConfig.instance.lastFetchTime;
     final lastFetchStatus = FirebaseRemoteConfig.instance.lastFetchStatus;
-    logd('📅 Last fetch time: $lastFetchTime');
-    logd('📊 Last fetch status: $lastFetchStatus');
+    logv('📅 Last fetch time: $lastFetchTime');
+    logv('📊 Last fetch status: $lastFetchStatus');
 
     // Log values before fetch
     final beforeValue =
         FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedApple');
-    logd('📱 Value BEFORE fetch - minimumAppVersionRecommendedApple: $beforeValue');
+    logv('📱 Value BEFORE fetch - minimumAppVersionRecommendedApple: $beforeValue');
 
     // Check platform-specific behavior
     if (kIsWeb) {
-      logd('🌐 Running on web platform - attempting fetch (should work on web)');
+      logv('🌐 Running on web platform - attempting fetch (should work on web)');
     }
 
     // Try to fetch from Firebase
@@ -183,13 +183,13 @@ Future<void> _attemptFirebaseFetch() async {
 
     // Log values after fetch
     final afterValue = FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedApple');
-    logd('📱 Value AFTER fetch - minimumAppVersionRecommendedApple: $afterValue');
+    logv('📱 Value AFTER fetch - minimumAppVersionRecommendedApple: $afterValue');
 
     // Check fetch status
     final newLastFetchTime = FirebaseRemoteConfig.instance.lastFetchTime;
     final newLastFetchStatus = FirebaseRemoteConfig.instance.lastFetchStatus;
-    logd('📅 NEW fetch time: $newLastFetchTime');
-    logd('📊 NEW fetch status: $newLastFetchStatus');
+    logv('📅 NEW fetch time: $newLastFetchTime');
+    logv('📊 NEW fetch status: $newLastFetchStatus');
 
     if (fetchResult) {
       logd('✅ Firebase Remote Config fetch successful - using server values where available');
@@ -197,28 +197,28 @@ Future<void> _attemptFirebaseFetch() async {
       // Log value sources for debugging
       final valueSource =
           FirebaseRemoteConfig.instance.getValue('minimumAppVersionRecommendedApple').source;
-      logd('🔍 Value source after fetch: $valueSource');
+      logv('🔍 Value source after fetch: $valueSource');
     } else {
-      logd('⚠️ Firebase Remote Config fetch returned false (cached values or throttled)');
+      logv('⚠️ Firebase Remote Config fetch returned false (cached values or throttled)');
     }
   } on FirebaseException catch (e) {
     if (e.code == 'throttled' || e.message?.contains('throttled') == true) {
-      logd(
+      logv(
           '🚫 Firebase Remote Config fetch throttled (hit rate limit). Using defaults/cached values.');
     } else if (e.message?.contains('cannot parse response') == true) {
-      logd('📝 Firebase Remote Config not set up in console - using default values');
-      logd(
+      logv('📝 Firebase Remote Config not set up in console - using default values');
+      logv(
           'ℹ️ This is normal for new projects or when Remote Config parameters aren\'t configured');
-      logd('🔧 To use Firebase values: Go to Firebase Console > Remote Config and add parameters');
+      logv('🔧 To use Firebase values: Go to Firebase Console > Remote Config and add parameters');
     } else if (e.code == 'fetch-failed') {
-      logd('🌐 Firebase Remote Config fetch failed (network/server issue) - using default values');
+      logv('🌐 Firebase Remote Config fetch failed (network/server issue) - using default values');
     } else {
       logd('⚠️ Firebase Remote Config fetch failed: ${e.code} - ${e.message}');
-      logd('ℹ️ Continuing with default values');
+      logv('ℹ️ Continuing with default values');
     }
   } catch (e) {
     logd('⚠️ Unexpected error during Firebase Remote Config fetch: $e');
-    logd('ℹ️ Continuing with default values');
+    logv('ℹ️ Continuing with default values');
   }
 }
 
@@ -243,7 +243,7 @@ Future<void> forceRefreshRemoteConfig() async {
     // Log values before force refresh
     final beforeRecommended =
         FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedApple');
-    logd('📱 Value BEFORE force refresh - minimumAppVersionRecommendedApple: $beforeRecommended');
+    logv('📱 Value BEFORE force refresh - minimumAppVersionRecommendedApple: $beforeRecommended');
 
     // Set a very short fetch interval temporarily
     await FirebaseRemoteConfig.instance.setConfigSettings(
@@ -255,12 +255,12 @@ Future<void> forceRefreshRemoteConfig() async {
 
     // Force fetch and activate
     final result = await FirebaseRemoteConfig.instance.fetchAndActivate();
-    logd('🔥 Force refresh result: $result');
+    logv('🔥 Force refresh result: $result');
 
     // Log values after force refresh
     final afterRecommended =
         FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedApple');
-    logd('📱 Value AFTER force refresh - minimumAppVersionRecommendedApple: $afterRecommended');
+    logv('📱 Value AFTER force refresh - minimumAppVersionRecommendedApple: $afterRecommended');
 
     // Reset the fetch interval back to normal
     await FirebaseRemoteConfig.instance.setConfigSettings(
@@ -273,42 +273,42 @@ Future<void> forceRefreshRemoteConfig() async {
     if (beforeRecommended != afterRecommended) {
       logd('🎉 Remote Config values updated after force refresh!');
     } else {
-      logd('ℹ️ Remote Config values unchanged after force refresh');
+      logv('ℹ️ Remote Config values unchanged after force refresh');
     }
   } on FirebaseException catch (e) {
     if (e.code == 'throttled' || e.message?.contains('throttled') == true) {
       logd('🚫 Force refresh throttled - you have hit Firebase\'s rate limit');
-      logd('⏰ Wait before trying again, or restart the app to reset the counter');
+      logv('⏰ Wait before trying again, or restart the app to reset the counter');
     } else if (e.message?.contains('cannot parse response') == true) {
-      logd('📝 Force refresh failed: Firebase Remote Config not set up in console');
-      logd('ℹ️ This is normal - the app will continue with default values');
+      logv('📝 Force refresh failed: Firebase Remote Config not set up in console');
+      logv('ℹ️ This is normal - the app will continue with default values');
     } else {
       logd('⚠️ Firebase error during force refresh: ${e.code} - ${e.message}');
-      logd('ℹ️ App continues with current values');
+      logv('ℹ️ App continues with current values');
     }
   } catch (e) {
     logd('⚠️ Unexpected error during force refresh: $e');
-    logd('ℹ️ App continues with current values');
+    logv('ℹ️ App continues with current values');
   }
 }
 
 /// Verify that Remote Config is properly initialized and operational
 Future<void> _verifyRemoteConfigInitialization() async {
   try {
-    logd('🔍 Verifying Remote Config initialization...');
+    logv('🔍 Verifying Remote Config initialization...');
 
     // Check if we can read a known default value
     final testValue = FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedApple');
-    logd('📱 Test value read: $testValue');
+    logv('📱 Test value read: $testValue');
 
     // Check fetch status
     final fetchStatus = FirebaseRemoteConfig.instance.lastFetchStatus;
     final fetchTime = FirebaseRemoteConfig.instance.lastFetchTime;
-    logd('📊 Fetch status: $fetchStatus, Last fetch: $fetchTime');
+    logv('📊 Fetch status: $fetchStatus, Last fetch: $fetchTime');
 
     // Verify the instance is not null
     final instance = FirebaseRemoteConfig.instance;
-    logd('✅ Remote Config instance verified: ${instance.hashCode}');
+    logv('✅ Remote Config instance verified: ${instance.hashCode}');
 
     logd('✅ Remote Config initialization verified successfully');
   } catch (e) {
@@ -327,50 +327,50 @@ Future<void> testRemoteConfigValues() async {
     final requiredApple = FirebaseRemoteConfig.instance.getString('minimumAppVersionRequiredApple');
     final recommendedApple =
         FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedApple');
-    logd('📱 Version Required Apple: "$requiredApple"');
-    logd('📱 Version Recommended Apple: "$recommendedApple"');
+    logv('📱 Version Required Apple: "$requiredApple"');
+    logv('📱 Version Recommended Apple: "$recommendedApple"');
 
     // Test web-specific values
     if (kIsWeb) {
       final requiredWeb = FirebaseRemoteConfig.instance.getString('minimumAppVersionRequiredWeb');
       final recommendedWeb =
           FirebaseRemoteConfig.instance.getString('minimumAppVersionRecommendedWeb');
-      logd('🌐 Version Required Web: "$requiredWeb"');
-      logd('🌐 Version Recommended Web: "$recommendedWeb"');
+      logv('🌐 Version Required Web: "$requiredWeb"');
+      logv('🌐 Version Recommended Web: "$recommendedWeb"');
 
       // Check value sources on web
       final webRequiredSource =
           FirebaseRemoteConfig.instance.getValue('minimumAppVersionRequiredWeb').source;
       final webRecommendedSource =
           FirebaseRemoteConfig.instance.getValue('minimumAppVersionRecommendedWeb').source;
-      logd('🔍 Web Required source: $webRequiredSource');
-      logd('🔍 Web Recommended source: $webRecommendedSource');
+      logv('🔍 Web Required source: $webRequiredSource');
+      logv('🔍 Web Recommended source: $webRecommendedSource');
     }
 
     // Test feature flags
     final calsyncGoogle = FirebaseRemoteConfig.instance.getBool('calsyncEnableGoogle');
     final communityTutorial = FirebaseRemoteConfig.instance.getBool('communityTutorialEnabled');
-    logd('🔧 Calsync Google Enabled: $calsyncGoogle');
-    logd('🔧 Community Tutorial Enabled: $communityTutorial');
+    logv('🔧 Calsync Google Enabled: $calsyncGoogle');
+    logv('🔧 Community Tutorial Enabled: $communityTutorial');
 
     // Test string parameters
     final stripeKey = FirebaseRemoteConfig.instance.getString('stripePublishableKey');
     final vimeoId = FirebaseRemoteConfig.instance.getString('subscribeVideoVimeoId');
-    logd('💳 Stripe Key: "${stripeKey.isNotEmpty ? stripeKey.substring(0, 20) + '...' : 'EMPTY'}"');
-    logd('🎥 Vimeo ID: "$vimeoId"');
+    logv('💳 Stripe Key: "${stripeKey.isNotEmpty ? stripeKey.substring(0, 20) + '...' : 'EMPTY'}"');
+    logv('🎥 Vimeo ID: "$vimeoId"');
 
     // Test numeric parameters
     final maxSelections = FirebaseRemoteConfig.instance.getInt('psmChoiceSelectionsMax');
     final refreshInterval =
         FirebaseRemoteConfig.instance.getInt('userPrivateRefreshIntervalSeconds');
-    logd('🔢 PSM Max Selections: $maxSelections');
-    logd('🔢 Refresh Interval: $refreshInterval');
+    logv('🔢 PSM Max Selections: $maxSelections');
+    logv('🔢 Refresh Interval: $refreshInterval');
 
     // Check fetch status
     final fetchStatus = FirebaseRemoteConfig.instance.lastFetchStatus;
     final fetchTime = FirebaseRemoteConfig.instance.lastFetchTime;
-    logd('📊 Last fetch status: $fetchStatus');
-    logd('📅 Last fetch time: $fetchTime');
+    logv('📊 Last fetch status: $fetchStatus');
+    logv('📅 Last fetch time: $fetchTime');
 
     // Check value source (will help identify if values come from defaults, cache, or remote)
     final valueSource =
@@ -380,7 +380,7 @@ Future<void> testRemoteConfigValues() async {
     // Web-specific status
     if (kIsWeb) {
       final refreshServiceStatus = WebRemoteConfigRefreshService.instance.getStatus();
-      logd('🌐 Web refresh service status: $refreshServiceStatus');
+      logv('🌐 Web refresh service status: $refreshServiceStatus');
     }
 
     logd('✅ Remote Config test completed');
