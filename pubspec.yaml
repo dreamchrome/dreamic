@@ -1,8 +1,8 @@
 name: dreamic
-description: "Base project for all other Flutter projects."
+description: "A general-purpose package for Flutter/Firebase apps."
 version: 0.0.3
-publish_to: none
-homepage:
+repository: https://github.com/dreamchrome/dreamic
+issue_tracker: https://github.com/dreamchrome/dreamic/issues
 
 environment:
   sdk: ^3.5.4
@@ -25,7 +25,6 @@ dependencies:
   bloc: ^9.0.0
   flutter_bloc: ^9.1.1
   equatable: ^2.0.5
-  # retry: ^3.1.2
   exponential_back_off: ^0.1.0+2
   flutter_timezone: ^4.1.1
   dartz: ^0.10.1
@@ -39,7 +38,7 @@ dependencies:
   url_launcher: ^6.3.0
   wakelock_plus: ^1.2.5
   percent_indicator: ^4.2.3
-  web: ^1.1.0
+  web: ^1.1.1
   internet_connection_checker: ^3.0.1
   path_provider: ^2.1.5
   open_file: ^3.5.10
