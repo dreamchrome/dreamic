@@ -1,5 +1,3 @@
-library flutter_base;
-
 // App Core
 export 'app/app_cubit.dart';
 export 'app/app_root_widget.dart';

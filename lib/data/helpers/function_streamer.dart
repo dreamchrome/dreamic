@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 //
 // Firebase Functions streamer.
 //
-streamFirebaseFunction(
+Future<void> streamFirebaseFunction(
   String functionName,
   Map<String, dynamic> data,
   Function(String) onStreamReceived, {
@@ -50,7 +50,7 @@ streamFirebaseFunction(
 //
 // Firebase Functions streamer with line-by-line handling.
 //
-streamFirebaseFuncionLineByLine(
+Future<void> streamFirebaseFuncionLineByLine(
   String functionName,
   Map<String, dynamic> data,
   Function(String) onStreamReceived, {
