@@ -44,6 +44,7 @@ abstract class AuthServiceInt {
   Future<Either<AuthServiceSignInFailure, bool>> isEmailUser(String email);
   Future<Either<AuthServiceSignOutFailure, Unit>> signOut();
   Future<Either<AuthServiceSignInFailure, Unit>> signInWithDevOnly();
+  Future<Either<AuthServiceSignInFailure, Unit>> signInWithCustomToken(String customToken);
 
   // Access codes
   Future<Either<RepositoryFailure, (AccessCodeCheckReturn validity, String welcomeMessage)>>

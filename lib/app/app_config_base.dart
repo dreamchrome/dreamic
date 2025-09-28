@@ -16,7 +16,7 @@ class AppConfigBase {
   ///
   /// Do this in main
   ///
-  static init() async {
+  static Future<void> init() async {
     // Initialize iOS simulator detection for proper FCM configuration
     await _initializeSimulatorDetection();
 

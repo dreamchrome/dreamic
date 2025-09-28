@@ -58,7 +58,7 @@ class StringHelpers {
     }
 
     return newStrings;
-  }
+  } 
 
   static int getNumberOfNewlines(String s) {
     // return s.allMatches('\n').length;
@@ -80,6 +80,13 @@ extension StringX on String? {
     String s = this!;
 
     return s[0].toLowerCase() + (s.length > 1 ? s.substring(1, s.length) : '');
+  }
+
+  String removeAllWhitespace() {
+    if (this == null) {
+      return '';
+    }
+    return this!.replaceAll(RegExp(r'\s+'), '');
   }
 }
 

@@ -1475,13 +1475,28 @@ class AuthServiceImpl implements AuthServiceInt {
     return right(unit);
   }
 
+  @override
+  Future<Either<AuthServiceSignInFailure, Unit>> signInWithCustomToken(String customToken) async {
+    try {
+      await retryIt(
+        () async => await _fbAuth.signInWithCustomToken(customToken),
+        maxAttempts: 3,
+      );
+
+      return right(unit);
+    } catch (e) {
+      loge(e);
+      return left(AuthServiceSignInFailure.unexpected);
+    }
+  }
+
   //
   //
   // FCM
   //
   //
 
-  initFCM() async {
+  Future<void> initFCM() async {
     logd('Initializing FCM with _hasInitializedFCM = $_hasInitializedFCM');
 
     FirebaseMessaging messaging = FirebaseMessaging.instance;

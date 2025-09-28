@@ -282,7 +282,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
     }
   }
 
-  _logVersion() async {
+  Future<void> _logVersion() async {
     final version = await PackageInfo.fromPlatform();
     debugPrint('App version: ${version.packageName} ${version.version}+${version.buildNumber}');
   }

@@ -5,6 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ### Development
+
+**Required Practices:**
+- **ALWAYS** utilize the Dart and Flutter MCP server for enhanced AI assistance
+- **LEVERAGE** MCP server capabilities for:
+  - Code analysis and error detection
+  - Package management
+  - Test running
+  - Widget tree inspection
+  - Pub.dev package search
+
 ```bash
 # Install dependencies
 flutter pub get

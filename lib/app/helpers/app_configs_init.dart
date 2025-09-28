@@ -3,7 +3,7 @@ import 'package:dreamic/app/app_config_base.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-appInitAppConfigsBase() async {
+Future<void> appInitAppConfigsBase() async {
   await AppConfigBase.init();
 
   assert(
