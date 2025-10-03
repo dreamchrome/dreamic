@@ -16,7 +16,7 @@ class ScrollableWithScrollbars extends StatefulWidget {
   final EdgeInsetsGeometry padding;
 
   @override
-  _ScrollableWithScrollbarsState createState() => _ScrollableWithScrollbarsState();
+  State<ScrollableWithScrollbars> createState() => _ScrollableWithScrollbarsState();
 }
 
 class _ScrollableWithScrollbarsState extends State<ScrollableWithScrollbars> {

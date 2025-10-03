@@ -356,7 +356,7 @@ Future<void> testRemoteConfigValues() async {
     // Test string parameters
     final stripeKey = FirebaseRemoteConfig.instance.getString('stripePublishableKey');
     final vimeoId = FirebaseRemoteConfig.instance.getString('subscribeVideoVimeoId');
-    logv('💳 Stripe Key: "${stripeKey.isNotEmpty ? stripeKey.substring(0, 20) + '...' : 'EMPTY'}"');
+    logv('💳 Stripe Key: "${stripeKey.isNotEmpty ? '${stripeKey.substring(0, 20)}...' : 'EMPTY'}"');
     logv('🎥 Vimeo ID: "$vimeoId"');
 
     // Test numeric parameters

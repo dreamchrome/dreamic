@@ -91,10 +91,10 @@ class ToastWidget extends StatefulWidget {
   });
 
   @override
-  _ToastWidgetState createState() => _ToastWidgetState();
+  ToastWidgetState createState() => ToastWidgetState();
 }
 
-class _ToastWidgetState extends State<ToastWidget> with SingleTickerProviderStateMixin {
+class ToastWidgetState extends State<ToastWidget> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<Offset> _offsetAnimation;
   late Animation<double> _fadeAnimation;
@@ -158,7 +158,7 @@ class _ToastWidgetState extends State<ToastWidget> with SingleTickerProviderStat
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
+                      color: Colors.black12,
                       blurRadius: 10,
                       offset: const Offset(0, 3),
                     ),

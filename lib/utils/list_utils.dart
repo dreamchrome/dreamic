@@ -10,7 +10,7 @@ class ListUtils {
     return out;
   }
 
-  static doesContainContiguous<T>(List<int> list) {
+  static bool doesContainContiguous<T>(List<int> list) {
     var sorted = list.toList()..sort();
     for (var i = 0; i < sorted.length - 1; i++) {
       if (sorted[i] + 1 != sorted[i + 1]) {

@@ -24,7 +24,7 @@ class LoadingIndicator extends StatelessWidget {
     return Container(
       decoration: showBackground
           ? BoxDecoration(
-              color: darkMode ? Colors.black.withOpacity(0.3) : Colors.white.withOpacity(0.4),
+              color: darkMode ? Colors.black.withValues(alpha: 0.3) : Colors.white.withValues(alpha: 0.4),
               shape: BoxShape.circle,
             )
           : null,

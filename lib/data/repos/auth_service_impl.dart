@@ -1502,11 +1502,17 @@ class AuthServiceImpl implements AuthServiceInt {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
     // Request permission for iOS devices
-    NotificationSettings settings = await messaging.requestPermission(
+    await messaging.requestPermission(
       alert: true,
       badge: true,
       sound: true,
     );
+    //TODO: do we need to do something with the settings?
+    // NotificationSettings settings = await messaging.requestPermission(
+    //   alert: true,
+    //   badge: true,
+    //   sound: true,
+    // );
 
     // For apple platforms, ensure the APNS token is available before making any FCM plugin API calls
     String? apnsToken;
