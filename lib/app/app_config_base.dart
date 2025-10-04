@@ -308,11 +308,17 @@ class AppConfigBase {
     return _lockOrientationToLandscape!;
   }
 
+  static bool? _wakelockEnabledAllTheTimeDefault;
+  static set wakelockEnabledAllTheTimeDefault(bool value) =>
+      _wakelockEnabledAllTheTimeDefault = value;
   static bool? _wakelockEnabledAllTheTime;
   static bool get wakelockEnabledAllTheTime {
     _wakelockEnabledAllTheTime ??=
-        const String.fromEnvironment('WAKELOCK_ENABLED_ALL_THE_TIME', defaultValue: 'false') ==
-            'true';
+        const String.fromEnvironment('WAKELOCK_ENABLED_ALL_THE_TIME', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('WAKELOCK_ENABLED_ALL_THE_TIME',
+                    defaultValue: 'false') ==
+                'true'
+            : (_wakelockEnabledAllTheTimeDefault ?? false);
     return _wakelockEnabledAllTheTime!;
   }
 
