@@ -67,29 +67,46 @@ class NetworkUtils {
       // Test common host IPs first (router gateway, common static IPs)
       final priorityIPs = [1, 100, 101, 102, 2, 10, 20, 50];
 
-      for (final ip in priorityIPs) {
+      // Test priority IPs in parallel
+      final priorityFutures = priorityIPs.map((ip) async {
         final address = '$range$ip';
         if (await _testConnection(address, port)) {
-          logd('Firebase emulator found at: $address');
-          await _saveCachedEmulatorAddress(address);
           return address;
+        }
+        return null;
+      }).toList();
+
+      final priorityResults = await Future.wait(priorityFutures);
+      for (final result in priorityResults) {
+        if (result != null) {
+          logd('Firebase emulator found at: $result');
+          await _saveCachedEmulatorAddress(result);
+          return result;
         }
       }
 
-      // If priority IPs don't work, scan the full range (but limit it for performance)
-      for (int i = 2; i <= 254; i++) {
-        if (priorityIPs.contains(i)) continue; // Skip already tested IPs
+      // If priority IPs don't work, scan the full range in parallel batches
+      const batchSize = 20; // Test 20 IPs at a time
+      for (int batchStart = 2; batchStart <= 254; batchStart += batchSize) {
+        final batchEnd = (batchStart + batchSize - 1).clamp(2, 254);
 
-        final address = '$range$i';
-        if (await _testConnection(address, port)) {
-          logd('Firebase emulator found at: $address');
-          await _saveCachedEmulatorAddress(address);
-          return address;
+        final batchFutures = <Future<String?>>[];
+        for (int i = batchStart; i <= batchEnd; i++) {
+          if (priorityIPs.contains(i)) continue; // Skip already tested IPs
+
+          final address = '$range$i';
+          batchFutures.add(_testConnection(address, port).then((success) {
+            return success ? address : null;
+          }));
         }
 
-        // Add small delay every 20 IPs to avoid overwhelming the network
-        if (i % 20 == 0) {
-          await Future.delayed(const Duration(milliseconds: 10));
+        final batchResults = await Future.wait(batchFutures);
+        for (final result in batchResults) {
+          if (result != null) {
+            logd('Firebase emulator found at: $result');
+            await _saveCachedEmulatorAddress(result);
+            return result;
+          }
         }
       }
     }
