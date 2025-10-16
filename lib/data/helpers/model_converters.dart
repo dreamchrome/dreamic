@@ -198,3 +198,57 @@ class TimestampNullableListConverter implements JsonConverter<List<DateTime>?, L
     return dates?.map((e) => Timestamp.fromDate(e)).toList();
   }
 }
+
+// ============================================================================
+// Function-Safe Timestamp Converters
+// ============================================================================
+// These converters serialize DateTime to milliseconds (int) which is
+// JSON-serializable and works with Firebase Cloud Functions.
+// Use these for regular DateTime fields that need to be sent to Cloud Functions.
+
+/// Converts DateTime to/from milliseconds since epoch (function-safe)
+class TimestampMillisConverter implements JsonConverter<DateTime, Object> {
+  const TimestampMillisConverter();
+
+  @override
+  DateTime fromJson(Object timestamp) {
+    if (timestamp is Timestamp) {
+      return timestamp.toDate();
+    } else if (timestamp is int) {
+      return DateTime.fromMillisecondsSinceEpoch(timestamp);
+    } else if (timestamp is Map) {
+      Map<Object?, Object?> timestampMap = timestamp;
+      int seconds = timestampMap['_seconds'] as int;
+      int nanoseconds = timestampMap['_nanoseconds'] as int;
+      return DateTime.fromMicrosecondsSinceEpoch(seconds * 1000000 + nanoseconds ~/ 1000);
+    }
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  @override
+  int toJson(DateTime date) => date.millisecondsSinceEpoch;
+}
+
+/// Converts nullable DateTime to/from milliseconds since epoch (function-safe)
+class TimestampMillisNullableConverter implements JsonConverter<DateTime?, Object?> {
+  const TimestampMillisNullableConverter();
+
+  @override
+  DateTime? fromJson(Object? timestamp) {
+    if (timestamp == null) return null;
+    if (timestamp is Timestamp) {
+      return timestamp.toDate();
+    } else if (timestamp is int) {
+      return DateTime.fromMillisecondsSinceEpoch(timestamp);
+    } else if (timestamp is Map) {
+      Map<Object?, Object?> timestampMap = timestamp;
+      int seconds = timestampMap['_seconds'] as int;
+      int nanoseconds = timestampMap['_nanoseconds'] as int;
+      return DateTime.fromMicrosecondsSinceEpoch(seconds * 1000000 + nanoseconds ~/ 1000);
+    }
+    return null;
+  }
+
+  @override
+  int? toJson(DateTime? date) => date?.millisecondsSinceEpoch;
+}
