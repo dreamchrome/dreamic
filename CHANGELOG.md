@@ -1,4 +1,4 @@
-## 0.0.5 (Unreleased)
+## 0.0.5
 
 ### Added
 * **BaseFirestoreModel** - New abstract base class for intelligent Firebase serialization
@@ -21,13 +21,9 @@
   * Optional `showOnInitialConnection` flag for showing during app load
   * Integrated into `AppRootWidget` as opt-in feature
 * Comprehensive documentation in `docs/`
-  * Complete usage guide (`FIREBASE_SERIALIZATION_GUIDE.md`)
-  * Implementation notes (`BASE_FIRESTORE_MODEL_IMPLEMENTATION.md`)
-  * Quick reference (`README_FIREBASE_SERIALIZATION.md`)
-* Example implementations in `lib/data/models/`
-  * 5 example models covering different use cases
-  * Complete service implementations with real-world patterns
-  * CRUD, batch operations, transactions, and more
+  * Complete usage guide with examples (`MODEL_SERIALIZATION_GUIDE.md`)
+  * Embedded example models covering different use cases
+  * Service implementations with real-world patterns (CRUD, batch operations, transactions, and more)
 
 ### Changed
 * Enhanced `model_converters.dart` with new Smart converters
