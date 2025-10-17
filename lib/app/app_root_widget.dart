@@ -6,6 +6,7 @@ import 'package:dreamic/presentation/elements/error_message_widget.dart';
 import 'package:dreamic/presentation/elements/overlay_submitting_widget.dart';
 import 'package:dreamic/presentation/elements/overlay_progress.dart';
 import 'package:dreamic/presentation/elements/app_update_widgets.dart';
+import 'package:dreamic/presentation/elements/connection_toaster.dart';
 import 'package:dreamic/presentation/network_error_widget.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
@@ -14,15 +15,33 @@ class AppRootWidget extends StatelessWidget {
   const AppRootWidget({
     super.key,
     this.errorMessageWidgetBuilder,
+    this.useConnectionToaster = false,
+    this.showConnectionToastOnInitialConnection = false,
+    this.connectionToastDelay = Duration.zero,
     required this.child,
   });
 
   final Widget child;
   final WidgetBuilder? errorMessageWidgetBuilder;
 
+  /// Whether to use the built-in ConnectionToaster for network status updates.
+  /// Defaults to false for backward compatibility.
+  final bool useConnectionToaster;
+
+  /// Whether to show connection toast during initial app load/resume.
+  /// When false (default), toasts only appear for connection losses during normal usage.
+  /// This prevents intrusive "Connecting..." messages on every app resume.
+  final bool showConnectionToastOnInitialConnection;
+
+  /// Delay before showing the connection toast. Allows quick reconnections
+  /// to complete without showing UI. Defaults to zero (immediate).
+  /// Set to a longer duration (e.g., Duration(seconds: 1)) to prevent
+  /// flashing toasts for brief connection checks.
+  final Duration connectionToastDelay;
+
   @override
   Widget build(BuildContext context) {
-    return Material(
+    final Widget appContent = Material(
       child: BlocProvider<AppCubit>.value(
         // create: (context) => GetIt.I.get<AppCubit>(),
         value: GetIt.I.get<AppCubit>()..getInitialData(),
@@ -136,5 +155,15 @@ class AppRootWidget extends StatelessWidget {
         ),
       ),
     );
+
+    // Wrap with ConnectionToaster at the top level if enabled
+    // This ensures connection toasts appear above all other UI elements
+    return useConnectionToaster
+        ? ConnectionToaster(
+            showOnInitialConnection: showConnectionToastOnInitialConnection,
+            delayBeforeShowing: connectionToastDelay,
+            child: appContent,
+          )
+        : appContent;
   }
 }

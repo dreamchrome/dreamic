@@ -252,3 +252,109 @@ class TimestampMillisNullableConverter implements JsonConverter<DateTime?, Objec
   @override
   int? toJson(DateTime? date) => date?.millisecondsSinceEpoch;
 }
+
+// ============================================================================
+// Smart Timestamp Converters (Enhanced for BaseFirestoreModel)
+// ============================================================================
+// These converters are designed to work with BaseFirestoreModel and handle
+// multiple timestamp formats intelligently. They work across all contexts:
+// Firestore Timestamps, Cloud Functions Map format, milliseconds, and ISO strings.
+
+/// Smart timestamp converter that handles multiple formats and contexts.
+///
+/// This converter is the recommended choice for use with [BaseFirestoreModel].
+/// It intelligently handles:
+/// - Firestore Timestamp objects
+/// - Cloud Functions Map format ({_seconds, _nanoseconds})
+/// - Milliseconds since epoch (int)
+/// - ISO 8601 strings
+///
+/// For serialization (toJson), it always returns milliseconds, and
+/// [BaseFirestoreModel] will handle conversion to FieldValue.serverTimestamp
+/// or Timestamp based on the context and field configuration.
+///
+/// Example:
+/// ```dart
+/// @SmartTimestampConverter()
+/// final DateTime? createdAt;
+///
+/// @SmartTimestampConverter()
+/// final DateTime? updatedAt;
+/// ```
+class SmartTimestampConverter implements JsonConverter<DateTime?, dynamic> {
+  const SmartTimestampConverter();
+
+  @override
+  DateTime? fromJson(dynamic data) {
+    if (data == null) return null;
+
+    try {
+      // Handle Firestore Timestamp
+      if (data is Timestamp) {
+        return data.toDate();
+      }
+
+      // Handle Cloud Functions Map format
+      if (data is Map) {
+        final seconds = data['_seconds'] ?? data['seconds'];
+        final nanoseconds = data['_nanoseconds'] ?? data['nanoseconds'];
+
+        if (seconds != null) {
+          return Timestamp(
+            seconds as int,
+            (nanoseconds as int?) ?? 0,
+          ).toDate();
+        }
+      }
+
+      // Handle milliseconds
+      if (data is int) {
+        return DateTime.fromMillisecondsSinceEpoch(data);
+      }
+
+      // Handle ISO string
+      if (data is String) {
+        return DateTime.tryParse(data);
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('Error parsing timestamp: $e');
+    }
+
+    return null;
+  }
+
+  @override
+  dynamic toJson(DateTime? dateTime) {
+    if (dateTime == null) return null;
+
+    // Always return as milliseconds for JSON compatibility
+    // The BaseFirestoreModel will handle conversion to FieldValue.serverTimestamp
+    // or Timestamp based on the context and field configuration
+    return dateTime.millisecondsSinceEpoch;
+  }
+}
+
+/// Non-nullable version of [SmartTimestampConverter].
+///
+/// Use this for non-nullable DateTime fields. Returns epoch (1970-01-01)
+/// if parsing fails.
+///
+/// Example:
+/// ```dart
+/// @SmartTimestampConverterNotNull()
+/// final DateTime timestamp;
+/// ```
+class SmartTimestampConverterNotNull implements JsonConverter<DateTime, dynamic> {
+  const SmartTimestampConverterNotNull();
+
+  @override
+  DateTime fromJson(dynamic data) {
+    return const SmartTimestampConverter().fromJson(data) ?? DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  @override
+  dynamic toJson(DateTime dateTime) {
+    return dateTime.millisecondsSinceEpoch;
+  }
+}

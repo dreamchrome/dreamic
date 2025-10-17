@@ -41,3 +41,7 @@ export 'presentation/helpers/file_opener/fileopener.dart';
 
 // App Reloader
 export 'presentation/helpers/app_reloader/appreloader.dart';
+
+// Data Models and Converters
+export 'data/models_bases/base_firestore_model.dart';
+export 'data/helpers/model_converters.dart';
