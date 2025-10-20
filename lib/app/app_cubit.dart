@@ -11,7 +11,6 @@ import 'package:dreamic/app/helpers/app_lifecycle_service.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:dreamic/presentation/helpers/cubit_helpers.dart';
 import 'package:internet_connection_checker/internet_connection_checker.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
 // import '../domain/repos/input_repo_int.dart';
 
@@ -283,7 +282,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   }
 
   Future<void> _logVersion() async {
-    final version = await PackageInfo.fromPlatform();
+    final version = await AppConfigBase.getAppVersion();
     debugPrint('App version: ${version.packageName} ${version.version}+${version.buildNumber}');
   }
 

@@ -8,7 +8,6 @@ import 'package:dreamic/app/helpers/app_version_check.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
 import 'package:dreamic/utils/get_it_utils.dart';
 import 'package:dreamic/utils/logger.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
 enum VersionUpdateType {
   none,
@@ -336,7 +335,7 @@ class AppVersionUpdateService {
     try {
       logd('🔍 Starting version update check...');
 
-      final packageInfo = await PackageInfo.fromPlatform();
+      final packageInfo = await AppConfigBase.getAppVersion();
       final currentVersion = packageInfo.version;
 
       final requiredVersion = _getRequiredVersion();

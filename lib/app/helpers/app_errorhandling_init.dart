@@ -11,7 +11,7 @@ import 'package:dreamic/utils/logger.dart';
 ErrorReportingConfig? _errorReportingConfig;
 
 /// Configure error reporting before calling appInitErrorHandling()
-/// 
+///
 /// Example with Sentry:
 /// ```dart
 /// configureErrorReporting(ErrorReportingConfig.customOnly(
@@ -49,9 +49,9 @@ Future<void> appInitErrorHandling() async {
   if (!shouldUseErrorReporting) {
     FlutterError.onError = (details) {
       loge(details.stack ?? StackTrace.current, details.exceptionAsString());
-      
+
       // Still report to custom reporter if enabled on web/debug
-      if (config.customReporter != null && 
+      if (config.customReporter != null &&
           ((kIsWeb && config.enableOnWeb) || (kDebugMode && config.enableInDebug))) {
         config.customReporter!.recordFlutterError(details);
       }
@@ -59,9 +59,9 @@ Future<void> appInitErrorHandling() async {
 
     PlatformDispatcher.instance.onError = (exception, stackTrace) {
       loge(stackTrace, exception.toString());
-      
+
       // Still report to custom reporter if enabled on web/debug
-      if (config.customReporter != null && 
+      if (config.customReporter != null &&
           ((kIsWeb && config.enableOnWeb) || (kDebugMode && config.enableInDebug))) {
         config.customReporter!.recordError(exception, stackTrace);
       }
@@ -73,7 +73,7 @@ Future<void> appInitErrorHandling() async {
     if (config.useFirebaseCrashlytics) {
       await Firebase.initializeApp();
     }
-    
+
     // Only set up error handlers if the custom reporter doesn't manage them
     // (e.g., Sentry with SentryFlutter.init sets up its own handlers)
     if (!config.customReporterManagesErrorHandlers) {
@@ -104,7 +104,7 @@ Future<void> appInitErrorHandling() async {
         // Save the custom reporter's error handler
         final originalFlutterErrorHandler = FlutterError.onError;
         final originalPlatformErrorHandler = PlatformDispatcher.instance.onError;
-        
+
         // Set up handlers that report to both Firebase and the custom reporter
         FlutterError.onError = (FlutterErrorDetails details) {
           FirebaseCrashlytics.instance.recordFlutterError(details);
@@ -132,7 +132,7 @@ Future<void> appInitErrorHandling() async {
             final List<dynamic> errorAndStacktrace = pair;
             final error = errorAndStacktrace.first;
             final stackTrace = errorAndStacktrace.last as StackTrace;
-            
+
             if (config.useFirebaseCrashlytics) {
               await FirebaseCrashlytics.instance.recordError(error, stackTrace);
             }
@@ -149,10 +149,10 @@ Future<void> appInitErrorHandling() async {
             final List<dynamic> errorAndStacktrace = pair;
             final error = errorAndStacktrace.first;
             final stackTrace = errorAndStacktrace.last as StackTrace;
-            
+
             // Report to Firebase
             await FirebaseCrashlytics.instance.recordError(error, stackTrace);
-            
+
             // Note: Custom reporter's isolate listener (if any) will also catch this
             // since multiple listeners can be added to the same isolate
           }).sendPort,

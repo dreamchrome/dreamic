@@ -82,22 +82,22 @@ class Logger {
   static void _crashReport(Object error, {StackTrace? trace}) {
     final stackTrace = trace ?? StackTrace.current;
     final config = _errorReportingConfig ?? const ErrorReportingConfig();
-    
+
     // Determine if we should use error reporting based on configuration
     final shouldUseErrorReporting = !AppConfigBase.doUseBackendEmulator &&
         (config.enableInDebug || !kDebugMode) &&
         (config.enableOnWeb || !kIsWeb);
-    
+
     // Report to Firebase Crashlytics if enabled and conditions are met
     if (shouldUseErrorReporting && config.useFirebaseCrashlytics) {
       FirebaseCrashlytics.instance.recordError(error, stackTrace);
     }
-    
+
     // Report to custom error reporter if configured
     if (_customErrorReporter != null) {
       // Custom reporter should respect the config's enableOnWeb and enableInDebug settings
-      if (shouldUseErrorReporting || 
-          (kIsWeb && config.enableOnWeb) || 
+      if (shouldUseErrorReporting ||
+          (kIsWeb && config.enableOnWeb) ||
           (kDebugMode && config.enableInDebug)) {
         _customErrorReporter!.recordError(error, stackTrace);
       }

@@ -1,11 +1,11 @@
+import 'package:dreamic/app/app_config_base.dart';
 import 'package:dreamic/utils/logger.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
 Future<bool> appIsVersionValid(
   String minimumAppVersion, {
   bool allowToRunIfServerVersionIsEmpty = true,
 }) async {
-  final deviceInfo = await PackageInfo.fromPlatform();
+  final deviceInfo = await AppConfigBase.getAppVersion();
 
   int deviceMajor = int.tryParse(deviceInfo.version.split('.')[0]) ?? 0;
   int deviceMinor = int.tryParse(deviceInfo.version.split('.')[1]) ?? 0;

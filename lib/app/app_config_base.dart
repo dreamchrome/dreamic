@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
 import 'package:dreamic/utils/get_it_utils.dart';
 import 'package:dreamic/utils/logger.dart';
@@ -11,6 +12,26 @@ import 'package:dreamic/utils/device_utils.dart';
 import 'package:dreamic/utils/network_utils.dart';
 
 // import 'platform_helpers/platform_helpers_stub.dart' as platform_helper;
+
+/// Environment types for build configuration
+/// Can be set via --dart-define=ENVIRONMENT_TYPE=production
+enum EnvironmentType {
+  emulator('emulator'),
+  development('development'),
+  test('test'),
+  staging('staging'),
+  production('production');
+
+  const EnvironmentType(this.value);
+  final String value;
+
+  static EnvironmentType fromString(String value) {
+    return EnvironmentType.values.firstWhere(
+      (e) => e.value == value,
+      orElse: () => EnvironmentType.development,
+    );
+  }
+}
 
 class AppConfigBase {
   ///
@@ -751,4 +772,66 @@ class AppConfigBase {
       _isSimulatorDevice = false;
     }
   }
+
+  //
+  // App Version Information
+  //
+
+  static PackageInfo? _cachedPackageInfo;
+
+  /// Get the app's PackageInfo (version, build number, etc.)
+  /// This is cached after the first call for better performance
+  ///
+  /// Example usage:
+  /// ```dart
+  /// final info = await AppConfigBase.getAppVersion();
+  /// print('Version: ${info.version}');
+  /// print('Build: ${info.buildNumber}');
+  /// ```
+  static Future<PackageInfo> getAppVersion() async {
+    _cachedPackageInfo ??= await PackageInfo.fromPlatform();
+    return _cachedPackageInfo!;
+  }
+
+  /// Get the app version as a string (e.g., "1.0.0")
+  /// Convenience method that doesn't require await on PackageInfo
+  static Future<String> getAppVersionString() async {
+    final info = await getAppVersion();
+    return info.version;
+  }
+
+  /// Get the app build number as a string (e.g., "42")
+  /// Convenience method that doesn't require await on PackageInfo
+  static Future<String> getAppBuildNumber() async {
+    final info = await getAppVersion();
+    return info.buildNumber;
+  }
+
+  /// Get the app release string in format: appName@version+buildNumber
+  /// This is useful for error reporting services like Sentry
+  ///
+  /// Example: "my-app@1.0.0+42"
+  static Future<String> getAppRelease() async {
+    final info = await getAppVersion();
+    return '${info.appName}@${info.version}+${info.buildNumber}';
+  }
+
+  //
+  // Build Environment Configuration (dart-define support)
+  //
+
+  /// Build environment type (e.g., 'production', 'staging', 'development')
+  /// Can be set via --dart-define=ENVIRONMENT_TYPE=production
+  /// This is useful for error reporting, analytics, feature flags, etc.
+  static EnvironmentType? _environmentType;
+  static EnvironmentType get environmentType {
+    _environmentType ??= EnvironmentType.fromString(
+      const String.fromEnvironment('ENVIRONMENT_TYPE',
+          defaultValue: kDebugMode ? 'emulator' : 'development'),
+    );
+    return _environmentType!;
+  }
+
+  /// Get the environment type as a string value
+  static String get environmentTypeString => environmentType.value;
 }

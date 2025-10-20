@@ -1,6 +1,7 @@
 // App Core
 export 'app/app_cubit.dart';
 export 'app/app_root_widget.dart';
+export 'app/app_config_base.dart';
 
 // Presentation Components
 export 'presentation/network_error_widget.dart';

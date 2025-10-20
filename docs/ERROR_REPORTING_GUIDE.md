@@ -9,6 +9,7 @@ This comprehensive guide explains how to integrate error reporting services (Fir
 - [Architecture](#architecture)
 - [Setup Methods](#setup-methods)
 - [Sentry Integration](#sentry-integration)
+- [Build Configuration (dart-define)](#build-configuration-dart-define)
 - [Configuration Options](#configuration-options)
 - [Error Coverage](#error-coverage)
 - [Example Implementations](#example-implementations)
@@ -482,6 +483,105 @@ This flag determines who sets up the error handlers.
 - Sets up `FlutterError.onError` and `PlatformDispatcher.instance.onError`
 - Reports errors to all configured services
 - Full control over error handling pipeline
+
+## Build Configuration (dart-define)
+
+### Environment Type Configuration
+
+You can configure the build environment type using `--dart-define=ENVIRONMENT_TYPE`. This is useful for error reporting, analytics, feature flags, and other environment-specific behavior.
+
+#### ENVIRONMENT_TYPE
+
+Configure the build environment (e.g., 'production', 'staging', 'development'):
+
+```bash
+# Development build
+flutter build ios --dart-define=ENVIRONMENT_TYPE=development
+
+# Staging build
+flutter build android --dart-define=ENVIRONMENT_TYPE=staging
+
+# Production build
+flutter build web --dart-define=ENVIRONMENT_TYPE=production
+```
+
+**Default behavior:**
+- If not set: `'development'` in debug mode, `'production'` in release mode
+- Access in code: `AppConfigBase.environmentType`
+
+**Usage in error reporters:**
+```dart
+class SentryErrorReporter implements ErrorReporter {
+  @override
+  Future<void> initialize() async {
+    final release = await AppConfigBase.getAppRelease();
+    
+    await SentryFlutter.init((options) {
+      options.dsn = 'your-dsn';
+      // Uses ENVIRONMENT_TYPE dart-define
+      options.environment = AppConfigBase.environmentType.value;
+      // Auto-generated from app version
+      options.release = release;
+      options.tracesSampleRate = 1.0;
+    });
+  }
+}
+```
+
+### Centralized App Version
+
+Dreamic provides centralized methods to get app version information in `AppConfigBase`:
+
+```dart
+import 'package:dreamic/app/app_config_base.dart';
+
+// Get full PackageInfo object (cached after first call)
+final packageInfo = await AppConfigBase.getAppVersion();
+print('Version: ${packageInfo.version}');
+print('Build: ${packageInfo.buildNumber}');
+print('Package: ${packageInfo.packageName}');
+
+// Convenience methods
+final version = await AppConfigBase.getAppVersionString();      // "1.0.0"
+final build = await AppConfigBase.getAppBuildNumber();          // "42"
+final release = await AppConfigBase.getAppRelease();            // "my-app@1.0.0+42"
+```
+
+**Benefits:**
+- ✅ Single source of truth for version information
+- ✅ Cached after first call for better performance
+- ✅ Used throughout Dreamic and your app
+- ✅ Automatic release string formatting for error reporting
+- ✅ Works correctly on all platforms including Flutter Web
+
+**Usage in error reporting:**
+
+```dart
+// Automatic configuration (recommended)
+configureErrorReporting(
+  ErrorReportingConfig.customOnly(
+    reporter: SentryErrorReporter(
+      dsn: 'your-dsn',
+      // environment from AppConfigBase.environmentType
+      // release from AppConfigBase.getAppRelease()
+    ),
+    enableOnWeb: true,
+  ),
+);
+
+// Or with explicit control
+final release = await AppConfigBase.getAppRelease();
+configureErrorReporting(
+  ErrorReportingConfig.customOnly(
+    reporter: SentryErrorReporter(
+      dsn: 'your-dsn',
+      environment: 'custom-env',
+      release: release,
+    ),
+    enableOnWeb: true,
+  ),
+);
+```
 
 ## Configuration Options
 
@@ -966,26 +1066,42 @@ try {
 
 ### 1. Environment-Specific Configuration
 
-Use different configurations for different environments:
+Use different configurations for different environments with `--dart-define`:
 
+**Build commands:**
+```bash
+# Development build
+flutter build ios --dart-define=ENVIRONMENT_TYPE=development
+
+# Staging build
+flutter build android \
+  --dart-define=ENVIRONMENT_TYPE=staging \
+  --dart-define=SENTRY_DSN=https://staging-dsn@sentry.io/project
+
+# Production build
+flutter build web \
+  --dart-define=ENVIRONMENT_TYPE=production \
+  --dart-define=SENTRY_DSN=https://prod-dsn@sentry.io/project
+```
+
+**In your code:**
 ```dart
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  final environment = const String.fromEnvironment('ENV', defaultValue: 'production');
-  final sentryDsn = environment == 'production'
-      ? 'https://prod-dsn@sentry.io/project'
-      : 'https://dev-dsn@sentry.io/project';
+  // DSN can also be configured via dart-define
+  const sentryDsn = String.fromEnvironment('SENTRY_DSN', 
+    defaultValue: 'https://default-dsn@sentry.io/project');
   
   await configureErrorReporting(
     ErrorReportingConfig.both(
       reporter: SentryErrorReporter(
         dsn: sentryDsn,
-        environment: environment,
-        release: 'your-app@${packageInfo.version}+${packageInfo.buildNumber}',
+        // environment from AppConfigBase.environmentType (ENVIRONMENT_TYPE dart-define)
+        // release auto-generated from AppConfigBase.getAppRelease()
       ),
       customReporterManagesErrorHandlers: true,
-      enableInDebug: environment != 'production',
+      enableInDebug: AppConfigBase.environmentType != EnvironmentType.production,
       enableOnWeb: true,
     ),
   );
@@ -1042,19 +1158,43 @@ options.beforeSend = (event, hint) {
 
 ### 4. Release Tracking
 
-Always include version information:
+Always include version information for tracking which version has issues:
 
 ```dart
-import 'package:package_info_plus/package_info_plus.dart';
+import 'package:dreamic/app/app_config_base.dart';
 
-final packageInfo = await PackageInfo.fromPlatform();
-final release = 'your-app@${packageInfo.version}+${packageInfo.buildNumber}';
+// RECOMMENDED: Use centralized app version method
+final release = await AppConfigBase.getAppRelease();
+// Returns format: "my-app@1.0.0+42"
 
 SentryErrorReporter(
   dsn: 'your-dsn',
   release: release,  // Track which version has issues
-  environment: kDebugMode ? 'development' : 'production',
+  environment: AppConfigBase.environmentType.value,  // Uses ENVIRONMENT_TYPE dart-define
 );
+
+// Or let it auto-configure (even better!)
+SentryErrorReporter(
+  dsn: 'your-dsn',
+  // environment from AppConfigBase.environmentType
+  // release from AppConfigBase.getAppRelease()
+);
+```
+
+**Benefits of centralized version method:**
+- ✅ Single source of truth across your entire app
+- ✅ Cached after first call for performance
+- ✅ Works correctly on Flutter Web (where `PackageInfo` can have issues)
+- ✅ Consistent formatting for error reporting
+- ✅ No need to repeatedly import `package_info_plus`
+
+**Legacy approach (not recommended):**
+```dart
+// Don't do this - use AppConfigBase.getAppRelease() instead
+import 'package:package_info_plus/package_info_plus.dart';
+
+final packageInfo = await PackageInfo.fromPlatform();
+final release = 'your-app@${packageInfo.version}+${packageInfo.buildNumber}';
 ```
 
 ### 5. Performance Monitoring

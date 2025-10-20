@@ -9,7 +9,6 @@ import 'package:dreamic/app/helpers/app_remote_config_init.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
 import 'package:dreamic/utils/get_it_utils.dart';
 import 'package:dreamic/utils/logger.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
 /// A debug widget that provides manual controls for testing the app update system
 /// This should only be used in development builds
@@ -150,7 +149,7 @@ class AppUpdateDebugWidget extends StatelessWidget {
     }
 
     // Get current values for comparison
-    final currentVersion = await PackageInfo.fromPlatform().then((info) => info.version);
+    final currentVersion = await AppConfigBase.getAppVersionString();
 
     logd('📱 Current values before test:');
     logd('   App version: $currentVersion');

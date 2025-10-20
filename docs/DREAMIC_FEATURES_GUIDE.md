@@ -967,6 +967,66 @@ ErrorReportingConfig.both(
 **Additional controls:**
 - `AppConfigBase.doUseBackendEmulator` - Disables reporting when using Firebase emulator
 
+#### Build Configuration (dart-define)
+
+You can configure the build environment type using `--dart-define=ENVIRONMENT_TYPE`:
+
+**Environment Configuration:**
+```bash
+# Development build
+flutter build ios --dart-define=ENVIRONMENT_TYPE=development
+
+# Staging build
+flutter build android --dart-define=ENVIRONMENT_TYPE=staging
+
+# Production build
+flutter build web --dart-define=ENVIRONMENT_TYPE=production
+```
+
+**Access in code:**
+```dart
+// Access the environment type (uses ENVIRONMENT_TYPE dart-define)
+final environment = AppConfigBase.environmentType; // Returns EnvironmentType enum
+final environmentString = AppConfigBase.environmentType.value; // Returns string value
+// Returns: EnvironmentType.development in debug, EnvironmentType.production in release, or your custom value
+```
+
+**Centralized App Version:**
+
+Use `AppConfigBase` methods for version information instead of `PackageInfo` directly:
+
+```dart
+import 'package:dreamic/app/app_config_base.dart';
+
+// Get full PackageInfo (cached after first call)
+final packageInfo = await AppConfigBase.getAppVersion();
+
+// Convenience methods
+final version = await AppConfigBase.getAppVersionString();    // "1.0.0"
+final build = await AppConfigBase.getAppBuildNumber();        // "42"
+final release = await AppConfigBase.getAppRelease();          // "my-app@1.0.0+42"
+
+// Use in your error reporter
+class SentryErrorReporter implements ErrorReporter {
+  @override
+  Future<void> initialize() async {
+    final release = await AppConfigBase.getAppRelease();
+    
+    await Sentry.init((options) {
+      options.dsn = 'your-dsn';
+      options.environment = AppConfigBase.environmentType.value;
+      options.release = release;
+    });
+  }
+}
+```
+
+**Benefits:**
+- ✅ Single source of truth for version across your app
+- ✅ Works correctly on Flutter Web (where `PackageInfo` can have issues)
+- ✅ Cached for performance
+- ✅ Consistent formatting for error reporting
+
 #### Complete Example
 
 ```dart

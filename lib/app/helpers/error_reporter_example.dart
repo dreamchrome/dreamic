@@ -15,10 +15,10 @@ import 'package:flutter/widgets.dart';
 
 /// APPROACH 1: Using Sentry's recommended SentryFlutter.init() wrapper
 /// This is the RECOMMENDED approach as it lets Sentry manage error handlers
-/// 
+///
 /// When using this approach, Sentry automatically sets up error handlers,
 /// so set customReporterManagesErrorHandlers: true
-/// 
+///
 /// Example main.dart:
 void exampleMainSentryWrapper() async {
   /*
@@ -52,7 +52,7 @@ void exampleMainSentryWrapper() async {
 /// or want to use the ErrorReporter interface pattern
 ///
 /// Example Sentry implementation
-/// 
+///
 /// To use this:
 /// 1. Add sentry_flutter to your pubspec.yaml
 /// 2. Uncomment the Sentry import above and the implementation below
@@ -62,6 +62,18 @@ void exampleMainSentryWrapper() async {
 /// // pubspec.yaml
 /// dependencies:
 ///   sentry_flutter: ^9.7.0
+/// ```
+///
+/// Build commands with environment configuration:
+/// ```bash
+/// # Development build
+/// flutter build ios --dart-define=ENVIRONMENT_TYPE=development
+///
+/// # Staging build
+/// flutter build ios --dart-define=ENVIRONMENT_TYPE=staging
+///
+/// # Production build
+/// flutter build ios --dart-define=ENVIRONMENT_TYPE=production
 /// ```
 /*
 class SentryErrorReporter implements ErrorReporter {
@@ -77,11 +89,16 @@ class SentryErrorReporter implements ErrorReporter {
 
   @override
   Future<void> initialize() async {
+    // Get the app version for release tracking
+    final appRelease = release ?? await AppConfigBase.getAppRelease();
+    
     await SentryFlutter.init(
       (options) {
         options.dsn = dsn;
-        options.environment = environment ?? (kDebugMode ? 'development' : 'production');
-        options.release = release;
+        // Use ENVIRONMENT_TYPE dart-define or fallback to parameter
+        options.environment = environment ?? AppConfigBase.environmentType.value;
+        // Use the app version for release tracking
+        options.release = appRelease;
         options.tracesSampleRate = 1.0;
         
         // Optional: Add custom configuration
@@ -143,16 +160,18 @@ void exampleMain() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // APPROACH 1 (RECOMMENDED): Use Sentry's wrapper (see exampleMainSentryWrapper above)
-  
+
   // APPROACH 2: Manual integration
   // OPTION 1: Use Sentry only (recommended for web apps)
   /*
+  // Environment and release are automatically configured
+  // Environment uses ENVIRONMENT_TYPE dart-define (see AppConfigBase.environmentType)
+  // Release is auto-generated from app version (see AppConfigBase.getAppRelease())
   configureErrorReporting(
     ErrorReportingConfig.customOnly(
       reporter: SentryErrorReporter(
         dsn: 'https://your-dsn@sentry.io/project-id',
-        environment: kDebugMode ? 'development' : 'production',
-        release: 'your-app@1.0.0+1',
+        // environment and release auto-configured from AppConfigBase
       ),
       enableOnWeb: true,  // Sentry works on web
       enableInDebug: false,  // Disable in debug mode
@@ -167,6 +186,7 @@ void exampleMain() async {
     ErrorReportingConfig.both(
       reporter: SentryErrorReporter(
         dsn: 'https://your-dsn@sentry.io/project-id',
+        // environment and release auto-configured from AppConfigBase
       ),
       enableOnWeb: false,
       enableInDebug: false,
@@ -224,7 +244,7 @@ class CustomErrorReporter implements ErrorReporter {
 /// Example: Using the error reporter in your app
 void exampleUsage() {
   // Errors are automatically caught and reported
-  
+
   // Manual error logging (automatically reports to configured service)
   try {
     // Your code that might throw

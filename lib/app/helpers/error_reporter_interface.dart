@@ -84,7 +84,7 @@ class ErrorReportingConfig {
         );
 
   /// Creates a configuration that uses only a custom reporter
-  /// 
+  ///
   /// Set [managesOwnErrorHandlers] to true if the reporter sets up its own
   /// error handlers (like SentryFlutter.init with appRunner).
   const ErrorReportingConfig.customOnly({
@@ -101,7 +101,7 @@ class ErrorReportingConfig {
         );
 
   /// Creates a configuration that uses both Firebase and a custom reporter
-  /// 
+  ///
   /// Set [customReporterManagesErrorHandlers] to true if the reporter sets up
   /// its own error handlers (like SentryFlutter.init with appRunner).
   /// When true, only Firebase error handlers will be set up by Dreamic.
