@@ -13,43 +13,80 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 // import 'package:sentry_flutter/sentry_flutter.dart'; // Add this to your pubspec.yaml
 
-/// APPROACH 1: Using Sentry's recommended SentryFlutter.init() wrapper
+/// APPROACH 1: Using Sentry's recommended SentryFlutter.init() wrapper (RECOMMENDED)
 /// This is the RECOMMENDED approach as it lets Sentry manage error handlers
 ///
-/// When using this approach, Sentry automatically sets up error handlers,
-/// so set customReporterManagesErrorHandlers: true
+/// This approach uses Sentry's appRunner pattern which automatically:
+/// - Sets up error handlers (FlutterError.onError, PlatformDispatcher.onError)
+/// - Runs your app in a proper error zone
+/// - Captures all uncaught errors
+///
+/// IMPORTANT: When using this approach:
+/// - Set managesOwnErrorHandlers: true in ErrorReportingConfig
+/// - DO NOT call appInitErrorHandling() - Sentry handles initialization
+/// - Pass your runApp() call to the appRunner parameter
 ///
 /// Example main.dart:
 void exampleMainSentryWrapper() async {
   /*
-  WidgetsFlutterBinding.ensureInitialized();
+  import 'package:flutter/widgets.dart';
+  import 'package:sentry_flutter/sentry_flutter.dart';
+  import 'package:dreamic/dreamic.dart';
+
+  Future<void> main() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    
+    // Sentry's recommended initialization - wraps runApp() in appRunner
+    await SentryFlutter.init(
+      (options) {
+        options.dsn = 'https://your-dsn@sentry.io/project-id';
+        // Use ENVIRONMENT_TYPE dart-define (set via --dart-define=ENVIRONMENT_TYPE=production)
+        options.environment = AppConfigBase.environmentType.value;
+        // Auto-generated release string (e.g., "my-app@1.0.0+42")
+        options.release = await AppConfigBase.getAppRelease();
+        options.tracesSampleRate = 1.0;
+      },
+      // CRITICAL: Use appRunner to wrap your app initialization
+      // This ensures Sentry's error handlers are properly set up
+      appRunner: () => runApp(MyApp()),
+    );
+  }
   
-  // Configure Dreamic to know Sentry manages its own error handlers
-  configureErrorReporting(
-    ErrorReportingConfig.customOnly(
-      reporter: SentryErrorReporter(dsn: 'your-dsn'),
-      managesOwnErrorHandlers: true,  // Important: tells Dreamic not to set handlers
-      enableOnWeb: true,
-    ),
-  );
-  
-  // Initialize error handling (won't set up error handlers since Sentry manages them)
-  await appInitErrorHandling();
-  
-  // Sentry's recommended initialization - wraps runApp()
-  await SentryFlutter.init(
-    (options) {
-      options.dsn = 'https://your-dsn@sentry.io/project-id';
-      options.tracesSampleRate = 1.0;
-    },
-    appRunner: () => runApp(MyApp()),
-  );
+  // Alternative: If you want to use Dreamic's error reporting config system:
+  Future<void> mainWithDreamicConfig() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    
+    // Configure Dreamic to know Sentry manages its own error handlers
+    configureErrorReporting(
+      ErrorReportingConfig.customOnly(
+        reporter: null,  // No reporter needed - Sentry initialized directly
+        managesOwnErrorHandlers: true,  // Important: tells Dreamic not to set handlers
+        enableOnWeb: true,
+      ),
+    );
+    
+    // Initialize Sentry with appRunner
+    await SentryFlutter.init(
+      (options) {
+        options.dsn = 'https://your-dsn@sentry.io/project-id';
+        options.environment = AppConfigBase.environmentType.value;
+        options.release = await AppConfigBase.getAppRelease();
+        options.tracesSampleRate = 1.0;
+      },
+      appRunner: () => runApp(MyApp()),
+    );
+  }
   */
 }
 
 /// APPROACH 2: Manual Sentry integration (for more control)
 /// Use this if you need more control over initialization order
 /// or want to use the ErrorReporter interface pattern
+///
+/// IMPORTANT: This approach does NOT use appRunner, so you must:
+/// - Call initialize() on the reporter before runApp()
+/// - Set managesOwnErrorHandlers: false in ErrorReportingConfig
+/// - Let Dreamic's appInitErrorHandling() set up error handlers
 ///
 /// Example Sentry implementation
 ///
@@ -92,6 +129,8 @@ class SentryErrorReporter implements ErrorReporter {
     // Get the app version for release tracking
     final appRelease = release ?? await AppConfigBase.getAppRelease();
     
+    // IMPORTANT: This does NOT use appRunner
+    // Error handlers are managed by Dreamic's appInitErrorHandling()
     await SentryFlutter.init(
       (options) {
         options.dsn = dsn;
@@ -107,6 +146,7 @@ class SentryErrorReporter implements ErrorReporter {
           return event;
         };
       },
+      // DO NOT use appRunner here - error handlers managed by Dreamic
     );
   }
 
@@ -159,9 +199,36 @@ class SentryErrorReporter implements ErrorReporter {
 void exampleMain() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // APPROACH 1 (RECOMMENDED): Use Sentry's wrapper (see exampleMainSentryWrapper above)
+  // ==================================================================================
+  // APPROACH 1 (RECOMMENDED): Use Sentry's appRunner wrapper
+  // ==================================================================================
+  // This is Sentry's recommended approach - see exampleMainSentryWrapper() above
+  //
+  // Summary:
+  // - Use SentryFlutter.init() with appRunner parameter
+  // - Sentry manages all error handlers automatically
+  // - DO NOT call appInitErrorHandling()
+  // - Clean and simple setup
+  //
+  // Example:
+  /*
+  await SentryFlutter.init(
+    (options) {
+      options.dsn = 'https://your-dsn@sentry.io/project-id';
+      options.environment = AppConfigBase.environmentType.value;
+      options.release = await AppConfigBase.getAppRelease();
+      options.tracesSampleRate = 1.0;
+    },
+    appRunner: () => runApp(MyApp()),
+  );
+  return; // Exit main - app is running
+  */
 
-  // APPROACH 2: Manual integration
+  // ==================================================================================
+  // APPROACH 2: Manual integration with Dreamic's error handling
+  // ==================================================================================
+  // Use this if you need more control or want to use the ErrorReporter interface
+
   // OPTION 1: Use Sentry only (recommended for web apps)
   /*
   // Environment and release are automatically configured
@@ -178,6 +245,12 @@ void exampleMain() async {
       managesOwnErrorHandlers: false,  // We're using manual integration
     ),
   );
+  
+  // Initialize error handling with configured reporter
+  await appInitErrorHandling();
+  
+  // Run your app
+  runApp(MyApp());
   */
 
   // OPTION 2: Use both Firebase Crashlytics and Sentry
@@ -188,11 +261,17 @@ void exampleMain() async {
         dsn: 'https://your-dsn@sentry.io/project-id',
         // environment and release auto-configured from AppConfigBase
       ),
-      enableOnWeb: false,
+      enableOnWeb: false,  // Crashlytics doesn't work on web
       enableInDebug: false,
       customReporterManagesErrorHandlers: false,
     ),
   );
+  
+  // Initialize error handling with configured reporter
+  await appInitErrorHandling();
+  
+  // Run your app
+  runApp(MyApp());
   */
 
   // OPTION 3: Use Firebase Crashlytics only (default)
@@ -203,14 +282,14 @@ void exampleMain() async {
       enableOnWeb: false,
     ),
   );
-  */
   // Or simply don't call configureErrorReporting() at all
 
   // Initialize error handling with configured reporter
   await appInitErrorHandling();
 
   // Continue with your app initialization...
-  // runApp(MyApp());
+  runApp(MyApp());
+  */
 }
 
 /// Example: Custom error reporter for a different service
