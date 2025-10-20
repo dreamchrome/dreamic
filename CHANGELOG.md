@@ -1,3 +1,70 @@
+## 0.0.6
+
+### Added
+* **EnvironmentType Enum** - Type-safe environment configuration
+  * New `EnvironmentType` enum with five values: `emulator`, `development`, `test`, `staging`, `production`
+  * `AppConfigBase.environmentType` now returns enum type instead of string
+  * Added `AppConfigBase.environmentTypeString` convenience getter for string value
+  * Includes `fromString()` method for parsing `--dart-define` values
+  * Provides IDE autocomplete support and compile-time type checking
+  * Exhaustive switch statement checking for better code safety
+* **Centralized App Version Methods** in `AppConfigBase`
+  * `getAppVersion()` - Returns cached `PackageInfo` instance
+  * `getAppVersionString()` - Returns version string (e.g., "1.0.0")
+  * `getAppBuildNumber()` - Returns build number string (e.g., "42")
+  * `getAppRelease()` - Returns formatted release string (e.g., "my-app@1.0.0+42")
+  * Cached implementation for better performance
+  * Works correctly on Flutter Web where `PackageInfo` can have issues
+* **Exported AppConfigBase** in main library file (`dreamic.dart`)
+  * Makes `AppConfigBase` and `EnvironmentType` available to package users
+
+### Changed
+* **Updated Sentry Integration Documentation** - Comprehensive updates across all docs
+  * All examples now use Sentry's recommended `appRunner` pattern with `SentryFlutter.init()`
+  * Integrated `appRunIfValidVersion()` in all `appRunner` examples for automatic version checking
+  * Updated `ERROR_REPORTING_GUIDE.md` with three clear integration approaches:
+    * Approach A: `appRunner` (RECOMMENDED) - Simplest, no custom ErrorReporter needed
+    * Approach B: `appRunner` with Dreamic Config - For integration with Dreamic's configuration system
+    * Approach C: Manual Integration (Advanced) - Full control with ErrorReporter interface
+  * Updated `DREAMIC_FEATURES_GUIDE.md` with complete examples using `appRunner` and version checking
+  * Updated `error_reporter_example.dart` with detailed documentation for all three approaches
+  * All examples now use `AppConfigBase.environmentType.value` and `AppConfigBase.getAppRelease()`
+* **Centralized Version Information** - Refactored to use `AppConfigBase` methods
+  * Updated `app_version_check.dart` to use `AppConfigBase.getAppVersion()`
+  * Updated `app_version_update_service.dart` to use centralized version method
+  * Updated `app_cubit.dart` to use centralized version method
+  * Updated `app_update_debug_widget.dart` to use `AppConfigBase.getAppVersionString()`
+  * Removed duplicate `package_info_plus` imports across 5 files
+
+### Fixed
+* **Environment Configuration** - More flexible and type-safe
+  * Environment type now supports all standard environments (emulator, dev, test, staging, prod)
+  * Backward compatible with existing `--dart-define=ENVIRONMENT_TYPE=value` configuration
+  * Smart defaults: `development` in debug mode, `production` in release mode
+
+### Documentation
+* **ERROR_REPORTING_GUIDE.md**
+  * Added "Build Configuration (dart-define)" section with ENVIRONMENT_TYPE documentation
+  * Restructured Sentry Integration section with clear approach comparisons
+  * Added examples showing `appRunIfValidVersion()` integration
+  * Updated all code examples to use type-safe `EnvironmentType` enum
+  * Added troubleshooting section for wrapper-based setup
+* **DREAMIC_FEATURES_GUIDE.md**
+  * Added environment type documentation with enum examples
+  * Updated all Sentry examples to show `appRunner` pattern
+  * Added "Complete Example" sections showing recommended patterns
+  * Updated build configuration examples with proper environment and release usage
+
+### Notes
+* **100% Backward Compatible** - All existing code continues to work
+  * String values via `--dart-define=ENVIRONMENT_TYPE=production` still work exactly the same
+  * Existing error reporting configurations unchanged
+  * No breaking changes to any APIs
+* **Migration Path** - Easy upgrade from string to enum
+  * Use `.value` property to get string value when needed
+  * Use `environmentTypeString` getter as convenience method
+  * Existing configurations work without modification
+
 ## 0.0.5
 
 ### Added
