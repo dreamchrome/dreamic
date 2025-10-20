@@ -818,8 +818,8 @@ Future<void> main() async {
       options.release = await AppConfigBase.getAppRelease();
       options.tracesSampleRate = 1.0;
     },
-    // Use appRunner to wrap your app initialization
-    appRunner: () => runApp(MyApp()),
+    // Use appRunner with appRunIfValidVersion for version checking
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -906,7 +906,7 @@ void main() async {
       options.dsn = 'your-sentry-dsn';
       options.tracesSampleRate = 1.0;
     },
-    appRunner: () => runApp(MyApp()),
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -955,7 +955,7 @@ void main() async {
       options.dsn = 'your-sentry-dsn';
       options.tracesSampleRate = 1.0;
     },
-    appRunner: () => runApp(MyApp()),
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -1083,7 +1083,7 @@ Future<void> main() async {
       options.release = await AppConfigBase.getAppRelease();
       options.tracesSampleRate = 1.0;
     },
-    appRunner: () => runApp(MyApp()),
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -1117,7 +1117,7 @@ Future<void> main() async {
       options.release = await AppConfigBase.getAppRelease();
       options.tracesSampleRate = 1.0;
     },
-    appRunner: () => runApp(MyApp()),
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -2153,14 +2153,15 @@ void main() async {
   // 7. Setup dependency injection
   setupGetIt(fbApp);
 
-  // 8. Use Sentry's wrapper to run app (replaces appRunIfValidVersion)
+  // 8. Use Sentry's wrapper with version checking
   await SentryFlutter.init(
     (options) {
       options.dsn = 'your-sentry-dsn';
-      options.environment = kDebugMode ? 'development' : 'production';
+      options.environment = AppConfigBase.environmentType.value;
+      options.release = await AppConfigBase.getAppRelease();
       options.tracesSampleRate = 1.0;
     },
-    appRunner: () => runApp(MyApp()),
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```

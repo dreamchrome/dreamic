@@ -36,7 +36,7 @@ void exampleMainSentryWrapper() async {
   Future<void> main() async {
     WidgetsFlutterBinding.ensureInitialized();
     
-    // Sentry's recommended initialization - wraps runApp() in appRunner
+    // Sentry's recommended initialization - wraps app startup in appRunner
     await SentryFlutter.init(
       (options) {
         options.dsn = 'https://your-dsn@sentry.io/project-id';
@@ -46,9 +46,10 @@ void exampleMainSentryWrapper() async {
         options.release = await AppConfigBase.getAppRelease();
         options.tracesSampleRate = 1.0;
       },
-      // CRITICAL: Use appRunner to wrap your app initialization
+      // CRITICAL: Use appRunner with appRunIfValidVersion
       // This ensures Sentry's error handlers are properly set up
-      appRunner: () => runApp(MyApp()),
+      // AND validates app version before running
+      appRunner: () => appRunIfValidVersion(() => MyApp()),
     );
   }
   
@@ -73,7 +74,7 @@ void exampleMainSentryWrapper() async {
         options.release = await AppConfigBase.getAppRelease();
         options.tracesSampleRate = 1.0;
       },
-      appRunner: () => runApp(MyApp()),
+      appRunner: () => appRunIfValidVersion(() => MyApp()),
     );
   }
   */
@@ -219,7 +220,7 @@ void exampleMain() async {
       options.release = await AppConfigBase.getAppRelease();
       options.tracesSampleRate = 1.0;
     },
-    appRunner: () => runApp(MyApp()),
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
   return; // Exit main - app is running
   */

@@ -93,8 +93,8 @@ Future<void> main() async {
       options.release = await AppConfigBase.getAppRelease();
       options.tracesSampleRate = 1.0;
     },
-    // CRITICAL: Use appRunner to wrap your app initialization
-    appRunner: () => runApp(MyApp()),
+    // CRITICAL: Use appRunner with appRunIfValidVersion for version checking
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -104,26 +104,8 @@ Future<void> main() async {
 - ✅ Sentry manages all error handlers automatically  
 - ✅ Works on all platforms including web
 - ✅ DO NOT call `appInitErrorHandling()` when using this approach
+- ✅ Use `appRunIfValidVersion()` in appRunner for automatic version checking
 - ✅ Use `--dart-define=ENVIRONMENT_TYPE=production` for environment configuration
-    },
-    appRunner: () => runApp(MyApp()),
-  );
-}
-
-// Stub implementation - Sentry handles everything
-class SentryErrorReporter implements ErrorReporter {
-  final String dsn;
-  SentryErrorReporter({required this.dsn});
-
-  @override
-  Future<void> initialize() async {}  // No-op
-
-  @override
-  void recordError(Object error, StackTrace? stackTrace) {}  // No-op
-
-  @override
-  void recordFlutterError(FlutterErrorDetails details) {}  // No-op
-}
 ```
 
 ## Architecture
@@ -204,10 +186,11 @@ Future<void> main() async {
   await SentryFlutter.init(
     (options) {
       options.dsn = 'https://your-dsn@sentry.io/project-id';
-      options.environment = kDebugMode ? 'development' : 'production';
+      options.environment = AppConfigBase.environmentType.value;
+      options.release = await AppConfigBase.getAppRelease();
       options.tracesSampleRate = 1.0;
     },
-    appRunner: () => runApp(MyApp()),
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -248,8 +231,8 @@ Future<void> main() async {
   // Initialize error handling (sets up handlers)
   await appInitErrorHandling();
   
-  // Run app normally
-  runApp(MyApp());
+  // Run app with version checking
+  appRunIfValidVersion(() => MyApp());
 }
 ```
 
@@ -305,9 +288,10 @@ Future<void> main() async {
       // Optional: Add navigation tracking
       // options.navigatorKey = GlobalKey<NavigatorState>();
     },
-    // CRITICAL: Use appRunner to wrap your app initialization
+    // CRITICAL: Use appRunner with appRunIfValidVersion
     // This ensures Sentry's error handlers are properly set up
-    appRunner: () => runApp(MyApp()),
+    // AND validates app version before running
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -317,7 +301,8 @@ Future<void> main() async {
 - ✅ Sentry manages all error handlers automatically
 - ✅ Works on all platforms including web
 - ✅ DO NOT call `appInitErrorHandling()` when using this approach
-- ✅ Pass your `runApp()` call to the `appRunner` parameter
+- ✅ Use `appRunIfValidVersion()` in `appRunner` for automatic version checking
+- ✅ Version checking happens before app runs, shows outdated page if needed
 
 #### Approach B: SentryFlutter.init with Dreamic ErrorReporter (Alternative)
 
@@ -353,7 +338,7 @@ Future<void> main() async {
       options.release = await AppConfigBase.getAppRelease();
       options.tracesSampleRate = 1.0;
     },
-    appRunner: () => runApp(MyApp()),
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -460,10 +445,14 @@ Future<void> main() async {
   // Initialize Dreamic (chains Firebase to Sentry's handlers)
   await appInitErrorHandling();
   
-  // Sentry wraps the app
+  // Sentry wraps the app with version checking
   await SentryFlutter.init(
-    (options) => options.dsn = 'your-dsn',
-    appRunner: () => runApp(MyApp()),
+    (options) {
+      options.dsn = 'your-dsn';
+      options.environment = AppConfigBase.environmentType.value;
+      options.release = await AppConfigBase.getAppRelease();
+    },
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
   );
 }
 ```
@@ -492,7 +481,34 @@ Future<void> main() async {
   );
   
   await appInitErrorHandling();
-  runApp(MyApp());
+  appRunIfValidVersion(() => MyApp());
+}
+```
+
+#### With `SentryFlutter.init`:
+
+```dart
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  final fbApp = await appInitFirebase(DefaultFirebaseOptions.currentPlatform);
+  
+  configureErrorReporting(
+    ErrorReportingConfig.both(
+      reporter: null,  // Sentry managed separately
+      customReporterManagesErrorHandlers: true,
+    ),
+  );
+  
+  await SentryFlutter.init(
+    (options) {
+      options.dsn = 'your-dsn';
+      options.environment = AppConfigBase.environmentType.value;
+      options.release = await AppConfigBase.getAppRelease();
+    },
+    appRunner: () => appRunIfValidVersion(() => MyApp()),
+  );
+}
 }
 ```
 
@@ -1384,7 +1400,7 @@ await appInitErrorHandling();
 
 await SentryFlutter.init(
   (options) => options.dsn = 'your-dsn',
-  appRunner: () => runApp(MyApp()),
+  appRunner: () => appRunIfValidVersion(() => MyApp()),
 );
 ```
 
