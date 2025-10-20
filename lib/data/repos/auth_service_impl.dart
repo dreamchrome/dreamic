@@ -1499,70 +1499,84 @@ class AuthServiceImpl implements AuthServiceInt {
   Future<void> initFCM() async {
     logd('Initializing FCM with _hasInitializedFCM = $_hasInitializedFCM');
 
-    FirebaseMessaging messaging = FirebaseMessaging.instance;
+    try {
+      FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-    // Request permission for iOS devices
-    await messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
-    //TODO: do we need to do something with the settings?
-    // NotificationSettings settings = await messaging.requestPermission(
-    //   alert: true,
-    //   badge: true,
-    //   sound: true,
-    // );
+      // Request permission for iOS devices
+      await messaging.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      //TODO: do we need to do something with the settings?
+      // NotificationSettings settings = await messaging.requestPermission(
+      //   alert: true,
+      //   badge: true,
+      //   sound: true,
+      // );
 
-    // For apple platforms, ensure the APNS token is available before making any FCM plugin API calls
-    String? apnsToken;
-    if (defaultTargetPlatform == TargetPlatform.iOS ||
-        defaultTargetPlatform == TargetPlatform.macOS) {
-      // Wait for APNS token to be available
-      int retries = 0;
-      while (apnsToken == null && retries < 30) {
-        apnsToken = await messaging.getAPNSToken();
+      // For apple platforms, ensure the APNS token is available before making any FCM plugin API calls
+      String? apnsToken;
+      if (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS) {
+        // Wait for APNS token to be available
+        int retries = 0;
+        while (apnsToken == null && retries < 30) {
+          apnsToken = await messaging.getAPNSToken();
+          if (apnsToken == null) {
+            logd('APNS token not available yet, waiting...');
+            await Future.delayed(const Duration(milliseconds: 250));
+            retries++;
+          }
+        }
         if (apnsToken == null) {
-          logd('APNS token not available yet, waiting...');
-          await Future.delayed(const Duration(milliseconds: 250));
-          retries++;
+          loge('APNS token was not set after waiting.');
+          // Optionally: return or throw here
         }
       }
-      if (apnsToken == null) {
-        loge('APNS token was not set after waiting.');
-        // Optionally: return or throw here
-      }
-    }
 
-    SharedPreferences prefs = await SharedPreferences.getInstance();
+      SharedPreferences prefs = await SharedPreferences.getInstance();
 
-    String? oldToken = prefs.getString(sharedPrefKeyFcmToken);
-    String? newToken = await messaging.getToken();
+      String? oldToken = prefs.getString(sharedPrefKeyFcmToken);
+      String? newToken;
 
-    if (newToken != null && (newToken != oldToken || !_hasInitializedFCM)) {
       try {
-        logd('Updating FCM token on server: $newToken');
-        await _updateTokenOnServer(newToken, oldToken ?? "");
-        await prefs.setString(sharedPrefKeyFcmToken, newToken);
+        newToken = await messaging.getToken();
       } catch (e) {
-        loge('Error updating FCM token on server: $e');
+        loge('Failed to get FCM token (Firebase Installations Service may be unavailable): $e');
+        // Don't propagate the error - FCM is not critical for app functionality
+        return;
       }
-    }
 
-    if (!_hasInitializedFCM) {
-      messaging.onTokenRefresh.listen((newToken) async {
-        SharedPreferences prefs = await SharedPreferences.getInstance();
-        String? oldToken = prefs.getString(sharedPrefKeyFcmToken);
+      if (newToken != null && (newToken != oldToken || !_hasInitializedFCM)) {
         try {
+          logd('Updating FCM token on server: $newToken');
           await _updateTokenOnServer(newToken, oldToken ?? "");
           await prefs.setString(sharedPrefKeyFcmToken, newToken);
         } catch (e) {
           loge('Error updating FCM token on server: $e');
         }
-      });
-    }
+      }
 
-    _hasInitializedFCM = true;
+      if (!_hasInitializedFCM) {
+        messaging.onTokenRefresh.listen((newToken) async {
+          SharedPreferences prefs = await SharedPreferences.getInstance();
+          String? oldToken = prefs.getString(sharedPrefKeyFcmToken);
+          try {
+            await _updateTokenOnServer(newToken, oldToken ?? "");
+            await prefs.setString(sharedPrefKeyFcmToken, newToken);
+          } catch (e) {
+            loge('Error updating FCM token on server: $e');
+          }
+        });
+      }
+
+      _hasInitializedFCM = true;
+    } catch (e) {
+      loge('FCM initialization failed: $e');
+      // Don't set _hasInitializedFCM to true if initialization failed
+      // This allows retry on next auth state change
+    }
   }
 
   Future<void> _updateTokenOnServer(String newToken, String oldToken) async {

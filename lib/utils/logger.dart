@@ -2,6 +2,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 
 import '../app/app_config_base.dart';
+import '../app/helpers/error_reporter_interface.dart';
 
 enum LogLevel {
   debugVerbose,
@@ -13,6 +14,20 @@ enum LogLevel {
 
 class Logger {
   static Function(String message)? _onLogFunction;
+  static ErrorReporter? _customErrorReporter;
+  static ErrorReportingConfig? _errorReportingConfig;
+
+  /// Set the error reporting configuration
+  /// This is typically called automatically by the error handling initialization
+  static void setErrorReportingConfig(ErrorReportingConfig? config) {
+    _errorReportingConfig = config;
+  }
+
+  /// Set a custom error reporter for logging errors
+  /// This is typically called automatically by the error handling initialization
+  static void setCustomErrorReporter(ErrorReporter? reporter) {
+    _customErrorReporter = reporter;
+  }
 
   static void setLogFunction(Function(String message)? function) {
     _onLogFunction = function;
@@ -65,8 +80,27 @@ class Logger {
   }
 
   static void _crashReport(Object error, {StackTrace? trace}) {
-    if (!AppConfigBase.doUseBackendEmulator && !kIsWeb) {
-      FirebaseCrashlytics.instance.recordError(error, trace ?? StackTrace.current);
+    final stackTrace = trace ?? StackTrace.current;
+    final config = _errorReportingConfig ?? const ErrorReportingConfig();
+    
+    // Determine if we should use error reporting based on configuration
+    final shouldUseErrorReporting = !AppConfigBase.doUseBackendEmulator &&
+        (config.enableInDebug || !kDebugMode) &&
+        (config.enableOnWeb || !kIsWeb);
+    
+    // Report to Firebase Crashlytics if enabled and conditions are met
+    if (shouldUseErrorReporting && config.useFirebaseCrashlytics) {
+      FirebaseCrashlytics.instance.recordError(error, stackTrace);
+    }
+    
+    // Report to custom error reporter if configured
+    if (_customErrorReporter != null) {
+      // Custom reporter should respect the config's enableOnWeb and enableInDebug settings
+      if (shouldUseErrorReporting || 
+          (kIsWeb && config.enableOnWeb) || 
+          (kDebugMode && config.enableInDebug)) {
+        _customErrorReporter!.recordError(error, stackTrace);
+      }
     }
   }
 }
