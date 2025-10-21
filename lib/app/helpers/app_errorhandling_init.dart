@@ -40,6 +40,14 @@ Future<void> appInitErrorHandling() async {
     Logger.setCustomErrorReporter(config.customReporter);
   }
 
+  debugPrint('Error Reporting Configuration: '
+      'useFirebaseCrashlytics=${config.useFirebaseCrashlytics}, '
+      'customReporter=${config.customReporter != null}, '
+      'customReporterManagesErrorHandlers=${config.customReporterManagesErrorHandlers}, '
+      'enableInDebug=${config.enableInDebug}, '
+      'enableOnWeb=${config.enableOnWeb}'
+      'environmentType=${AppConfigBase.environmentType.value}');
+
   // Determine if we should use error reporting
   final shouldUseErrorReporting = !AppConfigBase.doUseBackendEmulator &&
       (config.enableInDebug || !kDebugMode) &&
