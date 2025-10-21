@@ -1,6 +1,5 @@
 import 'dart:isolate';
 
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dreamic/app/app_config_base.dart';
@@ -77,17 +76,16 @@ Future<void> appInitErrorHandling() async {
     };
   } else {
     // Setup error handlers for production
-    // Initialize Firebase if using Crashlytics
-    if (config.useFirebaseCrashlytics) {
-      await Firebase.initializeApp();
-    }
+    // Note: If using Firebase Crashlytics, Firebase must be initialized first
+    // via appInitFirebase() before calling appInitErrorHandling()
 
     // Only set up error handlers if the custom reporter doesn't manage them
     // (e.g., Sentry with SentryFlutter.init sets up its own handlers)
     if (!config.customReporterManagesErrorHandlers) {
       // Setup Flutter error handler for non-async exceptions
       FlutterError.onError = (FlutterErrorDetails details) {
-        if (config.useFirebaseCrashlytics) {
+        // Firebase Crashlytics does not support web - only call on native platforms
+        if (config.useFirebaseCrashlytics && !kIsWeb) {
           FirebaseCrashlytics.instance.recordFlutterError(details);
         }
         if (config.customReporter != null) {
@@ -97,7 +95,8 @@ Future<void> appInitErrorHandling() async {
 
       // Setup async error handler
       PlatformDispatcher.instance.onError = (error, stack) {
-        if (config.useFirebaseCrashlytics) {
+        // Firebase Crashlytics does not support web - only call on native platforms
+        if (config.useFirebaseCrashlytics && !kIsWeb) {
           FirebaseCrashlytics.instance.recordError(error, stack);
         }
         if (config.customReporter != null) {
@@ -108,7 +107,8 @@ Future<void> appInitErrorHandling() async {
     } else {
       // Custom reporter manages error handlers, but we still need to
       // chain Firebase Crashlytics if enabled
-      if (config.useFirebaseCrashlytics) {
+      // Firebase Crashlytics does not support web - only set up on native platforms
+      if (config.useFirebaseCrashlytics && !kIsWeb) {
         // Save the custom reporter's error handler
         final originalFlutterErrorHandler = FlutterError.onError;
         final originalPlatformErrorHandler = PlatformDispatcher.instance.onError;
