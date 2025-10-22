@@ -35,24 +35,15 @@ class Logger {
 
   static void log(LogLevel level, String message) {
     if (_shouldLog(level)) {
-      // final timestamp = DateTime.now().toIso8601String();
-      // final prefix = level.name.toUpperCase();
-      // debugPrint('[$timestamp] $prefix: $message');
-      if (level == LogLevel.debugVerbose) {
-        debugPrint('DEBUGVERBOSE: $message');
+      // Use print() in release mode for web to ensure logs appear in production
+      // debugPrint is compiled away in Flutter release builds
+      final logMessage = level == LogLevel.debugVerbose ? 'DEBUGVERBOSE: $message' : message;
 
-        //  else if (level == LogLevel.debug) {
-        //   debugPrint('DEBUG: $message');
-        // } else if (level == LogLevel.info) {
-        //   debugPrint('INFO: $message');
-        // } else if (level == LogLevel.warn) {
-        //   debugPrint('WARN: $message');
-        // } else if (level == LogLevel.error) {
-        //   debugPrint('ERROR: $message');
-        // }
+      if (kReleaseMode && kIsWeb) {
+        // ignore: avoid_print
+        print(logMessage);
       } else {
-        // debugPrint('${level.name}: $message');
-        debugPrint(message);
+        debugPrint(logMessage);
       }
       _onLogFunction?.call(message);
     }
@@ -61,14 +52,24 @@ class Logger {
   static void error(Object error, [String? message, StackTrace? stackTrace]) {
     final timestamp = DateTime.now().toIso8601String();
 
+    // Use print() in release mode for web to ensure logs appear in production
+    void logOutput(String msg) {
+      if (kReleaseMode && kIsWeb) {
+        // ignore: avoid_print
+        print(msg);
+      } else {
+        debugPrint(msg);
+      }
+    }
+
     if (message != null) {
-      debugPrint('[$timestamp] MESSAGE: $message');
+      logOutput('[$timestamp] MESSAGE: $message');
       _onLogFunction?.call(message);
     }
 
-    debugPrint('[$timestamp] ERROR: ${error.toString()}');
+    logOutput('[$timestamp] ERROR: ${error.toString()}');
     if (stackTrace != null) {
-      debugPrint('STACKTRACE: ${stackTrace.toString()}');
+      logOutput('STACKTRACE: ${stackTrace.toString()}');
     }
 
     _crashReport(error, trace: stackTrace);
