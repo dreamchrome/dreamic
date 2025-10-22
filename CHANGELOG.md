@@ -1,3 +1,22 @@
+## 0.0.8
+
+### Fixed
+* **Web Platform Logging** - Logger now uses `print()` instead of `debugPrint()` in release mode on web to ensure logs appear in browser console (debugPrint is compiled away in release builds)
+* **Firebase Crashlytics Web Support** - Added platform checks to prevent runtime errors on web where Crashlytics is not supported
+
+### Changed
+* **Error Reporting Configuration** - Added detailed configuration logging in `appInitErrorHandling()` to help verify error reporting setup
+* **Firebase Initialization** - Removed automatic Firebase initialization from `appInitErrorHandling()`. Firebase must now be initialized via `appInitFirebase()` first when using Crashlytics
+
+### Documentation
+* Updated ERROR_REPORTING_GUIDE.md with Quick Start Checklist and clearer Sentry integration best practices
+* Enhanced error_reporter_example.dart with step-by-step integration examples
+
+## 0.0.7
+
+### Documentation
+* Updated ERROR_REPORTING_GUIDE.md and error_reporter_example.dart with improved Sentry integration examples
+
 ## 0.0.6
 
 ### Added
