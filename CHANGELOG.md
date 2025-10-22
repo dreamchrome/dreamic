@@ -1,3 +1,13 @@
+## 0.0.9
+
+### Changed
+* **Reduced Log Verbosity** - Version checking and app lifecycle logs now use verbose level (`logv`) instead of debug level (`logd`)
+  * App resume/pause lifecycle events moved to verbose logging
+  * Version check details and comparisons moved to verbose logging
+  * Remote Config status checks moved to verbose logging
+  * Only critical events remain at debug level: actual version updates (required/recommended) and Remote Config changes
+  * Significantly reduces log noise during normal app operation
+
 ## 0.0.8
 
 ### Fixed
