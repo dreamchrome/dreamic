@@ -11,7 +11,7 @@ Future<bool> appIsVersionValid(
   int deviceMinor = int.tryParse(deviceInfo.version.split('.')[1]) ?? 0;
   int devicePatch = int.tryParse(deviceInfo.version.split('.')[2]) ?? 0;
 
-  logd('App version: ${deviceInfo.version}');
+  logv('App version: ${deviceInfo.version}');
 
   // var serverInfo = (await Get.find<SystemInfoRepoInt>().getSystemInfo()).fold(
   //   (l) {
@@ -28,7 +28,7 @@ Future<bool> appIsVersionValid(
   final serverInfo = minimumAppVersion;
 
   if (serverInfo.isEmpty && allowToRunIfServerVersionIsEmpty) {
-    logd('Server version is empty, allowing app to run.');
+    logv('Server version is empty, allowing app to run.');
     return true;
   }
 
@@ -36,7 +36,7 @@ Future<bool> appIsVersionValid(
   int appVersionMinor = int.tryParse(serverInfo.split('.')[1]) ?? 0;
   int appVersionPatch = int.tryParse(serverInfo.split('.')[2]) ?? 0;
 
-  logd('Server versions: = $appVersionMajor.$appVersionMinor.$appVersionPatch');
+  logv('Server versions: = $appVersionMajor.$appVersionMinor.$appVersionPatch');
 
   if (deviceMajor > appVersionMajor) {
     return true;

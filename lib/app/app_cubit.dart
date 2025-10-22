@@ -101,7 +101,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   }
 
   void _handleVersionUpdate(VersionUpdateInfo updateInfo) {
-    logd(
+    logv(
         '📊 Update details - Current: ${updateInfo.currentVersion}, Required: ${updateInfo.requiredVersion}, Recommended: ${updateInfo.recommendedVersion}');
 
     if (updateInfo.updateType == VersionUpdateType.required) {
@@ -121,7 +121,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       ));
     } else {
       // No update needed, clear any previous update state
-      logd('✨ No update needed, clearing version update state');
+      logv('✨ No update needed, clearing version update state');
       emitSafe(state.copyWith(
         versionUpdateInfo: updateInfo,
         showVersionUpdateBanner: false,
@@ -131,7 +131,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
 
   Future<void> checkForAppUpdates() async {
     try {
-      logd('Manually checking for app updates');
+      logv('Manually checking for app updates');
       await AppVersionUpdateService().forceVersionCheck();
     } catch (e) {
       loge('Error checking for app updates: $e');
@@ -239,7 +239,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
 
   void _initializeLifecycleService() {
     try {
-      logd('Initializing app lifecycle service');
+      logv('Initializing app lifecycle service');
 
       // Initialize the lifecycle service
       AppLifecycleService().initialize();
@@ -247,7 +247,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       // Subscribe to lifecycle events
       lifecycleSubscription = AppLifecycleService().lifecycleStream.listen(
         (AppLifecycleState state) {
-          logd('App lifecycle state changed: $state');
+          logv('App lifecycle state changed: $state');
           // The lifecycle service already handles version checking internally
           // We just log the state change here for debugging
         },

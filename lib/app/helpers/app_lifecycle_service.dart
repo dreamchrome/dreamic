@@ -25,7 +25,7 @@ class AppLifecycleService with WidgetsBindingObserver {
   void initialize() {
     if (_isInitialized) return;
 
-    logd('Initializing AppLifecycleService');
+    logv('Initializing AppLifecycleService');
     _lifecycleController = StreamController<AppLifecycleState>.broadcast();
     WidgetsBinding.instance.addObserver(this);
     _isInitialized = true;
@@ -35,7 +35,7 @@ class AppLifecycleService with WidgetsBindingObserver {
   void dispose() {
     if (!_isInitialized) return;
 
-    logd('Disposing AppLifecycleService');
+    logv('Disposing AppLifecycleService');
     WidgetsBinding.instance.removeObserver(this);
     _lifecycleController?.close();
     _lifecycleController = null;
@@ -46,7 +46,7 @@ class AppLifecycleService with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
-    logd('App lifecycle state changed: $state');
+    logv('App lifecycle state changed: $state');
     _lifecycleController?.add(state);
 
     switch (state) {
@@ -65,28 +65,28 @@ class AppLifecycleService with WidgetsBindingObserver {
   }
 
   void _handleAppResumed() {
-    logd('App resumed from background');
+    logv('App resumed from background');
 
     // Check if enough time has passed since last pause to trigger version check
     if (_lastPausedTime != null) {
       final timeSincePause = DateTime.now().difference(_lastPausedTime!);
 
       if (timeSincePause >= _versionCheckCooldown) {
-        logd(
+        logv(
             'Triggering version check after app resume (paused for ${timeSincePause.inMinutes} minutes)');
         _triggerVersionCheck();
       } else {
-        logd('Skipping version check, app was paused for only ${timeSincePause.inMinutes} minutes');
+        logv('Skipping version check, app was paused for only ${timeSincePause.inMinutes} minutes');
       }
     } else {
       // First time resuming, trigger version check
-      logd('First app resume, triggering version check');
+      logv('First app resume, triggering version check');
       _triggerVersionCheck();
     }
   }
 
   void _handleAppPaused() {
-    logd('App paused/backgrounded');
+    logv('App paused/backgrounded');
     _lastPausedTime = DateTime.now();
   }
 
@@ -102,7 +102,7 @@ class AppLifecycleService with WidgetsBindingObserver {
 
   /// Manually trigger a version check (useful for testing or manual refresh)
   Future<void> checkForUpdates() async {
-    logd('Manual version check triggered');
+    logv('Manual version check triggered');
     _triggerVersionCheck();
   }
 

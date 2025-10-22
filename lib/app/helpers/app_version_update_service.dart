@@ -79,7 +79,7 @@ class AppVersionUpdateService {
 
   /// Wait for Remote Config to be properly initialized before setting up listener
   Future<void> _waitForRemoteConfigInitialization() async {
-    logd('⏳ Waiting for Remote Config to be initialized...');
+    logv('⏳ Waiting for Remote Config to be initialized...');
 
     const maxAttempts = 10;
     const delay = Duration(milliseconds: 500);
@@ -89,20 +89,20 @@ class AppVersionUpdateService {
         // Try to read a value to verify Remote Config is working through dependency injection
         final testValue = g<RemoteConfigRepoInt>().getString('minimumAppVersionRecommendedApple');
 
-        logd('🔍 Attempt $attempt: Test value from DI: $testValue');
+        logv('🔍 Attempt $attempt: Test value from DI: $testValue');
 
         // If we can read values, Remote Config is initialized
         if (testValue.isNotEmpty) {
-          logd('✅ Remote Config verified as initialized on attempt $attempt');
+          logv('✅ Remote Config verified as initialized on attempt $attempt');
           return;
         }
 
         if (attempt < maxAttempts) {
-          logd('⏳ Remote Config not ready, waiting ${delay.inMilliseconds}ms before retry...');
+          logv('⏳ Remote Config not ready, waiting ${delay.inMilliseconds}ms before retry...');
           await Future.delayed(delay);
         }
       } catch (e) {
-        logd('⚠️ Error checking Remote Config on attempt $attempt: $e');
+        logv('⚠️ Error checking Remote Config on attempt $attempt: $e');
         if (attempt < maxAttempts) {
           await Future.delayed(delay);
         }
@@ -119,7 +119,7 @@ class AppVersionUpdateService {
       // Get current values before any operations for comparison
       final beforeRequired = AppConfigBase.minimumAppVersionRequiredApple;
       final beforeRecommended = AppConfigBase.minimumAppVersionRecommendedApple;
-      logd('Before - Required: $beforeRequired, Recommended: $beforeRecommended');
+      logv('Before - Required: $beforeRequired, Recommended: $beforeRecommended');
 
       // Note: We don't call fetchAndActivate here anymore because:
       // 1. When using mock Remote Config, there's nothing to fetch
@@ -129,12 +129,12 @@ class AppVersionUpdateService {
       // Get values after to verify they're available
       final afterRequired = AppConfigBase.minimumAppVersionRequiredApple;
       final afterRecommended = AppConfigBase.minimumAppVersionRecommendedApple;
-      logd('After - Required: $afterRequired, Recommended: $afterRecommended');
+      logv('After - Required: $afterRequired, Recommended: $afterRecommended');
 
       if (beforeRequired != afterRequired || beforeRecommended != afterRecommended) {
-        logd('🔄 Remote Config values have different values after check');
+        logv('🔄 Remote Config values have different values after check');
       } else {
-        logd('ℹ️ Remote Config values consistent');
+        logv('ℹ️ Remote Config values consistent');
       }
     } catch (e) {
       // Check if we have valid values
@@ -142,9 +142,9 @@ class AppVersionUpdateService {
       final currentRecommended = AppConfigBase.minimumAppVersionRecommendedApple;
 
       if (currentRequired != '0.0.0' || currentRecommended != '0.0.0') {
-        logd(
+        logv(
             '⚠️ Error ensuring Remote Config values, but valid values available - Required: $currentRequired, Recommended: $currentRecommended');
-        logd('Error details: $e');
+        logv('Error details: $e');
       } else {
         loge('❌ Error ensuring Remote Config values and no valid values available: $e');
       }
@@ -154,7 +154,7 @@ class AppVersionUpdateService {
   /// Subscribe to Firebase Remote Config updates
   void _subscribeToRemoteConfigUpdates() {
     if (kIsWeb) {
-      logd(
+      logv(
           '🌐 Skipping Remote Config listener setup on web platform (onConfigUpdated not supported)');
       return;
     }
@@ -162,11 +162,11 @@ class AppVersionUpdateService {
     // Only set up listener if we're using the live Firebase implementation
     // When using mock/emulator mode, there's no Firebase listener to set up
     if (AppConfigBase.doUseBackendEmulator && !AppConfigBase.doOverrideUseLiveRemoteConfig) {
-      logd('🔧 Skipping Remote Config listener setup - using mock implementation');
+      logv('🔧 Skipping Remote Config listener setup - using mock implementation');
       return;
     }
 
-    logd('🔌 Setting up Remote Config listener for version checking...');
+    logv('🔌 Setting up Remote Config listener for version checking...');
 
     try {
       // Cancel any existing subscription first
@@ -175,18 +175,18 @@ class AppVersionUpdateService {
 
       // Skip listener setup when using mock implementation (emulator mode)
       if (AppConfigBase.doUseBackendEmulator && !AppConfigBase.doOverrideUseLiveRemoteConfig) {
-        logd('🚫 Skipping Remote Config listener setup - using mock implementation');
+        logv('🚫 Skipping Remote Config listener setup - using mock implementation');
         return;
       }
 
       // Verify Remote Config instance is available
       // Note: This still uses Firebase directly for listener setup, but only when needed
       final instance = FirebaseRemoteConfig.instance;
-      logd('📡 Remote Config instance for listener: ${instance.hashCode}');
+      logv('📡 Remote Config instance for listener: ${instance.hashCode}');
 
       // Test connectivity by checking current values using AppConfigBase (proper DI)
       final currentValue = AppConfigBase.minimumAppVersionRecommendedApple;
-      logd('📱 Current Remote Config value (pre-listener) via AppConfigBase: $currentValue');
+      logv('📱 Current Remote Config value (pre-listener) via AppConfigBase: $currentValue');
 
       _remoteConfigSubscription = instance.onConfigUpdated.listen(
         (RemoteConfigUpdate update) async {
@@ -213,14 +213,14 @@ class AppVersionUpdateService {
               if (!AppConfigBase.doUseBackendEmulator ||
                   AppConfigBase.doOverrideUseLiveRemoteConfig) {
                 await FirebaseRemoteConfig.instance.activate();
-                logd('✅ Remote config values activated after listener update');
+                logv('✅ Remote config values activated after listener update');
               } else {
-                logd('✅ Using mock Remote Config - no activation needed');
+                logv('✅ Using mock Remote Config - no activation needed');
               }
 
               // Log values after activation using AppConfigBase (proper DI)
               final newValue = AppConfigBase.minimumAppVersionRecommendedApple;
-              logd('📱 New Remote Config value (post-activation) via AppConfigBase: $newValue');
+              logv('📱 New Remote Config value (post-activation) via AppConfigBase: $newValue');
 
               // Perform version check with updated values
               logd('🔍 Checking for version updates due to Remote Config change');
@@ -229,8 +229,8 @@ class AppVersionUpdateService {
               loge('❌ Error activating Remote Config after listener update: $e');
             }
           } else {
-            logd('ℹ️ Updated keys do not include version keys: ${update.updatedKeys}');
-            logd('⏭️ Skipping version check since no version-related keys were updated');
+            logv('ℹ️ Updated keys do not include version keys: ${update.updatedKeys}');
+            logv('⏭️ Skipping version check since no version-related keys were updated');
 
             // Still activate to ensure other systems get the updates
             try {
@@ -256,12 +256,12 @@ class AppVersionUpdateService {
         cancelOnError: false, // Keep listening even if individual updates fail
       );
 
-      logd('✅ Remote Config listener successfully established');
+      logv('✅ Remote Config listener successfully established');
 
       // Verify the listener is working by checking the subscription
       if (_remoteConfigSubscription != null) {
-        logd('🎯 Listener subscription confirmed: ${_remoteConfigSubscription.hashCode}');
-        logd('🔊 Listener is paused: ${_remoteConfigSubscription!.isPaused}');
+        logv('🎯 Listener subscription confirmed: ${_remoteConfigSubscription.hashCode}');
+        logv('🔊 Listener is paused: ${_remoteConfigSubscription!.isPaused}');
       } else {
         loge('❌ Failed to establish listener subscription');
       }
@@ -285,7 +285,7 @@ class AppVersionUpdateService {
 
       final isActive = _remoteConfigSubscription != null && !_remoteConfigSubscription!.isPaused;
       if (isActive) {
-        logd('💚 Remote Config listener health check: HEALTHY');
+        logv('💚 Remote Config listener health check: HEALTHY');
       } else {
         logw('⚠️ Remote Config listener health check: UNHEALTHY - attempting recovery');
         _attemptListenerRecovery();
@@ -295,7 +295,7 @@ class AppVersionUpdateService {
 
   /// Attempt to recover from listener failures
   void _attemptListenerRecovery() {
-    logd('🔄 Attempting Remote Config listener recovery...');
+    logv('🔄 Attempting Remote Config listener recovery...');
 
     // Cancel existing subscription
     _remoteConfigSubscription?.cancel();
@@ -307,7 +307,7 @@ class AppVersionUpdateService {
 
     Timer(initialDelay, () {
       if (_isInitialized) {
-        logd('🔄 Retrying Remote Config listener setup...');
+        logv('🔄 Retrying Remote Config listener setup...');
 
         try {
           _subscribeToRemoteConfigUpdates();
@@ -317,7 +317,7 @@ class AppVersionUpdateService {
           // Schedule another retry with longer delay
           Timer(maxDelay, () {
             if (_isInitialized) {
-              logd('🔄 Final listener recovery attempt...');
+              logv('🔄 Final listener recovery attempt...');
               try {
                 _subscribeToRemoteConfigUpdates();
               } catch (e) {
@@ -333,7 +333,7 @@ class AppVersionUpdateService {
   /// Check if an app update is available
   Future<VersionUpdateInfo> checkVersionUpdate() async {
     try {
-      logd('🔍 Starting version update check...');
+      logv('🔍 Starting version update check...');
 
       final packageInfo = await AppConfigBase.getAppVersion();
       final currentVersion = packageInfo.version;
@@ -341,18 +341,18 @@ class AppVersionUpdateService {
       final requiredVersion = _getRequiredVersion();
       final recommendedVersion = _getRecommendedVersion();
 
-      logd('=== Version Check Details ===');
-      logd('📱 Current app version: $currentVersion');
-      logd('🔒 Required version: $requiredVersion');
-      logd('💡 Recommended version: $recommendedVersion');
-      logd(
+      logv('=== Version Check Details ===');
+      logv('📱 Current app version: $currentVersion');
+      logv('🔒 Required version: $requiredVersion');
+      logv('💡 Recommended version: $recommendedVersion');
+      logv(
           '🖥️  Platform: ${kIsWeb ? 'Web' : Platform.isIOS ? 'iOS' : Platform.isAndroid ? 'Android' : 'Unknown'}');
 
       VersionUpdateType updateType = VersionUpdateType.none;
 
       // Check if current version meets required minimum
       final isRequiredVersionValid = await appIsVersionValid(requiredVersion);
-      logd('✅ Is required version valid: $isRequiredVersionValid');
+      logv('✅ Is required version valid: $isRequiredVersionValid');
 
       if (!isRequiredVersionValid) {
         updateType = VersionUpdateType.required;
@@ -360,13 +360,13 @@ class AppVersionUpdateService {
       } else {
         // Check if current version meets recommended minimum
         final isRecommendedVersionValid = await appIsVersionValid(recommendedVersion);
-        logd('💭 Is recommended version valid: $isRecommendedVersionValid');
+        logv('💭 Is recommended version valid: $isRecommendedVersionValid');
 
         if (!isRecommendedVersionValid) {
           updateType = VersionUpdateType.recommended;
           logd('📢 Recommended version update available - newer version recommended');
         } else {
-          logd('✨ No update needed - app is up to date');
+          logv('✨ No update needed - app is up to date');
         }
       }
 
@@ -378,12 +378,12 @@ class AppVersionUpdateService {
         appStoreUrl: AppConfigBase.appStoreUrl,
       );
 
-      logd('📤 Emitting version update info: ${updateInfo.updateType}');
+      logv('📤 Emitting version update info: ${updateInfo.updateType}');
 
       // Emit the update info
       _updateStreamController.add(updateInfo);
 
-      logd('🔍 Version update check completed');
+      logv('🔍 Version update check completed');
       return updateInfo;
     } catch (e) {
       loge('❌ Error checking version update: $e');
@@ -402,26 +402,26 @@ class AppVersionUpdateService {
     String version;
     if (kIsWeb) {
       version = AppConfigBase.minimumAppVersionRequiredWeb;
-      logd('Required version from Remote Config (Web): $version');
+      logv('Required version from Remote Config (Web): $version');
     } else if (Platform.isIOS) {
       version = AppConfigBase.minimumAppVersionRequiredApple;
-      logd('Required version from Remote Config (iOS): $version');
+      logv('Required version from Remote Config (iOS): $version');
     } else if (Platform.isAndroid) {
       version = AppConfigBase.minimumAppVersionRequiredGoogle;
-      logd('Required version from Remote Config (Android): $version');
+      logv('Required version from Remote Config (Android): $version');
     } else {
       version = '0.0.0';
-      logd('Required version defaulted for unknown platform: $version');
+      logv('Required version defaulted for unknown platform: $version');
     }
 
     // Also log the raw Remote Config value for debugging
     try {
       if (!kIsWeb && Platform.isIOS) {
         final rawValue = g<RemoteConfigRepoInt>().getString('minimumAppVersionRequiredApple');
-        logd('Raw Remote Config value for minimumAppVersionRequiredApple: $rawValue');
+        logv('Raw Remote Config value for minimumAppVersionRequiredApple: $rawValue');
       }
     } catch (e) {
-      logd('Could not get raw Remote Config value: $e');
+      logv('Could not get raw Remote Config value: $e');
     }
 
     return version;
@@ -432,26 +432,26 @@ class AppVersionUpdateService {
     String version;
     if (kIsWeb) {
       version = AppConfigBase.minimumAppVersionRecommendedWeb;
-      logd('Recommended version from Remote Config (Web): $version');
+      logv('Recommended version from Remote Config (Web): $version');
     } else if (Platform.isIOS) {
       version = AppConfigBase.minimumAppVersionRecommendedApple;
-      logd('Recommended version from Remote Config (iOS): $version');
+      logv('Recommended version from Remote Config (iOS): $version');
     } else if (Platform.isAndroid) {
       version = AppConfigBase.minimumAppVersionRecommendedGoogle;
-      logd('Recommended version from Remote Config (Android): $version');
+      logv('Recommended version from Remote Config (Android): $version');
     } else {
       version = '0.0.0';
-      logd('Recommended version defaulted for unknown platform: $version');
+      logv('Recommended version defaulted for unknown platform: $version');
     }
 
     // Also log the raw Remote Config value for debugging
     try {
       if (!kIsWeb && Platform.isIOS) {
         final rawValue = g<RemoteConfigRepoInt>().getString('minimumAppVersionRecommendedApple');
-        logd('Raw Remote Config value for minimumAppVersionRecommendedApple: $rawValue');
+        logv('Raw Remote Config value for minimumAppVersionRecommendedApple: $rawValue');
       }
     } catch (e) {
-      logd('Could not get raw Remote Config value: $e');
+      logv('Could not get raw Remote Config value: $e');
     }
 
     return version;
@@ -460,14 +460,14 @@ class AppVersionUpdateService {
   /// Force a version check (useful for app resume events)
   /// This uses cached values and listener updates to avoid hitting Firebase fetch limits
   Future<void> forceVersionCheck() async {
-    logd('🔄 Force checking version update (using cached values)');
+    logv('🔄 Force checking version update (using cached values)');
 
     // Don't fetch from server on app resume to avoid hitting 5 fetches/hour limit
     // The real-time listener will handle updates when they're published
     // and cached values are sufficient for version checking
 
-    logd('ℹ️ Using cached Remote Config values for version check');
-    logd('💡 Real-time updates will be handled by the onConfigUpdated listener');
+    logv('ℹ️ Using cached Remote Config values for version check');
+    logv('💡 Real-time updates will be handled by the onConfigUpdated listener');
 
     await checkVersionUpdate();
   }
@@ -475,28 +475,28 @@ class AppVersionUpdateService {
   /// Force a version check with fresh Remote Config fetch (debug use only)
   /// This should only be used for debugging as it counts toward Firebase's 5 fetches/hour limit
   Future<void> forceVersionCheckWithFetch() async {
-    logd('🔄 Force checking version update WITH Remote Config fetch (debug only)');
+    logv('🔄 Force checking version update WITH Remote Config fetch (debug only)');
 
     // Try to fetch latest remote config if possible
     try {
       // Updated condition to allow web platform force fetch
       if (!AppConfigBase.doUseBackendEmulator || AppConfigBase.doOverrideUseLiveRemoteConfig) {
-        logd(
+        logv(
             '⚠️ Attempting to fetch latest Remote Config for force check (counts toward 5/hour limit)...');
 
         // Web platform can fetch, but with additional logging
         if (kIsWeb) {
-          logd('🌐 Force fetching on web platform...');
+          logv('🌐 Force fetching on web platform...');
         }
 
         await FirebaseRemoteConfig.instance.fetchAndActivate();
-        logd('✅ Remote Config refreshed for force check');
+        logv('✅ Remote Config refreshed for force check');
       } else if (AppConfigBase.doUseBackendEmulator &&
           !AppConfigBase.doOverrideUseLiveRemoteConfig) {
-        logd('ℹ️ Using mock Remote Config - no fetch needed');
+        logv('ℹ️ Using mock Remote Config - no fetch needed');
       }
     } catch (e) {
-      logd('⚠️ Could not fetch remote config during force check (using cached values): $e');
+      logv('⚠️ Could not fetch remote config during force check (using cached values): $e');
       // Continue with cached values - this is not a critical error
     }
 
@@ -505,7 +505,7 @@ class AppVersionUpdateService {
 
   /// Dispose of the service
   void dispose() {
-    logd('Disposing AppVersionUpdateService');
+    logv('Disposing AppVersionUpdateService');
     _remoteConfigSubscription?.cancel();
     _updateStreamController.close();
     _isInitialized = false;
@@ -514,12 +514,12 @@ class AppVersionUpdateService {
   /// Check if the Remote Config listener is active and working
   bool isListenerActive() {
     final isActive = _remoteConfigSubscription != null && !_remoteConfigSubscription!.isPaused;
-    logd('🔍 Remote Config listener status: ${isActive ? "ACTIVE" : "INACTIVE"}');
+    logv('🔍 Remote Config listener status: ${isActive ? "ACTIVE" : "INACTIVE"}');
     if (_remoteConfigSubscription != null) {
-      logd(
+      logv(
           '📡 Subscription details: ${_remoteConfigSubscription.hashCode}, isPaused: ${_remoteConfigSubscription!.isPaused}');
     } else {
-      logd('❌ No subscription exists');
+      logv('❌ No subscription exists');
     }
     return isActive;
   }
@@ -537,7 +537,7 @@ class AppVersionUpdateService {
 
   /// Test the Remote Config listener by forcing a manual value check
   Future<void> testListener() async {
-    logd('🧪 Testing Remote Config listener...');
+    logv('🧪 Testing Remote Config listener...');
 
     try {
       if (_remoteConfigSubscription == null) {
@@ -547,25 +547,25 @@ class AppVersionUpdateService {
 
       // Check current subscription status
       final isActive = !_remoteConfigSubscription!.isPaused;
-      logd('📡 Listener subscription active: $isActive');
+      logv('📡 Listener subscription active: $isActive');
 
       // Test if we can read current values
       final currentValue = AppConfigBase.minimumAppVersionRecommendedApple;
-      logd('📱 Current test value via AppConfigBase: $currentValue');
+      logv('📱 Current test value via AppConfigBase: $currentValue');
 
       // Try to trigger a manual fetch to test listener responsiveness
       try {
         if (!AppConfigBase.doUseBackendEmulator || AppConfigBase.doOverrideUseLiveRemoteConfig) {
           final fetchResult = await FirebaseRemoteConfig.instance.fetchAndActivate();
-          logd('🔄 Manual fetch result: $fetchResult');
+          logv('🔄 Manual fetch result: $fetchResult');
         } else {
-          logd('🔄 Using mock Remote Config - no fetch needed');
+          logv('🔄 Using mock Remote Config - no fetch needed');
         }
       } catch (e) {
-        logd('⚠️ Manual fetch error (expected if throttled): $e');
+        logv('⚠️ Manual fetch error (expected if throttled): $e');
       }
 
-      logd('✅ Listener test completed');
+      logv('✅ Listener test completed');
     } catch (e) {
       loge('❌ Listener test failed: $e');
     }
