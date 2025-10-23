@@ -76,8 +76,13 @@ class Logger {
   }
 
   static bool _shouldLog(LogLevel messageLevel) {
-    final configLevel = AppConfigBase.logLevel;
-    return messageLevel.index >= configLevel.index;
+    try {
+      final configLevel = AppConfigBase.logLevel;
+      return messageLevel.index >= configLevel.index;
+    } catch (_) {
+      // If GetIt isn't initialized (e.g., in tests), default to debug level
+      return messageLevel.index >= LogLevel.debug.index;
+    }
   }
 
   static void _crashReport(Object error, {StackTrace? trace}) {

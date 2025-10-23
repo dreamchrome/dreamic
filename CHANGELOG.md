@@ -1,3 +1,11 @@
+## 0.0.10
+
+### Fixed
+* **Test Compatibility** - Logger and AppConfigBase now handle GetIt not being initialized (e.g., in test environments)
+  * Added try-catch blocks to safely handle cases where RemoteConfigRepoInt is not available
+  * Logger defaults to debug level when AppConfigBase.logLevel cannot be retrieved
+  * Prevents crashes when using logging utilities in unit tests without full app initialization
+
 ## 0.0.9
 
 ### Changed

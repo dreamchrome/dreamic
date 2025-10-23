@@ -191,10 +191,15 @@ class AppConfigBase {
     if (envValue.isNotEmpty) {
       value = envValue;
     } else {
-      final remoteValue = g<RemoteConfigRepoInt>().getString('logLevel');
-      if (remoteValue.isNotEmpty) {
-        value = remoteValue;
-      } else {
+      try {
+        final remoteValue = g<RemoteConfigRepoInt>().getString('logLevel');
+        if (remoteValue.isNotEmpty) {
+          value = remoteValue;
+        } else {
+          value = defaultRemoteConfig['logLevel'] as String;
+        }
+      } catch (_) {
+        // GetIt not initialized (e.g., in tests), use default
         value = defaultRemoteConfig['logLevel'] as String;
       }
     }
