@@ -11,6 +11,7 @@ A comprehensive guide to all features available in the Dreamic package for Flutt
 - [Version Management & Updates](#version-management--updates)
 - [Loading States & UI](#loading-states--ui)
 - [Error Handling](#error-handling)
+- [Testing](#testing)
 - [Utilities](#utilities)
 - [Presentation Components](#presentation-components)
 - [Repository Patterns](#repository-patterns)
@@ -2168,9 +2169,226 @@ void main() async {
 
 ---
 
+## Testing
+
+### Testing Widgets with Dreamic Components
+
+Location: `lib/test_utils/mock_app_cubit.dart`
+
+Dreamic provides utilities to help you test widgets that use Dreamic components like `TappableAction`, `AppRootWidget`, and other features that depend on `AppCubit`.
+
+#### Quick Start
+
+**1. Initialize TappableAction for Testing**
+
+Call this once at the start of test files that use TappableAction widgets:
+
+```dart
+void main() {
+  setUpAll(() {
+    initializeTappableActionForTesting();
+  });
+
+  group('MyWidget tests', () {
+    // Your tests here
+  });
+}
+```
+
+**2. Wrap Widgets with MockAppCubit**
+
+Use the `wrapWithMockAppCubit` helper to provide AppCubit context:
+
+```dart
+testWidgets('renders button correctly', (tester) async {
+  await tester.pumpWidget(
+    wrapWithMockAppCubit(
+      MaterialApp(
+        home: MyWidget(),
+      ),
+    ),
+  );
+  
+  expect(find.byType(MyWidget), findsOneWidget);
+});
+```
+
+#### Testing Different States
+
+**Network States:**
+```dart
+testWidgets('disables button when network is disconnected', (tester) async {
+  await tester.pumpWidget(
+    wrapWithMockAppCubit(
+      MaterialApp(home: MyButton()),
+      networkStatus: NetworkStatus.none,
+    ),
+  );
+  
+  // Button should be disabled
+  final button = find.byType(TappableAction);
+  expect(button, findsOneWidget);
+});
+```
+
+**Auth States:**
+```dart
+testWidgets('shows login prompt when not authenticated', (tester) async {
+  await tester.pumpWidget(
+    wrapWithMockAppCubit(
+      MaterialApp(home: MyAuthWidget()),
+      authStatus: AppAuthStatus.noauth,
+    ),
+  );
+  
+  expect(find.text('Please log in'), findsOneWidget);
+});
+```
+
+**App States:**
+```dart
+testWidgets('shows loading indicator during app loading', (tester) async {
+  await tester.pumpWidget(
+    wrapWithMockAppCubit(
+      MaterialApp(home: MyApp()),
+      appStatus: AppStatus.loading,
+    ),
+  );
+  
+  expect(find.byType(CircularProgressIndicator), findsOneWidget);
+});
+```
+
+#### MockAppCubit API
+
+The `MockAppCubit` class provides methods to dynamically change state during tests:
+
+```dart
+testWidgets('responds to network status changes', (tester) async {
+  final mockCubit = MockAppCubit();
+  
+  await tester.pumpWidget(
+    BlocProvider<AppCubit>.value(
+      value: mockCubit,
+      child: MaterialApp(home: MyWidget()),
+    ),
+  );
+  
+  // Initially connected
+  expect(mockCubit.state.networkStatus, NetworkStatus.connected);
+  
+  // Simulate network loss
+  mockCubit.setNetworkStatus(NetworkStatus.none);
+  await tester.pump();
+  
+  // Verify UI updated
+  expect(find.text('No connection'), findsOneWidget);
+  
+  // Restore connection
+  mockCubit.setNetworkStatus(NetworkStatus.connected);
+  await tester.pump();
+  
+  expect(find.text('No connection'), findsNothing);
+  
+  await mockCubit.close();
+});
+```
+
+**Available Setters:**
+- `setNetworkStatus(NetworkStatus)` - Change network connectivity
+- `setAuthStatus(AppAuthStatus)` - Change authentication state
+- `setAppStatus(AppStatus)` - Change app loading state
+
+#### Complete Example
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:dreamic/dreamic.dart';
+
+void main() {
+  setUpAll(() {
+    initializeTappableActionForTesting();
+  });
+
+  group('SaveButton', () {
+    testWidgets('calls onSave when tapped', (tester) async {
+      var tapped = false;
+      
+      await tester.pumpWidget(
+        wrapWithMockAppCubit(
+          MaterialApp(
+            home: Scaffold(
+              body: TappableAction(
+                onTap: () => tapped = true,
+                builder: (context, onTap) {
+                  return ElevatedButton(
+                    onPressed: onTap,
+                    child: Text('Save'),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      
+      await tester.tap(find.text('Save'));
+      await tester.pump();
+      
+      expect(tapped, isTrue);
+    });
+    
+    testWidgets('disables when network required but unavailable', (tester) async {
+      await tester.pumpWidget(
+        wrapWithMockAppCubit(
+          MaterialApp(
+            home: Scaffold(
+              body: TappableAction(
+                config: TappableActionConfig(requireNetwork: true),
+                onTap: () {},
+                builder: (context, onTap) {
+                  return ElevatedButton(
+                    onPressed: onTap,
+                    child: Text('Save'),
+                  );
+                },
+              ),
+            ),
+          ),
+          networkStatus: NetworkStatus.none,
+        ),
+      );
+      
+      final button = tester.widget<ElevatedButton>(
+        find.byType(ElevatedButton),
+      );
+      
+      expect(button.onPressed, isNull);
+    });
+  });
+}
+```
+
+#### Best Practices
+
+1. **Always initialize TappableAction**: Call `initializeTappableActionForTesting()` in `setUpAll()` to prevent timer-related test failures
+2. **Use wrapWithMockAppCubit for simplicity**: It handles the BlocProvider setup for you
+3. **Clean up MockAppCubit instances**: If creating MockAppCubit directly, call `await mockCubit.close()` in tearDown or at end of test
+4. **Test different states**: Use the provided parameters to test how your widgets behave in different network/auth/app states
+5. **Avoid real network calls**: MockAppCubit doesn't initialize network checking or version update services
+
+#### Additional Resources
+
+See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for comprehensive testing patterns, examples, and advanced scenarios.
+
+---
+
 ## Additional Resources
 
 - See individual documentation files in `/docs` for specific features
+- **Testing:**
+  - **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Comprehensive widget testing guide with Dreamic components
 - **Error Reporting:**
   - **[ERROR_REPORTING_GUIDE.md](ERROR_REPORTING_GUIDE.md)** - Complete error reporting integration guide (Firebase, Sentry, Bugsnag, custom services)
 - **App Updates:**
