@@ -1,3 +1,24 @@
+## 0.0.11
+
+### Added
+* **Test Utilities** - New testing support for widgets that use Dreamic components
+  * Added `MockAppCubit` class for widget testing with configurable network, auth, and app states
+  * Added `initializeTappableActionForTesting()` to prevent timer-related test failures
+  * Added `wrapWithMockAppCubit()` helper for easy test setup with BlocProvider
+  * Exported test utilities from main package for consumer access
+  * Supports dynamic state changes during tests via setter methods
+
+### Documentation
+* **TESTING_GUIDE.md** - Comprehensive testing guide with examples for:
+  * Testing TappableAction widgets with various configurations
+  * Testing network-dependent features and state transitions
+  * Testing authentication-dependent features
+  * Testing loading states and error scenarios
+  * Advanced patterns including async operations, golden tests, and complex state combinations
+  * Complete working examples and common issue solutions
+* **DREAMIC_FEATURES_GUIDE.md** - Added Testing section with quick start guide and best practices
+* **SETUP_NEW_PROJECT.md** - Renamed from SETUP_DREAMIC.md for clarity
+
 ## 0.0.10
 
 ### Fixed
