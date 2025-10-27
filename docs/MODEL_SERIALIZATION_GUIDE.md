@@ -9,14 +9,15 @@
 3. [Core Concepts](#core-concepts)
 4. [Method Reference](#method-reference)
 5. [Timestamp Converters](#timestamp-converters)
-6. [Common Use Cases](#common-use-cases)
-7. [Data Migration](#data-migration)
-8. [Decision Tree](#decision-tree)
-9. [Legacy Converters](#legacy-converters)
-10. [Migration Guide](#migration-guide)
-11. [Best Practices](#best-practices)
-12. [Troubleshooting](#troubleshooting)
-13. [Examples](#examples)
+6. [Enum Converters](#enum-converters)
+7. [Common Use Cases](#common-use-cases)
+8. [Data Migration](#data-migration)
+9. [Decision Tree](#decision-tree)
+10. [Legacy Converters](#legacy-converters)
+11. [Migration Guide](#migration-guide)
+12. [Best Practices](#best-practices)
+13. [Troubleshooting](#troubleshooting)
+14. [Examples](#examples)
 
 ---
 
@@ -606,6 +607,443 @@ final DateTime timestamp;  // Non-nullable
 | `TimestampMillisNullableConverter` | ✅ | Milliseconds | Function-safe (legacy) |
 | `TimestampCreationConverter` | ✅ | FieldValue | Auto-creation (legacy) |
 | `TimestampModifiedConverter` | ❌ | FieldValue | Auto-update (legacy) |
+
+---
+
+## Enum Converters
+
+### The Problem
+
+Enums can cause apps to crash when the server adds new enum values that older app versions don't recognize. This happens during deserialization when `json_serializable` encounters an unknown enum value.
+
+**Traditional approach (not recommended):**
+```dart
+enum UserType {
+  admin,
+  moderator,
+  standard,
+  unknown,  // ❌ Required in every enum
+}
+
+@JsonSerializable()
+class UserModel {
+  // ❌ Must remember this on every enum field
+  @JsonKey(unknownEnumValue: UserType.unknown)
+  final UserType type;
+}
+```
+
+**Problems with traditional approach:**
+- Easy to forget `@JsonKey(unknownEnumValue: ...)` annotation
+- Forces every enum to have an "unknown" value
+- Inconsistent handling across the codebase
+- No logging or tracking of unknown values
+
+### The Solution: Robust Enum Converters
+
+The Dreamic package provides three base classes for creating robust enum converters that handle unknown values gracefully:
+
+#### 1. NullableEnumConverter (Recommended for nullable fields)
+
+Use when the enum field is nullable and you want unknown values to be treated as null.
+
+```dart
+// Define your enum (no "unknown" value needed!)
+enum UserType {
+  admin,
+  moderator,
+  standard,
+}
+
+// Create a converter by extending NullableEnumConverter
+class UserTypeConverter extends NullableEnumConverter<UserType> {
+  const UserTypeConverter();
+
+  @override
+  List<UserType> get enumValues => UserType.values;
+}
+
+// Use in your model
+@JsonSerializable()
+class UserModel extends BaseFirestoreModel {
+  @UserTypeConverter()
+  final UserType? type;  // nullable - unknown values become null
+  
+  UserModel({this.type});
+  
+  factory UserModel.fromJson(Map<String, dynamic> json) =>
+      _$UserModelFromJson(json);
+  
+  @override
+  Map<String, dynamic> toJson() => _$UserModelToJson(this);
+}
+```
+
+**What happens:**
+- Known values (admin, moderator, standard) → Deserialize correctly
+- Unknown values (e.g., "superadmin" added by server) → Become `null`
+- App doesn't crash when server adds new enum values! ✅
+
+#### 2. DefaultEnumConverter (Recommended for non-nullable fields)
+
+Use when the enum field is required and you want unknown values to default to a specific value.
+
+```dart
+enum Priority {
+  low,
+  medium,
+  high,
+}
+
+class PriorityConverter extends DefaultEnumConverter<Priority> {
+  const PriorityConverter();
+
+  @override
+  List<Priority> get enumValues => Priority.values;
+
+  @override
+  Priority get defaultValue => Priority.medium;  // Fallback for unknown values
+}
+
+@JsonSerializable()
+class TaskModel extends BaseFirestoreModel {
+  @PriorityConverter()
+  final Priority priority;  // non-nullable - unknown values become 'medium'
+  
+  TaskModel({required this.priority});
+  
+  factory TaskModel.fromJson(Map<String, dynamic> json) =>
+      _$TaskModelFromJson(json);
+  
+  @override
+  Map<String, dynamic> toJson() => _$TaskModelToJson(this);
+}
+```
+
+**What happens:**
+- Known values (low, medium, high) → Deserialize correctly
+- Unknown values (e.g., "urgent" added by server) → Become `Priority.medium`
+- App doesn't crash! ✅
+
+#### 3. LoggingEnumConverter (Recommended for debugging/monitoring)
+
+Use when you want to track when unknown values are encountered (useful for debugging or error reporting).
+
+```dart
+enum PaymentStatus {
+  pending,
+  processing,
+  completed,
+  failed,
+}
+
+class PaymentStatusConverter extends LoggingEnumConverter<PaymentStatus> {
+  const PaymentStatusConverter();
+
+  @override
+  List<PaymentStatus> get enumValues => PaymentStatus.values;
+
+  @override
+  PaymentStatus get defaultValue => PaymentStatus.pending;
+
+  @override
+  void logUnknownValue(String value) {
+    // Use your app's logger
+    logger.log(
+      'Unknown PaymentStatus: $value, defaulting to pending',
+      logType: LogType.error,
+    );
+    
+    // Or report to error tracking service
+    // errorReporter.logError('Unknown PaymentStatus', extra: {'value': value});
+  }
+}
+
+@JsonSerializable()
+class PaymentModel extends BaseFirestoreModel {
+  @PaymentStatusConverter()
+  final PaymentStatus status;
+  
+  PaymentModel({required this.status});
+  
+  factory PaymentModel.fromJson(Map<String, dynamic> json) =>
+      _$PaymentModelFromJson(json);
+  
+  @override
+  Map<String, dynamic> toJson() => _$PaymentModelToJson(this);
+}
+```
+
+**What happens:**
+- Known values → Deserialize correctly
+- Unknown values → Logged AND default value returned
+- You get visibility into which unknown values are being encountered
+- App doesn't crash! ✅
+
+### Quick Reference
+
+| Converter Type | Field Type | Unknown Value Behavior | Use Case |
+|----------------|------------|------------------------|----------|
+| `NullableEnumConverter` | Nullable | Returns `null` | Optional enum fields |
+| `DefaultEnumConverter` | Non-nullable | Returns default value | Required enum fields |
+| `LoggingEnumConverter` | Non-nullable | Logs + returns default | Debugging/monitoring |
+
+### Complete Example
+
+```dart
+// 1. Define enums (no "unknown" values needed!)
+enum UserRole {
+  guest,
+  member,
+  moderator,
+  admin,
+}
+
+enum AccountStatus {
+  active,
+  suspended,
+  deleted,
+}
+
+enum SubscriptionTier {
+  free,
+  basic,
+  premium,
+}
+
+// 2. Create converters
+class UserRoleConverter extends DefaultEnumConverter<UserRole> {
+  const UserRoleConverter();
+
+  @override
+  List<UserRole> get enumValues => UserRole.values;
+
+  @override
+  UserRole get defaultValue => UserRole.guest;
+}
+
+class AccountStatusConverter extends NullableEnumConverter<AccountStatus> {
+  const AccountStatusConverter();
+
+  @override
+  List<AccountStatus> get enumValues => AccountStatus.values;
+}
+
+class SubscriptionTierConverter extends LoggingEnumConverter<SubscriptionTier> {
+  const SubscriptionTierConverter();
+
+  @override
+  List<SubscriptionTier> get enumValues => SubscriptionTier.values;
+
+  @override
+  SubscriptionTier get defaultValue => SubscriptionTier.free;
+
+  @override
+  void logUnknownValue(String value) {
+    logger.log('Unknown SubscriptionTier: $value', logType: LogType.warning);
+  }
+}
+
+// 3. Use in model
+@JsonSerializable(explicitToJson: true)
+class UserModel extends BaseFirestoreModel {
+  @JsonKey(includeFromJson: true, includeToJson: false)
+  final String id;
+  
+  final String name;
+  final String email;
+  
+  @UserRoleConverter()
+  final UserRole role;  // Non-nullable, defaults to 'guest'
+  
+  @AccountStatusConverter()
+  final AccountStatus? status;  // Nullable, unknown becomes null
+  
+  @SubscriptionTierConverter()
+  final SubscriptionTier tier;  // Non-nullable, logged, defaults to 'free'
+  
+  @SmartTimestampConverter()
+  final DateTime? createdAt;
+  
+  @SmartTimestampConverter()
+  final DateTime? updatedAt;
+  
+  UserModel({
+    this.id = '',
+    required this.name,
+    required this.email,
+    required this.role,
+    this.status,
+    required this.tier,
+    this.createdAt,
+    this.updatedAt,
+  });
+  
+  factory UserModel.fromJson(Map<String, dynamic> json) =>
+      _$UserModelFromJson(json);
+  
+  @override
+  Map<String, dynamic> toJson() => _$UserModelToJson(this);
+  
+  factory UserModel.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>;
+    return UserModel.fromJson({'id': doc.id, ...data});
+  }
+}
+```
+
+### Benefits Over Traditional Approach
+
+✅ **No "unknown" values required** - Keep enums clean with only meaningful values  
+✅ **Centralized handling** - Define converter once, use everywhere  
+✅ **No forgotten annotations** - Converter handles it automatically  
+✅ **Crash-proof** - Old apps don't crash when server adds new enum values  
+✅ **Flexible strategies** - Choose null, default, or logging behavior  
+✅ **Better debugging** - Optional logging shows when unknown values appear  
+✅ **Type-safe** - Full Dart type checking maintained  
+✅ **Migration friendly** - Easy to add to existing enums  
+
+### Migration from Traditional Approach
+
+**Before:**
+```dart
+enum UserType {
+  admin,
+  moderator,
+  standard,
+  unknown,  // Had to include this
+}
+
+@JsonSerializable()
+class UserModel {
+  @JsonKey(unknownEnumValue: UserType.unknown)  // Had to remember this
+  final UserType type;
+}
+```
+
+**After:**
+```dart
+enum UserType {
+  admin,
+  moderator,
+  standard,
+  // No "unknown" needed!
+}
+
+class UserTypeConverter extends NullableEnumConverter<UserType> {
+  const UserTypeConverter();
+  @override
+  List<UserType> get enumValues => UserType.values;
+}
+
+@JsonSerializable()
+class UserModel {
+  @UserTypeConverter()  // Converter handles everything
+  final UserType? type;
+}
+```
+
+### Best Practices
+
+1. **Create one converter per enum** in a dedicated file:
+   ```
+   lib/
+     data/
+       models/
+         enums/
+           user_type.dart        # enum UserType { ... }
+           priority.dart         # enum Priority { ... }
+         converters/
+           user_type_converter.dart
+           priority_converter.dart
+   ```
+
+2. **Use NullableEnumConverter for optional fields:**
+   ```dart
+   @UserTypeConverter()
+   final UserType? type;  // Can be null
+   ```
+
+3. **Use DefaultEnumConverter for required fields:**
+   ```dart
+   @PriorityConverter()
+   final Priority priority;  // Always has a value
+   ```
+
+4. **Use LoggingEnumConverter in critical areas:**
+   ```dart
+   @PaymentStatusConverter()
+   final PaymentStatus status;  // Log when unknown values appear
+   ```
+
+5. **Choose sensible defaults:**
+   ```dart
+   // ✅ Good - safe default
+   @override
+   UserRole get defaultValue => UserRole.guest;
+   
+   // ✅ Good - neutral default
+   @override
+   Priority get defaultValue => Priority.medium;
+   
+   // ❌ Bad - dangerous default
+   @override
+   UserRole get defaultValue => UserRole.admin;  // Don't default to admin!
+   ```
+
+### Troubleshooting
+
+#### Issue: Converter not being used
+
+**Problem**: json_serializable not finding the converter
+
+**Solution**: Make sure to:
+1. Import the converter file
+2. Run `dart run build_runner build --delete-conflicting-outputs`
+3. Check that converter class is public (not prefixed with `_`)
+
+#### Issue: Still getting crashes
+
+**Problem**: Enum field doesn't have converter annotation
+
+**Solution**: Ensure every enum field has the converter:
+```dart
+// ❌ Missing converter
+final UserType type;
+
+// ✅ Has converter
+@UserTypeConverter()
+final UserType? type;
+```
+
+#### Issue: Want different behavior for different contexts
+
+**Problem**: Need different fallback logic in different models
+
+**Solution**: Create multiple converters for the same enum:
+```dart
+class UserTypeNullableConverter extends NullableEnumConverter<UserType> {
+  const UserTypeNullableConverter();
+  @override
+  List<UserType> get enumValues => UserType.values;
+}
+
+class UserTypeGuestConverter extends DefaultEnumConverter<UserType> {
+  const UserTypeGuestConverter();
+  @override
+  List<UserType> get enumValues => UserType.values;
+  @override
+  UserType get defaultValue => UserType.guest;
+}
+
+class UserTypeMemberConverter extends DefaultEnumConverter<UserType> {
+  const UserTypeMemberConverter();
+  @override
+  List<UserType> get enumValues => UserType.values;
+  @override
+  UserType get defaultValue => UserType.member;
+}
+```
 
 ---
 

@@ -1,3 +1,47 @@
+## 0.0.12
+
+### Added
+* **Robust Enum Converters** - Crash-proof enum serialization that handles unknown values gracefully
+  * Added `RobustEnumConverter<T>` base class for creating enum converters
+  * Added `NullableEnumConverter<T>` - returns null for unknown enum values (recommended for nullable fields)
+  * Added `DefaultEnumConverter<T>` - returns a default value for unknown enum values (recommended for non-nullable fields)
+  * Added `LoggingEnumConverter<T>` - logs unknown values before returning default (recommended for monitoring)
+  * Solves the problem of old app versions crashing when server adds new enum values
+  * No need for `@JsonKey(unknownEnumValue: ...)` on every field
+  * No need for "unknown" value in every enum
+  * Forward compatible - old apps gracefully handle new server enum values
+
+### Documentation
+* **ENUM_QUICK_START.md** - 5-minute quick start guide
+  * Simple step-by-step instructions
+  * Strategy selection guide
+  * Real-world examples
+  * Clear and concise format
+* **ENUM_SOLUTION_ARCHITECTURE.md** - Design decisions document
+  * Problem analysis and solution rationale
+  * Architecture decisions and trade-offs
+  * Implementation structure overview
+* **MODEL_SERIALIZATION_GUIDE.md** - Added comprehensive "Enum Converters" section
+  * Problem explanation and traditional approach issues
+  * Detailed guide for each converter type
+  * Real-world scenarios and use cases
+  * Benefits over traditional approach
+  * Migration guide and best practices
+  * Troubleshooting section
+* **enum_example.dart** - Complete real-world example showing:
+  * Multiple enum types in one application
+  * Different converter strategies for different use cases
+  * Service layer integration
+  * Backward compatibility scenarios
+
+### Tests
+* **enum_converters_test.dart** - Comprehensive test suite for enum converters
+  * Tests for all three converter types (Nullable, Default, Logging)
+  * Real-world backward compatibility scenarios
+  * Edge cases (empty strings, whitespace, case sensitivity)
+  * Multiple unknown values handling
+  * Roundtrip conversion tests
+
 ## 0.0.11
 
 ### Added
