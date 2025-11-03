@@ -1,8 +1,14 @@
 //
 // Web Remote Config Refresh Service
 //
-// Since web platforms don't support onConfigUpdated listeners,
-// this service provides periodic refresh functionality for web builds
+// ⚠️ DEPRECATED: This service is no longer needed!
+// As of firebase_remote_config 6.1.0, onConfigUpdated is now supported on web platforms.
+// This file is kept for backward compatibility but should not be used in new code.
+// The onConfigUpdated listener in AppVersionUpdateService now handles all platforms including web.
+//
+// Historical Note:
+// This service was created when web platforms didn't support onConfigUpdated listeners.
+// It provided periodic refresh functionality (every 5 minutes) as a workaround.
 //
 
 import 'dart:async';
@@ -11,6 +17,7 @@ import 'package:flutter/foundation.dart';
 import 'package:dreamic/app/app_config_base.dart';
 import 'package:dreamic/utils/logger.dart';
 
+@Deprecated('No longer needed - onConfigUpdated now works on web (firebase_remote_config 6.1.0+)')
 class WebRemoteConfigRefreshService {
   static WebRemoteConfigRefreshService? _instance;
   static WebRemoteConfigRefreshService get instance =>

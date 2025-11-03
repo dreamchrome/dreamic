@@ -152,13 +152,8 @@ class AppVersionUpdateService {
   }
 
   /// Subscribe to Firebase Remote Config updates
+  /// Note: As of firebase_remote_config 6.1.0, onConfigUpdated is now supported on web!
   void _subscribeToRemoteConfigUpdates() {
-    if (kIsWeb) {
-      logv(
-          '🌐 Skipping Remote Config listener setup on web platform (onConfigUpdated not supported)');
-      return;
-    }
-
     // Only set up listener if we're using the live Firebase implementation
     // When using mock/emulator mode, there's no Firebase listener to set up
     if (AppConfigBase.doUseBackendEmulator && !AppConfigBase.doOverrideUseLiveRemoteConfig) {
@@ -166,21 +161,22 @@ class AppVersionUpdateService {
       return;
     }
 
-    logv('🔌 Setting up Remote Config listener for version checking...');
+    final platform = kIsWeb
+        ? 'Web'
+        : Platform.isIOS
+            ? 'iOS'
+            : Platform.isAndroid
+                ? 'Android'
+                : 'Unknown';
+    logv('🔌 Setting up Remote Config listener for version checking on $platform...');
 
     try {
       // Cancel any existing subscription first
       _remoteConfigSubscription?.cancel();
       _remoteConfigSubscription = null;
 
-      // Skip listener setup when using mock implementation (emulator mode)
-      if (AppConfigBase.doUseBackendEmulator && !AppConfigBase.doOverrideUseLiveRemoteConfig) {
-        logv('🚫 Skipping Remote Config listener setup - using mock implementation');
-        return;
-      }
-
       // Verify Remote Config instance is available
-      // Note: This still uses Firebase directly for listener setup, but only when needed
+      // Note: onConfigUpdated now works on all platforms including web (as of v6.1.0)
       final instance = FirebaseRemoteConfig.instance;
       logv('📡 Remote Config instance for listener: ${instance.hashCode}');
 
@@ -458,7 +454,9 @@ class AppVersionUpdateService {
   }
 
   /// Force a version check (useful for app resume events)
-  /// This uses cached values and listener updates to avoid hitting Firebase fetch limits
+  /// This uses cached values and listener updates to avoid hitting Firebase fetch limits.
+  /// Note: The onConfigUpdated listener (now supported on all platforms including web)
+  /// will automatically handle real-time updates when they're published.
   Future<void> forceVersionCheck() async {
     logv('🔄 Force checking version update (using cached values)');
 
@@ -467,27 +465,22 @@ class AppVersionUpdateService {
     // and cached values are sufficient for version checking
 
     logv('ℹ️ Using cached Remote Config values for version check');
-    logv('💡 Real-time updates will be handled by the onConfigUpdated listener');
+    logv('💡 Real-time updates will be handled by the onConfigUpdated listener (all platforms)');
 
     await checkVersionUpdate();
   }
 
   /// Force a version check with fresh Remote Config fetch (debug use only)
-  /// This should only be used for debugging as it counts toward Firebase's 5 fetches/hour limit
+  /// This should only be used for debugging as it counts toward Firebase's 5 fetches/hour limit.
+  /// Note: This is rarely needed now that onConfigUpdated works on all platforms including web.
   Future<void> forceVersionCheckWithFetch() async {
     logv('🔄 Force checking version update WITH Remote Config fetch (debug only)');
 
     // Try to fetch latest remote config if possible
     try {
-      // Updated condition to allow web platform force fetch
       if (!AppConfigBase.doUseBackendEmulator || AppConfigBase.doOverrideUseLiveRemoteConfig) {
         logv(
             '⚠️ Attempting to fetch latest Remote Config for force check (counts toward 5/hour limit)...');
-
-        // Web platform can fetch, but with additional logging
-        if (kIsWeb) {
-          logv('🌐 Force fetching on web platform...');
-        }
 
         await FirebaseRemoteConfig.instance.fetchAndActivate();
         logv('✅ Remote Config refreshed for force check');

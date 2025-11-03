@@ -11,6 +11,7 @@
 // 4. ✅ Uses Firebase values only when they exist and are successfully fetched
 // 5. ✅ Comprehensive logging to identify value sources and issues
 // 6. ✅ Defensive programming in the repository layer
+// 7. ✅ Real-time updates via onConfigUpdated on ALL platforms (iOS, Android, Web)
 //
 // This means your app will work perfectly even if:
 // - Firebase Remote Config console is not set up
@@ -19,6 +20,7 @@
 // - Rate limits are hit during development
 //
 // Firebase values will be used automatically when they become available.
+// Real-time updates work seamlessly across all platforms (firebase_remote_config 6.1.0+).
 
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -28,7 +30,6 @@ import 'package:dreamic/data/repos/remote_config_repo_mockimpl.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
 import 'package:dreamic/data/repos/remote_config_repo_liveimple.dart';
-import 'package:dreamic/app/helpers/web_remote_config_refresh_service.dart';
 import 'package:get_it/get_it.dart';
 
 Future<void> appInitRemoteConfig({
@@ -43,53 +44,6 @@ Future<void> appInitRemoteConfig({
     await _initLiveRemoteConfig(
       additionalDefaultConfigs: additionalDefaultConfigs,
     );
-  }
-}
-
-/// Force a fetch on web platforms for initial startup
-/// Web platforms need this explicit fetch since real-time listeners don't work
-Future<void> webForceInitialFetch() async {
-  if (!kIsWeb) {
-    return;
-  }
-
-  logv('🌐 Web platform: Forcing initial Remote Config fetch...');
-
-  try {
-    // Set minimal fetch interval for immediate fetch
-    await FirebaseRemoteConfig.instance.setConfigSettings(
-      RemoteConfigSettings(
-        fetchTimeout: const Duration(seconds: 10),
-        minimumFetchInterval: Duration.zero,
-      ),
-    );
-
-    // Force fetch and activate
-    final result = await FirebaseRemoteConfig.instance.fetchAndActivate();
-    logv('🌐 Web initial fetch result: $result');
-
-    // Check value source
-    final testValue = FirebaseRemoteConfig.instance.getValue('minimumAppVersionRecommendedApple');
-    logv('🌐 Web fetch value source: ${testValue.source}');
-    logv('🌐 Web fetch value: "${testValue.asString()}"');
-
-    // Reset fetch interval
-    await FirebaseRemoteConfig.instance.setConfigSettings(
-      RemoteConfigSettings(
-        fetchTimeout: const Duration(seconds: 10),
-        minimumFetchInterval: kDebugMode ? const Duration(seconds: 10) : const Duration(hours: 1),
-      ),
-    );
-
-    if (testValue.source == ValueSource.valueRemote) {
-      logd('✅ Web platform successfully fetched Remote Config values from server');
-    } else {
-      logv(
-          '⚠️ Web platform using default values - Remote Config may not be set up in Firebase Console');
-    }
-  } catch (e) {
-    logd('⚠️ Web platform initial fetch failed: $e');
-    logv('ℹ️ Continuing with default values');
   }
 }
 
@@ -139,14 +93,6 @@ Future<void> _initLiveRemoteConfig({
   // Now try to fetch from Firebase - but this is optional
   // If it fails, we'll just continue with defaults
   await _attemptFirebaseFetch();
-
-  // For web platforms, force an additional fetch since real-time listeners don't work
-  if (kIsWeb) {
-    await webForceInitialFetch();
-
-    // Initialize the web refresh service for periodic updates
-    await WebRemoteConfigRefreshService.instance.initialize();
-  }
 
   // Verify Remote Config is operational
   await _verifyRemoteConfigInitialization();
@@ -376,12 +322,6 @@ Future<void> testRemoteConfigValues() async {
     final valueSource =
         FirebaseRemoteConfig.instance.getValue('minimumAppVersionRecommendedApple').source;
     logd('🔍 Value source for minimumAppVersionRecommendedApple: $valueSource');
-
-    // Web-specific status
-    if (kIsWeb) {
-      final refreshServiceStatus = WebRemoteConfigRefreshService.instance.getStatus();
-      logv('🌐 Web refresh service status: $refreshServiceStatus');
-    }
 
     logd('✅ Remote Config test completed');
   } catch (e) {

@@ -32,7 +32,6 @@ export 'app/helpers/app_version_update_service.dart';
 export 'app/helpers/app_lifecycle_service.dart';
 export 'app/helpers/app_remote_config_init.dart';
 export 'app/helpers/debug_remote_config_web.dart';
-export 'app/helpers/web_remote_config_refresh_service.dart';
 export 'app/helpers/error_reporter_interface.dart';
 export 'app/helpers/app_errorhandling_init.dart';
 
