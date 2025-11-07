@@ -38,12 +38,46 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   }) : super(const AppState());
 
   @override
-  Future<void> close() {
-    connectionChecker?.dispose(); // Dispose of the InternetConnectionChecker instance
-    versionUpdateSubscription?.cancel();
-    lifecycleSubscription?.cancel();
-    AppVersionUpdateService().dispose();
-    AppLifecycleService().dispose();
+  Future<void> close() async {
+    // Clean up all stream subscriptions and services
+    // Use try-catch for each to ensure all cleanup happens even if one fails
+    try {
+      await connectionCheckerSubscription?.cancel();
+    } catch (e) {
+      loge(e, 'Error canceling connection checker subscription');
+    }
+
+    try {
+      await versionUpdateSubscription?.cancel();
+    } catch (e) {
+      loge(e, 'Error canceling version update subscription');
+    }
+
+    try {
+      await lifecycleSubscription?.cancel();
+    } catch (e) {
+      loge(e, 'Error canceling lifecycle subscription');
+    }
+
+    try {
+      connectionChecker?.dispose();
+    } catch (e) {
+      loge(e, 'Error disposing connection checker');
+    }
+
+    try {
+      AppVersionUpdateService().dispose();
+    } catch (e) {
+      loge(e, 'Error disposing AppVersionUpdateService');
+    }
+
+    try {
+      AppLifecycleService().dispose();
+    } catch (e) {
+      loge(e, 'Error disposing AppLifecycleService');
+    }
+
+    // Always call super.close() even if cleanup fails
     return super.close();
   }
 
