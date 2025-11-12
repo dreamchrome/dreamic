@@ -95,6 +95,7 @@ The system SHALL handle errors gracefully and report them to consuming apps.
 - **THEN** the service SHALL display the notification without the image
 - **AND** SHALL log the error
 - **AND** SHALL optionally call error callback if provided
+- **AND** SHALL not delay notification display
 
 #### Scenario: Platform API error
 - **GIVEN** a platform notification API throws an error
@@ -110,6 +111,15 @@ The system SHALL handle errors gracefully and report them to consuming apps.
 - **THEN** the service SHALL use sensible defaults
 - **AND** SHALL log a warning
 - **AND** SHALL still attempt to display the notification
+- **AND** SHALL not crash the app
+
+#### Scenario: Handle permission denial
+- **GIVEN** notification permissions are requested
+- **WHEN** the user denies permissions
+- **THEN** the service SHALL return a denied status
+- **AND** SHALL log the denial for diagnostics
+- **AND** SHALL not crash or throw exceptions
+- **AND** SHALL allow the app to continue functioning
 
 ### Requirement: Notification ID Management
 
@@ -487,32 +497,7 @@ The system SHALL integrate with existing FCM token management in `AuthServiceImp
 - **AND** SHALL defer FCM token registration until authentication completes
 - **AND** SHALL not block initialization on authentication
 
-### Requirement: Error Handling
 
-The system SHALL handle errors gracefully and report them appropriately.
-
-#### Scenario: Handle permission denial
-- **GIVEN** notification permissions are requested
-- **WHEN** the user denies permissions
-- **THEN** the service SHALL return a denied status
-- **AND** SHALL log the denial for diagnostics
-- **AND** SHALL not crash or throw exceptions
-- **AND** SHALL allow the app to continue functioning
-
-#### Scenario: Handle image download failure
-- **GIVEN** a notification includes an image URL
-- **WHEN** the image fails to download (network error, invalid URL)
-- **THEN** the service SHALL log the error
-- **AND** SHALL display the notification without the image
-- **AND** SHALL not delay notification display
-
-#### Scenario: Handle malformed notification data
-- **GIVEN** a notification contains invalid or malformed data
-- **WHEN** the notification is processed
-- **THEN** the service SHALL parse what it can
-- **AND** SHALL log the malformed fields
-- **AND** SHALL display a basic notification if possible
-- **AND** SHALL not crash the app
 
 ### Requirement: Platform Compatibility
 
