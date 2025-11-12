@@ -50,12 +50,13 @@
   - [ ] `updateBadgeCount(int count)` - Set badge count
   - [ ] `clearBadge()` - Clear badge
   - [ ] `getBadgeCount()` - Get current badge count
-- [ ] Implement FCM integration:
-  - [ ] Register `onBackgroundMessage` handler
+- [ ] Implement FCM message handling (token management stays in AuthServiceImpl):
+  - [ ] Register `onBackgroundMessage` handler for incoming FCM messages
   - [ ] Handle foreground messages via `onMessage` stream
-  - [ ] Handle notification taps via `onMessageOpenedApp` stream
+  - [ ] Handle notification taps via `onMessageOpenedApp` stream  
   - [ ] Handle notification taps when app is terminated via `getInitialMessage()`
   - [ ] Parse `RemoteMessage` to `NotificationPayload`
+  - [ ] Note: Token registration/refresh remains in `AuthServiceImpl.initFCM()`
 - [ ] Add unit tests for `NotificationService` core logic
 
 ## 4. Platform-Specific Implementations
@@ -172,13 +173,18 @@
 
 ## 11. AuthServiceImpl Integration
 
-- [ ] Modify `lib/data/repos/auth_service_impl.dart`:
-  - [ ] Update `initFCM()` to optionally notify NotificationService if it has been initialized
+- [ ] **Keep** existing FCM token management in `lib/data/repos/auth_service_impl.dart`:
+  - [ ] `initFCM()` continues to handle token lifecycle (get token, register with backend, handle refresh)
+  - [ ] Token registration via `notificationsUpdateFcmToken` function call stays unchanged
+  - [ ] Token cleared on sign-out stays unchanged
+  - [ ] This works whether or not NotificationService is used
+- [ ] **Add** optional NotificationService notification:
   - [ ] Check if NotificationService instance exists before calling it
+  - [ ] Optionally notify NotificationService of token updates (for diagnostics only)
   - [ ] **DO NOT** create or initialize NotificationService automatically
-  - [ ] Ensure token updates propagate to notification service only if it's active
-  - [ ] Apps that don't use notifications should not be affected by FCM token registration
+  - [ ] Apps that don't use NotificationService are unaffected
 - [ ] Add integration tests for FCM token flow with and without NotificationService
+- [ ] Document that token management is separate from notification display
 
 ## 12. Background Message Handler
 

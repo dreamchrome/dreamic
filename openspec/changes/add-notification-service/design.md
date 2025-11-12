@@ -53,20 +53,39 @@ class NotificationService {
 - **iOS AppDelegate modifications are in consuming app, not this package**
 - Package does not modify native platform files automatically
 
-### 1. Service Separation
+### 1. Service Separation - FCM Token vs Notification Handling
 
-**Decision**: Create a dedicated `NotificationService` separate from `AuthServiceImpl`.
+**Decision**: Split FCM responsibilities between `AuthServiceImpl` (token management) and `NotificationService` (notification handling).
 
 **Rationale**:
-- `AuthServiceImpl` already handles FCM token registration (closely tied to user identity)
-- Notification handling (display, routing, badges) is functionally distinct from authentication
-- Separation of concerns: authentication vs notification presentation/routing
-- Easier testing and maintenance
+- **FCM token management is an authentication concern:**
+  - Tokens are tied to user identity
+  - Token registration requires calling backend functions (user-specific)
+  - Token lifecycle follows auth lifecycle (clear on sign-out, refresh on sign-in)
+  - Already implemented and working in `AuthServiceImpl.initFCM()`
+- **Notification display/handling is a presentation concern:**
+  - Showing notifications (local & remote)
+  - Routing notification taps to screens
+  - Managing badge counts
+  - Handling action buttons
+  - These should be optional features apps can opt into
 
 **Implementation**:
-- `AuthServiceImpl.initFCM()` remains responsible for token lifecycle
-- New `NotificationService` handles everything else (local notifications, routing, badges)
-- Services communicate via callbacks and `GetIt` dependency injection
+- `AuthServiceImpl.initFCM()` **keeps** responsibility for:
+  - Getting FCM token from Firebase
+  - Calling `notificationsUpdateFcmToken` backend function
+  - Listening to `onTokenRefresh` stream
+  - Storing token in SharedPreferences
+  - Clearing token on sign-out
+- New `NotificationService` handles:
+  - Registering FCM message handlers (`onMessage`, `onBackgroundMessage`, `onMessageOpenedApp`)
+  - Displaying local notifications
+  - Parsing notification payloads
+  - Routing notification taps
+  - Managing badges
+  - Action buttons
+- `AuthServiceImpl` can optionally notify `NotificationService` when token updates (if it's initialized)
+- Services communicate via callbacks and `GetIt` dependency injection when both are active
 
 ### 2. Notification Routing Strategy
 
@@ -206,10 +225,17 @@ class NotificationPayload {
 ## Integration Points
 
 ### With Firebase Cloud Messaging
-- FCM token registration remains in `AuthServiceImpl.initFCM()`
-- Token updates trigger `NotificationService.updateFCMToken()`
-- Background message handler registered at app initialization
-- FCM data payload converted to `NotificationPayload`
+- **FCM token management stays in `AuthServiceImpl.initFCM()`:**
+  - Gets token, registers with backend via `notificationsUpdateFcmToken`
+  - Handles token refresh lifecycle
+  - Tied to user authentication state
+- **Notification handling moves to `NotificationService`:**
+  - Registers message handlers (`onMessage`, `onBackgroundMessage`, `onMessageOpenedApp`)
+  - Displays notifications when FCM messages arrive
+  - Parses FCM data payload into `NotificationPayload`
+  - Routes notification taps to app screens
+- `AuthServiceImpl` can optionally notify `NotificationService` of token updates for diagnostic purposes
+- Apps that don't use `NotificationService` still get FCM tokens registered (for potential backend use)
 
 ### With AppCubit
 - `AppCubit.onNotificationTapped()` - Routing callback
