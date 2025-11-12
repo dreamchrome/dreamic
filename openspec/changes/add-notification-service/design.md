@@ -232,7 +232,35 @@ class NotificationService {
 }
 ```
 
-### 8. Notification Data Model
+### 8. Web Platform Limitations and Fallbacks
+
+**Decision**: Document web platform limitations and provide graceful fallbacks.
+
+**Limitations**:
+- **No badges**: Browser API doesn't support app icon badges
+- **No background notifications**: Requires service worker registration (consuming app responsibility)
+- **Browser-controlled permissions**: Can't customize permission prompt
+- **No rich notifications**: Limited to title + body + icon
+- **No action buttons**: Browser support is inconsistent
+- **No notification sounds**: Browser controls sound
+
+**Fallback Strategy**:
+- Badge count → Update page title with count: "(3) My App"
+- Rich media → Display text-only notification
+- Action buttons → Single tap opens app
+- Background handling → Requires app to register service worker (documented)
+
+**Implementation**:
+```dart
+class NotificationServiceWeb {
+  Future<void> updateBadgeCount(int count) async {
+    // Fallback: Update page title
+    html.document.title = count > 0 ? '($count) ${originalTitle}' : originalTitle;
+  }
+}
+```
+
+### 9. Notification Data Model
 
 **Decision**: Create a strongly-typed `NotificationPayload` model.
 

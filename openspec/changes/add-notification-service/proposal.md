@@ -35,10 +35,17 @@ Apps using Dreamic currently must implement ~300 lines of boilerplate code in `m
 ### What Apps Actually Need
 
 ```dart
-// In main.dart - ONE LINE
-await NotificationService().initialize(
-  onNotificationTapped: (route, data) => appRouter.navigateNamed(route),
-);
+// In main.dart - TWO LINES (background handler must be top-level per Dart requirement)
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  FirebaseMessaging.onBackgroundMessage(dreamicNotificationBackgroundHandler);
+  
+  await NotificationService().initialize(
+    onNotificationTapped: (route, data) => appRouter.navigateNamed(route),
+  );
+  
+  runApp(MyApp());
+}
 
 // When you want to ask for permissions - ONE LINE with automatic recovery
 await NotificationService().requestPermissionWithAutoRecovery(
@@ -63,7 +70,9 @@ All the boilerplate should be hidden in Dreamic's `NotificationService`.
 - **NEW**: Badge management utilities for iOS, Android, and web platforms
 - **NEW**: Rich notification support (images, attachments, action buttons)
 - **NEW**: Notification data models in `lib/data/models/`
+- **NEW**: Testing utilities in `lib/test_utils/` including `MockNotificationService`
 - **NEW**: Documentation guide in `docs/NOTIFICATION_GUIDE.md`
+- **NEW**: Migration guide in `docs/NOTIFICATION_MIGRATION_GUIDE.md`
 - **MODIFIED**: `AuthServiceImpl.initFCM()` to integrate with new `NotificationService`
 - **MODIFIED**: `AppCubit` to support notification-driven state updates
 - **MODIFIED**: `pubspec.yaml` to add required notification dependencies

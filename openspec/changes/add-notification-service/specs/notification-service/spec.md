@@ -21,12 +21,12 @@ The system SHALL handle all notification setup complexity internally, requiring 
 - **AND** the app SHALL only provide routing/navigation callbacks
 
 #### Scenario: Background handler registration
-- **GIVEN** NotificationService is being initialized
-- **WHEN** `initialize()` is called
-- **THEN** the service SHALL register a top-level background message handler
+- **GIVEN** NotificationService provides a top-level background handler function
+- **WHEN** consuming app calls `FirebaseMessaging.onBackgroundMessage(dreamicNotificationBackgroundHandler)` in main()
+- **THEN** the Dreamic-provided handler SHALL be registered with FCM
 - **AND** SHALL ensure the handler is isolate-safe
 - **AND** SHALL handle Firebase initialization in background isolate
-- **AND** the consuming app SHALL NOT define its own `@pragma('vm:entry-point')` handler
+- **AND** the consuming app SHALL NOT implement its own handler logic (uses Dreamic's)
 
 #### Scenario: Automatic channel creation (Android)
 - **GIVEN** the app is running on Android
@@ -85,6 +85,135 @@ The system SHALL ensure notification features are completely optional and have z
 - **AND** the app SHALL pass App Store review
 - **AND** SHALL not trigger any "unused entitlement" warnings
 
+### Requirement: Error Handling
+
+The system SHALL handle errors gracefully and report them to consuming apps.
+
+#### Scenario: Notification image download fails
+- **GIVEN** a notification includes an image URL
+- **WHEN** the image download fails or times out
+- **THEN** the service SHALL display the notification without the image
+- **AND** SHALL log the error
+- **AND** SHALL optionally call error callback if provided
+
+#### Scenario: Platform API error
+- **GIVEN** a platform notification API throws an error
+- **WHEN** trying to display a notification
+- **THEN** the service SHALL catch the error
+- **AND** SHALL log detailed error information
+- **AND** SHALL call optional `onError` callback
+- **AND** SHALL not crash the app
+
+#### Scenario: Invalid notification data
+- **GIVEN** a notification has malformed or missing required data
+- **WHEN** processing the notification
+- **THEN** the service SHALL use sensible defaults
+- **AND** SHALL log a warning
+- **AND** SHALL still attempt to display the notification
+
+### Requirement: Notification ID Management
+
+The system SHALL manage notification IDs to prevent conflicts and allow targeted operations.
+
+#### Scenario: Auto-generate notification ID
+- **GIVEN** a notification is being displayed without explicit ID
+- **WHEN** `showNotification()` is called
+- **THEN** the service SHALL generate a unique notification ID
+- **AND** SHALL use timestamp + hash for uniqueness
+- **AND** SHALL return the generated ID
+
+#### Scenario: Use custom notification ID
+- **GIVEN** app wants to update or replace a specific notification
+- **WHEN** `showNotification(id: 123)` is called
+- **THEN** the service SHALL use the provided ID
+- **AND** SHALL replace any existing notification with that ID
+
+#### Scenario: Clear specific notification
+- **GIVEN** a notification is displayed with known ID
+- **WHEN** `clearNotification(id)` is called
+- **THEN** the service SHALL remove only that notification
+- **AND** SHALL not affect other notifications
+
+### Requirement: Testing and Mocking Support
+
+The system SHALL provide test utilities and mocks for consuming apps to test notification functionality.
+
+#### Scenario: Mock notification service in tests
+- **GIVEN** an app wants to test notification handling
+- **WHEN** using `MockNotificationService` in tests
+- **THEN** the mock SHALL provide all public methods
+- **AND** SHALL track method calls for verification
+- **AND** SHALL allow simulating notification events
+
+#### Scenario: Simulate notification received
+- **GIVEN** a test needs to simulate a notification
+- **WHEN** `mockService.simulateNotificationReceived(payload)` is called
+- **THEN** the mock SHALL trigger the `onNotificationTapped` callback
+- **AND** SHALL allow verification of app's response
+
+#### Scenario: Verify permission requests
+- **GIVEN** a test checks if permissions were requested
+- **WHEN** `mockService.getRequestedPermissionCount()` is called
+- **THEN** the mock SHALL return accurate count
+- **AND** SHALL include details of each request
+
+#### Scenario: Test with mock Firebase Messaging
+- **GIVEN** tests need to isolate from FCM
+- **WHEN** using provided `MockFirebaseMessaging`
+- **THEN** tests SHALL not require Firebase setup
+- **AND** SHALL allow full offline testing
+
+### Requirement: Migration Support
+
+The system SHALL provide clear migration path for apps with existing notification code.
+
+#### Scenario: Migrate from custom notification setup
+- **GIVEN** an app has ~300 lines of custom notification code
+- **WHEN** following the migration guide
+- **THEN** the guide SHALL provide step-by-step instructions
+- **AND** SHALL include before/after code examples
+- **AND** SHALL identify code to remove
+- **AND** SHALL show how to map existing logic to NotificationService
+
+#### Scenario: Identify breaking changes
+- **GIVEN** an app is considering migration
+- **WHEN** reviewing migration guide
+- **THEN** the guide SHALL clearly state no breaking changes
+- **AND** SHALL explain opt-in nature
+- **AND** SHALL provide rollback plan
+
+#### Scenario: Handle migration issues
+- **GIVEN** migration encounters problems
+- **WHEN** consulting troubleshooting section
+- **THEN** the guide SHALL list common issues
+- **AND** SHALL provide solutions for each
+- **AND** SHALL include debugging steps
+
+### Requirement: Deep Link and Route Parsing
+
+The system SHALL parse notification data into routing information following documented conventions.
+
+#### Scenario: Parse route from notification data
+- **GIVEN** a notification with data `{"route": "/profile/123", "userId": "123"}`
+- **WHEN** the notification is tapped
+- **THEN** the service SHALL extract `route` field as primary route
+- **AND** SHALL pass all data to `onNotificationTapped` callback
+- **AND** SHALL allow app to handle custom routing logic
+
+#### Scenario: Handle missing route data
+- **GIVEN** a notification without a `route` field
+- **WHEN** the notification is tapped
+- **THEN** the service SHALL call `onNotificationTapped` with null route
+- **AND** SHALL still pass all available data
+- **AND** SHALL allow app to determine default behavior
+
+#### Scenario: Support multiple route formats
+- **GIVEN** notifications may come from different sources
+- **WHEN** processing notification data
+- **THEN** the service SHALL check multiple route fields: `route`, `screen`, `deepLink`, `url`
+- **AND** SHALL use first available route field
+- **AND** SHALL document field priority order
+
 ### Requirement: Core Notification Service
 
 The system SHALL provide a `NotificationService` class that manages local and remote notifications across platforms.
@@ -93,9 +222,9 @@ The system SHALL provide a `NotificationService` class that manages local and re
 - **GIVEN** the app is starting up
 - **WHEN** `NotificationService.initialize()` is called
 - **THEN** the service SHALL register notification handlers
-- **AND** SHALL request notification permissions on supported platforms
 - **AND** SHALL initialize local notification channels (Android)
 - **AND** SHALL register notification categories (iOS)
+- **AND** SHALL NOT automatically request permissions (must be explicit via requestPermission())
 
 #### Scenario: Handle remote notification in foreground
 - **GIVEN** the app is in the foreground

@@ -43,6 +43,7 @@
     - [ ] Checks `FirebaseMessaging.instance.getInitialMessage()` for cold start
     - [ ] Configures iOS foreground presentation options
     - [ ] Takes callbacks as parameters: `onNotificationTapped`, `onNotificationAction`
+    - [ ] Takes optional `onError` callback for error reporting
     - [ ] Takes optional `reminderIntervalDays` parameter (default 30) for periodic prompts
   - [ ] Ensure constructor and factory have NO side effects
   - [ ] Add `requestPermissions()` method
@@ -239,9 +240,10 @@
   - [ ] Parse message and display local notification
   - [ ] Ensure handler is isolate-safe (no UI dependencies)
   - [ ] Handle Remote Config initialization if needed
-- [ ] Auto-register handler in `NotificationService.initialize()`
-  - [ ] Call `FirebaseMessaging.onBackgroundMessage(dreamicFirebaseMessagingBackgroundHandler)`
-  - [ ] Consuming apps should NOT need to manually register this
+- [ ] **Note: Consuming apps MUST register handler in main()** (Dart limitation):
+  - [ ] Document that `FirebaseMessaging.onBackgroundMessage(dreamicNotificationBackgroundHandler)` must be called in main()
+  - [ ] This is required before runApp() due to top-level function requirement
+  - [ ] Still massive simplification: 1 line vs ~100 lines of handler implementation
 - [ ] Provide documentation on background handler requirements (must be top-level)
 - [ ] Test background message handling on physical devices
 
@@ -267,7 +269,17 @@
     - [ ] `requestPermissionWithAutoRecovery()` - One-line request + automatic recovery dialog
     - [ ] `showPermissionDialogIfNeeded()` - Perfect for periodic "please enable" prompts
     - [ ] Show example: "Ask once a month" pattern
-  - [ ] Document reminder interval configuration (default 30 days)
+  - [ ]   - [ ] Document reminder interval configuration (default 30 days)
+  - [ ] Add testing section:
+    - [ ] How to use MockNotificationService
+    - [ ] Example test cases
+    - [ ] Test fixtures and helpers
+  - [ ] Add troubleshooting section:
+    - [ ] Common issues and solutions
+    - [ ] Debugging notification delivery
+    - [ ] Platform-specific gotchas
+
+## 14. Example Code
   - [ ] Advanced usage (rich notifications, action buttons, custom routing)
   - [ ] UI component examples
   - [ ] Badge management examples
@@ -304,20 +316,132 @@
   - [ ] Show badge management
 - [ ] Create example screenshots for documentation
 
-## 16. Final Validation
+## 16. Testing Utilities and Mocking Support
 
-- [ ] Run `flutter analyze` and fix any issues
-- [ ] Run all tests and ensure they pass
-- [ ] Test on iOS simulator and physical device
-- [ ] Test on Android emulator and physical device
-- [ ] Test on web browser (Chrome, Safari, Firefox)
-- [ ] Verify badge counts update correctly
-- [ ] Verify notification routing works from all app states
-- [ ] Verify rich notifications display correctly (images, actions)
-- [ ] Verify permission UI adapts to platform
-- [ ] Run `openspec validate add-notification-service --strict` and confirm no errors
-- [ ] Update version number in `pubspec.yaml`
-- [ ] Update `CHANGELOG.md` with release notes
+- [ ] Create `lib/test_utils/mock_notification_service.dart`
+  - [ ] Implement `MockNotificationService` extending `NotificationService`
+  - [ ] Mock all public methods with trackable calls
+  - [ ] Provide test helpers:
+    - [ ] `simulateNotificationReceived(NotificationPayload)` - Simulate incoming notification
+    - [ ] `simulateNotificationTap(String route, Map data)` - Simulate user tap
+    - [ ] `simulatePermissionChange(NotificationPermissionStatus)` - Change permission state
+    - [ ] `getRequestedPermissionCount()` - Track how many times requested
+    - [ ] `getDisplayedNotifications()` - Get list of shown notifications
+    - [ ] `clearHistory()` - Reset mock state
+  - [ ] Support callback verification
+  - [ ] Add documentation on how to use in tests
+- [ ] Create test fixtures:
+  - [ ] Sample `NotificationPayload` objects for different scenarios
+  - [ ] Sample FCM `RemoteMessage` objects
+  - [ ] Sample permission states and transitions
+- [ ] Add example tests in `test/` showing:
+  - [ ] How to test notification routing in app
+  - [ ] How to test permission request flows
+  - [ ] How to verify badge count updates
+  - [ ] How to test background handler
+- [ ] Create `MockFlutterLocalNotificationsPlugin` for isolating platform dependencies
+- [ ] Create `MockFirebaseMessaging` for testing FCM interactions
+- [ ] Document testing best practices in `docs/NOTIFICATION_GUIDE.md`
+
+## 17. Migration Guide
+
+- [ ] Create `docs/NOTIFICATION_MIGRATION_GUIDE.md`
+  - [ ] **Section: Apps Already Using Dreamic with Custom Notifications**
+    - [ ] Step 1: Inventory existing notification code
+      - [ ] List all files with notification setup (main.dart, app.dart, helpers)
+      - [ ] Identify custom notification logic to preserve
+      - [ ] Note any custom notification channels or categories
+    - [ ] Step 2: Add NotificationService dependencies
+      - [ ] Update pubspec.yaml with new dependencies
+      - [ ] Run `flutter pub get`
+    - [ ] Step 3: Replace background handler
+      - [ ] Remove custom `@pragma('vm:entry-point')` handler
+      - [ ] Import `dreamicNotificationBackgroundHandler` from Dreamic
+      - [ ] Update main() to register Dreamic's handler
+      - [ ] Show before/after code comparison
+    - [ ] Step 4: Remove manual setup code
+      - [ ] Delete `setupFlutterNotifications()` function
+      - [ ] Remove manual `FlutterLocalNotificationsPlugin` initialization
+      - [ ] Remove manual channel creation
+      - [ ] Remove FCM stream listeners from StatefulWidget
+      - [ ] Show line-by-line removal guide
+    - [ ] Step 5: Initialize NotificationService
+      - [ ] Add `NotificationService().initialize()` call
+      - [ ] Map existing notification tap logic to `onNotificationTapped` callback
+      - [ ] Map existing action logic to `onNotificationAction` callback
+    - [ ] Step 6: Migrate permission handling
+      - [ ] Remove direct `requestPermission()` calls to FCM
+      - [ ] Use `NotificationService.requestPermissionWithAutoRecovery()`
+      - [ ] Add permission UI components if desired
+    - [ ] Step 7: Test thoroughly
+      - [ ] Test all notification flows (foreground, background, terminated)
+      - [ ] Test permission flows
+      - [ ] Test notification taps and routing
+      - [ ] Verify badge counts
+  - [ ] **Section: Apps Using Dreamic Without Notifications**
+    - [ ] Verify no breaking changes
+    - [ ] Confirm FCM token registration still works (if using)
+    - [ ] No action needed if notifications not desired
+  - [ ] **Section: Common Migration Issues**
+    - [ ] Issue: "Background handler not firing"
+      - [ ] Solution: Ensure handler registered before runApp()
+    - [ ] Issue: "Notifications not showing in foreground"
+      - [ ] Solution: Check `showNotificationsInForeground` flag
+    - [ ] Issue: "Routing not working"
+      - [ ] Solution: Verify notification data includes `route` field
+    - [ ] Issue: "Permission prompt showing immediately"
+      - [ ] Solution: Don't call `requestPermission()` in initState
+  - [ ] **Section: Before/After Code Examples**
+    - [ ] Show full main.dart before migration (~150 lines)
+    - [ ] Show full main.dart after migration (~20 lines)
+    - [ ] Show app.dart before migration (~100 lines)
+    - [ ] Show app.dart after migration (no notification code)
+    - [ ] Highlight the ~300 line reduction
+  - [ ] **Section: Breaking Changes (None)**
+    - [ ] Confirm this is non-breaking
+    - [ ] Explain opt-in nature
+  - [ ] **Section: Rollback Plan**
+    - [ ] How to revert if issues occur
+    - [ ] Keep old code in comments during transition
+    - [ ] Test in staging before production
+
+## 18. Validation and Testing
+
+- [ ] Test on physical devices:
+  - [ ] iOS device with various iOS versions (16+, 17+, 18+)
+  - [ ] Android device with API 33+ (runtime permissions)
+  - [ ] Android device with API 32- (no runtime permissions)
+  - [ ] Test on web browser (Chrome, Safari, Firefox)
+- [ ] Test notification flows:
+  - [ ] App in foreground
+  - [ ] App in background
+  - [ ] App terminated
+  - [ ] Cold start from notification
+  - [ ] Notification tap navigation
+- [ ] Test permission flows:
+  - [ ] First request (not determined)
+  - [ ] Denied state
+  - [ ] Granted state
+  - [ ] Settings navigation
+  - [ ] Periodic reminders (30+ days)
+  - [ ] Auto-recovery dialogs
+- [ ] Test badge management across platforms
+- [ ] Test rich notifications (images, actions)
+- [ ] Test notification channels (Android)
+- [ ] Test error handling:
+  - [ ] Image download failures
+  - [ ] Invalid notification data
+  - [ ] Platform API errors
+- [ ] Test mock utilities:
+  - [ ] Run example tests with MockNotificationService
+  - [ ] Verify all mock methods work correctly
+- [ ] Test migration:
+  - [ ] Follow migration guide with real app
+  - [ ] Verify all features work after migration
+  - [ ] Confirm line count reduction
+- [ ] Verify tree-shaking: Build app without NotificationService import, verify no notification code in bundle
+- [ ] Run all unit and widget tests
+- [ ] Update CHANGELOG.md with new features
 
 ## Dependencies Between Tasks
 
