@@ -2,14 +2,58 @@
 
 ## Why
 
-The Dreamic package currently has basic FCM initialization in `AuthServiceImpl`, but lacks a comprehensive notification infrastructure that apps need for production use. Apps built on Dreamic require:
-- A unified service for handling local and remote notifications
-- User-friendly permission request flows with UI components
-- Deep linking and notification action routing
-- Badge count management across platforms
-- Rich notification support (images, action buttons)
+The Dreamic package currently has basic FCM initialization in `AuthServiceImpl`, but lacks a comprehensive notification infrastructure that apps need for production use. 
 
-Without these capabilities, every app using Dreamic must implement their own notification handling, duplicating effort and potentially introducing inconsistencies.
+### Current Pain Points (Real Example)
+
+Apps using Dreamic currently must implement ~300 lines of boilerplate code in `main.dart` and `app.dart`:
+
+**In `main.dart`:**
+- Create `setupFlutterNotifications()` function
+- Define top-level `_firebaseMessagingBackgroundHandler()`
+- Create `AndroidNotificationChannel` manually
+- Initialize `FlutterLocalNotificationsPlugin`
+- Register background message handler
+- Request iOS permissions
+- Create notification channels
+
+**In `app.dart`:**
+- Handle `FirebaseMessaging.instance.getInitialMessage()`
+- Listen to `FirebaseMessaging.onMessage`
+- Listen to `FirebaseMessaging.onMessageOpenedApp`
+- Implement notification tap navigation logic
+- Refresh user data after notifications
+- Display foreground notifications manually
+
+**Poor Permission UX:**
+- `AuthServiceImpl.initFCM()` automatically calls `requestPermission()` on sign-in
+- iOS permission prompt appears immediately after authentication
+- No control over when/where to ask for permissions
+- Can't provide context or rationale before prompting
+- Hurts App Store review outcomes and user trust
+
+### What Apps Actually Need
+
+```dart
+// In main.dart - ONE LINE
+await NotificationService().initialize(
+  onNotificationTapped: (route, data) => appRouter.navigateNamed(route),
+);
+
+// When you want to ask for permissions - ONE LINE with automatic recovery
+await NotificationService().requestPermissionWithAutoRecovery(
+  context: context,
+  customMessage: "Get notified about important updates",
+);
+
+// Periodic reminder (e.g., once a month) - ONE LINE
+// Shows dialog only if denied AND 30+ days since last ask
+await NotificationService().showPermissionDialogIfNeeded(
+  context: context,
+);
+```
+
+All the boilerplate should be hidden in Dreamic's `NotificationService`.
 
 ## What Changes
 

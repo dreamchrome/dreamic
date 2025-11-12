@@ -2,6 +2,55 @@
 
 ## ADDED Requirements
 
+### Requirement: Abstract Notification Setup Boilerplate
+
+The system SHALL handle all notification setup complexity internally, requiring minimal code from consuming apps.
+
+#### Scenario: Simple initialization from consuming app
+- **GIVEN** a consuming app wants to enable notifications
+- **WHEN** the app calls `NotificationService().initialize()` with routing callbacks
+- **THEN** the service SHALL automatically:
+  - Initialize `FlutterLocalNotificationsPlugin`
+  - Create default notification channels (Android)
+  - Register background message handler
+  - Set up foreground message listener
+  - Set up notification tap listener (`onMessageOpenedApp`)
+  - Handle app launch from notification (`getInitialMessage`)
+  - Configure iOS foreground presentation options
+- **AND** the app SHALL NOT need to manually set up any FCM streams or handlers
+- **AND** the app SHALL only provide routing/navigation callbacks
+
+#### Scenario: Background handler registration
+- **GIVEN** NotificationService is being initialized
+- **WHEN** `initialize()` is called
+- **THEN** the service SHALL register a top-level background message handler
+- **AND** SHALL ensure the handler is isolate-safe
+- **AND** SHALL handle Firebase initialization in background isolate
+- **AND** the consuming app SHALL NOT define its own `@pragma('vm:entry-point')` handler
+
+#### Scenario: Automatic channel creation (Android)
+- **GIVEN** the app is running on Android
+- **WHEN** NotificationService initializes
+- **THEN** the service SHALL create a default high-importance notification channel
+- **AND** SHALL configure the channel with appropriate sound, vibration, lights
+- **AND** SHALL register the channel with the system
+- **AND** the app SHALL NOT manually create `AndroidNotificationChannel` instances
+
+#### Scenario: Foreground notification display
+- **GIVEN** the app is in foreground and receives an FCM message
+- **WHEN** the message arrives
+- **THEN** the service SHALL automatically display a local notification
+- **AND** SHALL parse the message into a NotificationPayload
+- **AND** SHALL respect the `showNotificationsInForeground` flag
+- **AND** the app SHALL NOT manually listen to `FirebaseMessaging.onMessage`
+
+#### Scenario: Notification tap handling
+- **GIVEN** a notification is tapped (from any app state)
+- **WHEN** the user taps the notification
+- **THEN** the service SHALL extract route and data from the notification
+- **AND** SHALL call the app's `onNotificationTapped` callback
+- **AND** the app SHALL NOT manually handle `onMessageOpenedApp` or `getInitialMessage`
+
 ### Requirement: Optional Feature with No Side Effects
 
 The system SHALL ensure notification features are completely optional and have zero impact on apps that don't use them.
@@ -68,38 +117,64 @@ The system SHALL provide a `NotificationService` class that manages local and re
 - **THEN** the service SHALL call the `onNotificationTapped` callback
 - **AND** SHALL dismiss the notification from the notification center
 
-### Requirement: Notification Permissions
+### 2.2 Permissions Management
 
-The system SHALL manage notification permissions across platforms with appropriate fallbacks.
+**MUST** provide methods to:
+- Check current notification permission status without prompting
+- Request notification permissions with platform-appropriate dialogs
+- Return permission status (authorized, denied, not determined, provisional)
+- Trigger FCM token registration after permissions granted
 
-#### Scenario: Request permissions on iOS
-- **GIVEN** the app is running on iOS
-- **WHEN** `NotificationService.requestPermissions()` is called
-- **THEN** the service SHALL request alert, badge, and sound permissions
-- **AND** SHALL return the authorization status (authorized, denied, notDetermined)
-- **AND** SHALL store the permission state for future checks
+**MUST** handle platform differences:
+- iOS: Support provisional authorization
+- Android: Handle runtime permissions correctly
+- Web: Handle browser notification API
 
-#### Scenario: Request permissions on Android 13+
-- **GIVEN** the app is running on Android API 33 or higher
-- **WHEN** `NotificationService.requestPermissions()` is called
-- **THEN** the service SHALL request runtime POST_NOTIFICATIONS permission
-- **AND** SHALL return the permission status
+**MUST NOT** automatically request permissions without explicit app request.
 
-#### Scenario: Request permissions on older Android
-- **GIVEN** the app is running on Android API 32 or lower
-- **WHEN** `NotificationService.requestPermissions()` is called
-- **THEN** the service SHALL return authorized status (permissions not required)
+**MUST** coordinate with AuthServiceImpl:
+- Modify `AuthServiceImpl.initFCM()` to check permissions before requesting
+- Only register FCM token if permissions already granted
+- When `NotificationService.requestPermission()` succeeds, notify AuthServiceImpl to complete FCM registration
+- Preserve existing FCM token management in AuthServiceImpl (backend registration, refresh handling)
 
-#### Scenario: Check permission status
-- **GIVEN** the app needs to know notification permission state
-- **WHEN** `NotificationService.getPermissionStatus()` is called
-- **THEN** the service SHALL return the current authorization status
-- **AND** SHALL not prompt the user
+**Scenarios**:
+1. User signs in, permissions not determined → No prompt shown, no FCM token registered
+2. User signs in, permissions already granted → FCM token registered silently
+3. App calls `requestPermission()` → Shows prompt, on grant triggers FCM registration
+4. User denies permissions → FCM token not registered, returns denied status
+5. App calls `requestPermission()` again after denial → On iOS returns denied (can't prompt again), on Android can prompt again
+6. App calls `openSystemSettings()` → Opens system settings for app, user can enable permissions manually
+7. User grants permissions in settings, app calls `checkPermissionStatus()` → Detects granted, triggers FCM registration
+8. App using old flow (not calling NotificationService) → Existing behavior preserved (auto-prompt on sign-in if permissions not determined)
+9. App calls `requestPermissionWithAutoRecovery()` → Shows prompt, user denies, automatically shows recovery dialog with settings button
+10. App calls `showPermissionDialogIfNeeded()` first time → Permissions not determined, shows rationale and requests
+11. App calls `showPermissionDialogIfNeeded()` after denial (day 1) → Too soon, does nothing
+12. App calls `showPermissionDialogIfNeeded()` after denial (day 31) → Shows recovery dialog with settings button
+13. App calls `showPermissionDialogIfNeeded()` when already granted → Does nothing, returns granted status
 
-#### Scenario: Open app settings for permissions
-- **GIVEN** the user has denied notification permissions
-- **WHEN** `NotificationService.openSettings()` is called
-- **THEN** the service SHALL open the system settings page for the app
+**MUST** provide permission recovery methods:
+- `openSystemSettings()` - Opens app settings page (iOS Settings app, Android app info)
+- `shouldShowRationale()` - Returns true if should explain why permissions needed (Android only)
+- `canRequestPermission()` - Returns true if can show permission prompt (false after denial on iOS)
+- `shouldShowPeriodicReminder()` - Returns true if enough time passed since last denial (default 30 days)
+- `requestPermissionWithAutoRecovery({BuildContext, customMessage})` - All-in-one method that:
+  - Requests permissions
+  - Automatically shows recovery dialog if denied
+  - Handles settings navigation
+  - Returns final permission status
+- `showPermissionDialogIfNeeded({BuildContext, customMessage})` - Smart method that:
+  - Shows permission request if not determined
+  - Shows recovery dialog if denied and reminder interval passed
+  - Does nothing if granted or reminder too soon
+  - Perfect for periodic "please enable notifications" prompts
+
+**MUST** support permission retry flow:
+- After denial, app can call `requestPermission(force: true)` to attempt again on Android
+- On iOS after denial, only `openSystemSettings()` can help (OS limitation)
+- Provide clear return values indicating whether prompt was shown or settings navigation needed
+- Track last reminder date in SharedPreferences to enable periodic prompting
+- Provide `reminderIntervalDays` config (default 30) for how often to allow reminders
 
 ### Requirement: Badge Management
 

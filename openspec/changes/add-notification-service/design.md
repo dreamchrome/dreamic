@@ -4,11 +4,45 @@
 
 The notification service provides a comprehensive, platform-aware notification system for Dreamic-based applications. It bridges Firebase Cloud Messaging (FCM) with local notifications, handles permissions gracefully, manages badges, and routes notification actions to appropriate app destinations.
 
-## Architecture Decisions
+**Primary Goal**: Abstract away the ~300 lines of boilerplate notification setup code that consuming apps currently must implement. Apps should call ONE initialization method and provide routing callbacks, not manually set up channels, handlers, and listeners.
 
-### 0. Optional Feature - No Entitlement Impact
+**What Gets Hidden From Apps**:
+- `FlutterLocalNotificationsPlugin` initialization
+- `AndroidNotificationChannel` creation
+- Background message handler registration
+- Foreground message stream listeners
+- `onMessageOpenedApp` stream listeners
+- `getInitialMessage()` handling
+- Permission request complexity
+- Platform-specific notification display code
 
-**Decision**: Notification features are completely optional with lazy initialization and zero impact on apps that don't use them.
+## 9. Architecture Decisions
+
+### 9.1 Permission Control and FCM Initialization Split
+
+**Problem**: Currently `AuthServiceImpl.initFCM()` automatically calls `requestPermission()` on sign-in, showing the iOS prompt immediately with no UX control.
+
+**Decision**: Split FCM initialization into two phases:
+1. **Silent Check**: `initFCM()` first checks current permission status without prompting
+2. **Token Registration**: Only registers FCM token if permissions already granted
+3. **Explicit Prompting**: `NotificationService.requestPermission()` is the only way to show the permission prompt
+4. **Deferred Init**: After permissions granted via NotificationService, it triggers FCM token registration
+
+**Rationale**:
+- Apps can show permission rationale before prompting (better App Store review outcomes)
+- Apps can choose optimal UX moment for permission request (e.g., after onboarding)
+- Apps can choose to never prompt if notifications aren't essential
+- Maintains backward compatibility for apps not using NotificationService (FCM init still happens, just silently if permissions already granted)
+
+**Changes Required**:
+- Modify `AuthServiceImpl.initFCM()` to check permissions first, not request
+- Add `NotificationService.requestPermission()` for explicit prompting
+- Add callback from NotificationService → AuthServiceImpl after permissions granted
+- Add `NotificationService.checkPermissionStatus()` for silent checks
+
+### 9.2 Optional Feature with Lazy Initialization
+
+**Decision**: NotificationService is completely optional and uses lazy singleton pattern with manual initialization.
 
 **Rationale**:
 - Apps using Dreamic may not need notifications at all

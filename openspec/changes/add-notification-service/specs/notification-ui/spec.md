@@ -120,25 +120,41 @@ The system SHALL provide a headless builder component for custom permission UI.
 - **AND** SHALL allow the app to render appropriate UI
 - **AND** SHALL handle permission request results
 
-### Requirement: Permission Rationale Dialog
+### 3.2 Permission Rationale Dialog
 
-The system SHALL provide a dialog for explaining notification permissions.
+**MUST** provide a customizable rationale dialog shown before requesting permissions.
 
-#### Scenario: Show permission rationale
-- **GIVEN** the app wants to explain why notifications are needed
-- **WHEN** `NotificationRationaleDialog.show()` is called
-- **THEN** the system SHALL display a dialog with custom explanation text
-- **AND** SHALL include bullet points for benefits
-- **AND** SHALL include a "Continue" button to request permissions
-- **AND** SHALL include a "Maybe Later" button to dismiss
+**Features**:
+- Explain why app needs notification permissions
+- Customizable title, message, icon
+- Show before first permission request
+- Primary button triggers permission request
+- Secondary button dismisses (can opt out)
 
-#### Scenario: Customize rationale content
-- **GIVEN** the app has specific use cases to explain
-- **WHEN** `NotificationRationaleDialog` is configured with custom content
-- **THEN** the system SHALL display the provided title and body text
-- **AND** SHALL display custom benefit points
-- **AND** SHALL support icons for each benefit
-- **AND** SHALL match app theme/branding
+**Scenarios**:
+1. App shows rationale before first request → Dialog explains benefits, user taps "Allow" → Permission prompt shown
+2. User taps "Not Now" → Dialog dismissed, no permission prompt
+3. App provides custom message → Dialog shows custom text and icon
+
+### 3.3 Permission Denied Recovery Dialog
+
+**MUST** provide a dialog for recovering from denied permission state.
+
+**Features**:
+- Show after user denies permissions
+- Explain consequences of denial (won't receive important updates)
+- Provide stronger rationale for why permissions needed
+- Primary button: "Open Settings" → Calls `NotificationService.openSystemSettings()`
+- Secondary button: "Maybe Later" → Dismisses dialog
+- Different messaging for iOS (must use settings) vs Android (can retry)
+- Customizable title, message, icon, button text
+
+**Scenarios**:
+1. iOS user denies permissions → Show dialog with "You'll need to enable notifications in Settings", button opens Settings
+2. Android user denies permissions → Show dialog with option to retry or open settings
+3. User taps "Open Settings" → Opens system settings, returns to app → App checks status and updates UI
+4. User denies multiple times on Android → Show dialog suggesting they really need to enable it
+5. App provides custom recovery message → Dialog shows custom text emphasizing importance
 
 ### Requirement: Badge Count Display Widget
 

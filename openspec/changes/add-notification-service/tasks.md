@@ -34,13 +34,22 @@
 - [ ] Create `lib/app/helpers/notification_service.dart`
   - [ ] Define `NotificationService` class with lazy singleton pattern (no automatic initialization)
   - [ ] Add private constructor to prevent automatic instantiation
-  - [ ] Add `initialize()` method (must be explicitly called by consuming app)
+  - [ ] Add `initialize()` method that handles ALL setup (replaces consuming app boilerplate):
+    - [ ] Initializes `FlutterLocalNotificationsPlugin`
+    - [ ] Creates default Android notification channel
+    - [ ] Registers background message handler automatically
+    - [ ] Sets up `FirebaseMessaging.onMessage` listener (foreground)
+    - [ ] Sets up `FirebaseMessaging.onMessageOpenedApp` listener
+    - [ ] Checks `FirebaseMessaging.instance.getInitialMessage()` for cold start
+    - [ ] Configures iOS foreground presentation options
+    - [ ] Takes callbacks as parameters: `onNotificationTapped`, `onNotificationAction`
+    - [ ] Takes optional `reminderIntervalDays` parameter (default 30) for periodic prompts
   - [ ] Ensure constructor and factory have NO side effects
   - [ ] Add `requestPermissions()` method
   - [ ] Add `getPermissionStatus()` method
   - [ ] Add `openSettings()` method
-  - [ ] Add callback properties: `onNotificationTapped`, `onNotificationAction`, `onForegroundMessage`
   - [ ] Add `showNotificationsInForeground` flag
+  - [ ] **Goal: Consuming app only calls `initialize()` with callbacks, no manual stream setup**
 - [ ] Implement local notification methods:
   - [ ] `showNotification(NotificationPayload)` - Display local notification
   - [ ] `cancelNotification(int id)` - Cancel single notification
@@ -112,6 +121,16 @@
   - [ ] Handle "Not Now" button tap → dismiss
   - [ ] Handle already-denied state → show settings prompt
   - [ ] Add widget tests
+- [ ] Create `lib/presentation/elements/notification_permission_denied_dialog.dart`
+  - [ ] Show after user denies permissions
+  - [ ] Platform-aware messaging (iOS: "must use settings", Android: "try again or settings")
+  - [ ] Primary button: "Open Settings" → calls `openSystemSettings()`
+  - [ ] Secondary button: "Maybe Later" → dismisses
+  - [ ] Android only: "Try Again" button if `canRequestPermission()` returns true
+  - [ ] Customizable title, message, icon, button text
+  - [ ] Stronger rationale explaining consequences of denial
+  - [ ] Track denial count and escalate messaging for repeated denials
+  - [ ] Add widget tests
 - [ ] Create `lib/presentation/elements/notification_permission_status_widget.dart`
   - [ ] Display current permission status with icon and text
   - [ ] Show "Enable" button for notDetermined state
@@ -122,7 +141,9 @@
   - [ ] Display permission status at top
   - [ ] Add toggles for notification preferences (sound, vibration, badge)
   - [ ] Save preferences to `SharedPreferences`
-  - [ ] Add "Enable Notifications" button if not granted
+  - [ ] Add "Enable Notifications" button if can prompt
+  - [ ] Add "Open Settings" button if denied
+  - [ ] Show denial count and last request time
   - [ ] Add widget tests
 
 ## 8. Additional UI Components
@@ -152,10 +173,21 @@
 ## 9. Notification Permission Helper
 
 - [ ] Create `lib/app/helpers/notification_permission_helper.dart`
-  - [ ] Implement `shouldRequestPermissions()` - Check if should request
-  - [ ] Implement `trackPermissionRequest()` - Track request attempts
-  - [ ] Implement `getOptimalContext()` - Suggest optimal timing
-  - [ ] Store request history in `SharedPreferences`
+  - [ ] Implement `isPermissionGranted()` - Returns bool
+  - [ ] Implement `isPermissionDenied()` - Returns bool
+  - [ ] Implement `isPermissionNotDetermined()` - Returns bool
+  - [ ] Implement `hasRequestedPermissionBefore()` - Returns bool
+  - [ ] Implement `shouldShowPermissionRationale()` - Returns bool
+  - [ ] Implement `canPromptForPermission()` - Platform-aware (false on iOS after denial)
+  - [ ] Implement `shouldShowSettingsPrompt()` - Returns true if denied and can't prompt
+  - [ ] Implement `getPermissionDenialCount()` - Returns int
+  - [ ] Implement `shouldShowPeriodicReminder(int intervalDays)` - Returns true if interval passed since last reminder
+  - [ ] Implement `shouldRequestPermissions()` - Check if should request based on state and history
+  - [ ] Implement `trackPermissionRequest()` - Track request attempts and denials
+  - [ ] Implement `updateLastReminderDate()` - Update timestamp when reminder shown
+  - [ ] Implement `getOptimalContext()` - Suggest optimal timing based on user patterns
+  - [ ] Store request history in `SharedPreferences` (count, denials, timestamp, lastReminderDate)
+  - [ ] Cache permission state to avoid repeated checks
   - [ ] Add unit tests
 
 ## 10. AppCubit Integration
@@ -171,29 +203,46 @@
 - [ ] Document that apps must call `appCubit.setupNotificationCallbacks()` if using notifications
 - [ ] Test badge count synchronization with `AppCubitState.unreadNotificationsCount`
 
-## 11. AuthServiceImpl Integration
+## 11. Integrate with AuthServiceImpl
 
-- [ ] **Keep** existing FCM token management in `lib/data/repos/auth_service_impl.dart`:
-  - [ ] `initFCM()` continues to handle token lifecycle (get token, register with backend, handle refresh)
-  - [ ] Token registration via `notificationsUpdateFcmToken` function call stays unchanged
-  - [ ] Token cleared on sign-out stays unchanged
-  - [ ] This works whether or not NotificationService is used
-- [ ] **Add** optional NotificationService notification:
-  - [ ] Check if NotificationService instance exists before calling it
-  - [ ] Optionally notify NotificationService of token updates (for diagnostics only)
-  - [ ] **DO NOT** create or initialize NotificationService automatically
-  - [ ] Apps that don't use NotificationService are unaffected
-- [ ] Add integration tests for FCM token flow with and without NotificationService
-- [ ] Document that token management is separate from notification display
+- [ ] **Modify `AuthServiceImpl.initFCM()` for permission control**
+  - [ ] Add permission status check at start of `initFCM()`
+  - [ ] Use `FirebaseMessaging.instance.getNotificationSettings()` to check current status
+  - [ ] Only proceed with token registration if `authorizationStatus == AuthorizationStatus.authorized`
+  - [ ] If not authorized, log and return early (don't call `requestPermission()`)
+  - [ ] Remove automatic `requestPermission()` call from `initFCM()`
+  - [ ] Add public method `AuthServiceImpl.completeFCMRegistration()` for NotificationService to call after permissions granted
+  - [ ] Preserve all existing token management logic (backend registration, refresh handling, storage)
+- [ ] **Add callback from NotificationService to AuthServiceImpl**
+  - [ ] After `NotificationService.requestPermission()` succeeds, call `AuthServiceImpl.completeFCMRegistration()`
+  - [ ] Handle case where AuthServiceImpl not registered (notification-only mode)
+  - [ ] Document the flow: NotificationService prompts → User grants → Triggers FCM registration
+- [ ] **Add optional notification when FCM token updates**
+  - [ ] Check if NotificationService is registered in GetIt
+  - [ ] If registered, notify about token updates
+  - [ ] Don't break if NotificationService not registered
+- [ ] **Backward compatibility**
+  - [ ] Apps not using NotificationService still work (FCM init happens if permissions already granted)
+  - [ ] Apps can opt into controlled prompting by using NotificationService
+- [ ] Document the relationship between AuthServiceImpl and NotificationService
+  - [ ] AuthServiceImpl: Manages FCM token lifecycle (get, register with backend, refresh)
+  - [ ] NotificationService: Manages notification display, permissions, routing, badges
+  - [ ] Permission control: NotificationService owns prompting, triggers FCM registration after grant
+  - [ ] Optional integration: NotificationService can listen to token updates
 
 ## 12. Background Message Handler
 
 - [ ] Create `lib/app/helpers/notification_background_handler.dart`
-  - [ ] Define top-level function `firebaseMessagingBackgroundHandler(RemoteMessage)`
-  - [ ] Register handler with `FirebaseMessaging.onBackgroundMessage()`
-  - [ ] Parse message and display local notification if needed
+  - [ ] Define top-level function `dreamicFirebaseMessagingBackgroundHandler(RemoteMessage)`
+  - [ ] Mark with `@pragma('vm:entry-point')` for tree-shaking protection
+  - [ ] Initialize Firebase in background isolate
+  - [ ] Parse message and display local notification
   - [ ] Ensure handler is isolate-safe (no UI dependencies)
-- [ ] Register background handler in `lib/app/app_config_base.dart` or app initialization
+  - [ ] Handle Remote Config initialization if needed
+- [ ] Auto-register handler in `NotificationService.initialize()`
+  - [ ] Call `FirebaseMessaging.onBackgroundMessage(dreamicFirebaseMessagingBackgroundHandler)`
+  - [ ] Consuming apps should NOT need to manually register this
+- [ ] Provide documentation on background handler requirements (must be top-level)
 - [ ] Test background message handling on physical devices
 
 ## 13. Documentation
@@ -201,13 +250,30 @@
 - [ ] Create `docs/NOTIFICATION_GUIDE.md`
   - [ ] Getting Started section with **clear opt-in instructions**
   - [ ] Explicitly state: "This feature is completely optional. Your app will not require notification entitlements unless you follow these setup steps."
+  - [ ] **Show before/after comparison**:
+    - [ ] "Before: ~300 lines of boilerplate in main.dart and app.dart"
+    - [ ] "After: One `initialize()` call with routing callback"
   - [ ] Setup instructions (dependencies, platform config) - mark as "Only needed if using notifications"
-  - [ ] Basic usage examples (requesting permissions, showing notifications)
-  - [ ] Advanced usage (rich notifications, action buttons, routing)
+  - [ ] Minimal initialization example:
+    ```dart
+    await NotificationService().initialize(
+      onNotificationTapped: (route, data) {
+        if (route != null) appRouter.navigateNamed(route);
+      },
+    );
+    ```
+  - [ ] Explain what's automatically handled (channels, handlers, streams)
+  - [ ] Document convenience methods:
+    - [ ] `requestPermissionWithAutoRecovery()` - One-line request + automatic recovery dialog
+    - [ ] `showPermissionDialogIfNeeded()` - Perfect for periodic "please enable" prompts
+    - [ ] Show example: "Ask once a month" pattern
+  - [ ] Document reminder interval configuration (default 30 days)
+  - [ ] Advanced usage (rich notifications, action buttons, custom routing)
   - [ ] UI component examples
   - [ ] Badge management examples
   - [ ] Troubleshooting section (common issues, platform limitations)
   - [ ] Platform-specific notes (iOS, Android, web)
+  - [ ] Migration guide from manual setup to NotificationService
 - [ ] Add notification examples to main `README.md`
 - [ ] Add inline documentation (dartdoc comments) to all public APIs
 - [ ] Update `CHANGELOG.md` with notification feature addition
