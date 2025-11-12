@@ -1,0 +1,335 @@
+# Notification Service Specification
+
+## ADDED Requirements
+
+### Requirement: Optional Feature with No Side Effects
+
+The system SHALL ensure notification features are completely optional and have zero impact on apps that don't use them.
+
+#### Scenario: App does not use notifications
+- **GIVEN** a consuming app does not import or use NotificationService
+- **WHEN** the app is built and run
+- **THEN** no notification code SHALL be included in the final bundle (tree-shaking)
+- **AND** no notification permissions SHALL be requested
+- **AND** no notification-related entitlements SHALL be required
+- **AND** the app SHALL function normally without any notification code
+
+#### Scenario: NotificationService exists but is not initialized
+- **GIVEN** NotificationService is imported but `initialize()` is not called
+- **WHEN** the app runs
+- **THEN** no notification permissions SHALL be requested
+- **AND** no notification handlers SHALL be registered
+- **AND** no FCM token SHALL be requested
+- **AND** the service SHALL remain dormant with no side effects
+
+#### Scenario: Lazy initialization on first use
+- **GIVEN** NotificationService has never been initialized
+- **WHEN** `NotificationService().initialize()` is called for the first time
+- **THEN** the service SHALL set up notification handlers
+- **AND** SHALL only at this point interact with platform notification APIs
+- **AND** SHALL not have had any initialization side effects prior to this call
+
+#### Scenario: Platform configuration not present
+- **GIVEN** an app does not include notification entitlements or permissions in platform configs
+- **WHEN** NotificationService is imported but not used
+- **THEN** the app SHALL build successfully
+- **AND** the app SHALL pass App Store review
+- **AND** SHALL not trigger any "unused entitlement" warnings
+
+### Requirement: Core Notification Service
+
+The system SHALL provide a `NotificationService` class that manages local and remote notifications across platforms.
+
+#### Scenario: Initialize notification service
+- **GIVEN** the app is starting up
+- **WHEN** `NotificationService.initialize()` is called
+- **THEN** the service SHALL register notification handlers
+- **AND** SHALL request notification permissions on supported platforms
+- **AND** SHALL initialize local notification channels (Android)
+- **AND** SHALL register notification categories (iOS)
+
+#### Scenario: Handle remote notification in foreground
+- **GIVEN** the app is in the foreground
+- **WHEN** a remote notification is received via FCM
+- **THEN** the service SHALL parse the notification payload
+- **AND** SHALL display a local notification if `showNotificationsInForeground` is true
+- **AND** SHALL call the `onForegroundMessage` callback with the payload
+
+#### Scenario: Handle notification tap from background
+- **GIVEN** the app is in the background or terminated
+- **WHEN** the user taps a notification
+- **THEN** the service SHALL extract the route and data from the notification
+- **AND** SHALL call the `onNotificationTapped` callback with the route and data
+- **AND** SHALL allow the app to navigate to the appropriate destination
+
+#### Scenario: Handle notification tap from foreground
+- **GIVEN** the app is in the foreground with a notification displayed
+- **WHEN** the user taps the notification
+- **THEN** the service SHALL call the `onNotificationTapped` callback
+- **AND** SHALL dismiss the notification from the notification center
+
+### Requirement: Notification Permissions
+
+The system SHALL manage notification permissions across platforms with appropriate fallbacks.
+
+#### Scenario: Request permissions on iOS
+- **GIVEN** the app is running on iOS
+- **WHEN** `NotificationService.requestPermissions()` is called
+- **THEN** the service SHALL request alert, badge, and sound permissions
+- **AND** SHALL return the authorization status (authorized, denied, notDetermined)
+- **AND** SHALL store the permission state for future checks
+
+#### Scenario: Request permissions on Android 13+
+- **GIVEN** the app is running on Android API 33 or higher
+- **WHEN** `NotificationService.requestPermissions()` is called
+- **THEN** the service SHALL request runtime POST_NOTIFICATIONS permission
+- **AND** SHALL return the permission status
+
+#### Scenario: Request permissions on older Android
+- **GIVEN** the app is running on Android API 32 or lower
+- **WHEN** `NotificationService.requestPermissions()` is called
+- **THEN** the service SHALL return authorized status (permissions not required)
+
+#### Scenario: Check permission status
+- **GIVEN** the app needs to know notification permission state
+- **WHEN** `NotificationService.getPermissionStatus()` is called
+- **THEN** the service SHALL return the current authorization status
+- **AND** SHALL not prompt the user
+
+#### Scenario: Open app settings for permissions
+- **GIVEN** the user has denied notification permissions
+- **WHEN** `NotificationService.openSettings()` is called
+- **THEN** the service SHALL open the system settings page for the app
+
+### Requirement: Badge Management
+
+The system SHALL provide cross-platform badge count management with fallbacks.
+
+#### Scenario: Update badge count on iOS
+- **GIVEN** the app is running on iOS
+- **WHEN** `NotificationService.updateBadgeCount(5)` is called
+- **THEN** the service SHALL update the app icon badge to 5
+- **AND** SHALL persist the count for app restarts
+
+#### Scenario: Update badge count on Android
+- **GIVEN** the app is running on Android
+- **WHEN** `NotificationService.updateBadgeCount(3)` is called
+- **THEN** the service SHALL update the launcher icon badge to 3
+- **AND** SHALL use `app_badge_plus` for cross-launcher support
+
+#### Scenario: Clear badge count
+- **GIVEN** the app has a badge count displayed
+- **WHEN** `NotificationService.clearBadge()` is called
+- **THEN** the service SHALL set the badge count to 0
+- **AND** SHALL remove the visual badge indicator
+
+#### Scenario: Badge count on unsupported platform
+- **GIVEN** the app is running on a platform without badge support (e.g., web)
+- **WHEN** `NotificationService.updateBadgeCount(2)` is called
+- **THEN** the service SHALL log the request
+- **AND** SHALL not throw an error
+- **AND** SHALL gracefully no-op
+
+### Requirement: Local Notification Display
+
+The system SHALL display local notifications with rich content support.
+
+#### Scenario: Show basic notification
+- **GIVEN** the app wants to show a notification
+- **WHEN** `NotificationService.showNotification()` is called with title and body
+- **THEN** the service SHALL display a notification with the provided title and body
+- **AND** SHALL use the default notification channel/category
+- **AND** SHALL assign a unique notification ID
+
+#### Scenario: Show notification with image
+- **GIVEN** the app wants to show a rich notification
+- **WHEN** `NotificationService.showNotification()` is called with an image URL
+- **THEN** the service SHALL download the image asynchronously
+- **AND** SHALL display the notification with the image attached
+- **AND** SHALL handle image download failures gracefully (show without image)
+
+#### Scenario: Show notification with action buttons
+- **GIVEN** the app wants interactive notifications
+- **WHEN** `NotificationService.showNotification()` is called with action buttons
+- **THEN** the service SHALL register the actions with the platform
+- **AND** SHALL display the notification with visible action buttons
+- **AND** SHALL call `onNotificationAction` when an action is tapped
+
+#### Scenario: Cancel notification
+- **GIVEN** a notification is displayed in the notification center
+- **WHEN** `NotificationService.cancelNotification(id)` is called
+- **THEN** the service SHALL remove the notification with the given ID
+- **AND** SHALL not affect other notifications
+
+#### Scenario: Cancel all notifications
+- **GIVEN** multiple notifications are displayed
+- **WHEN** `NotificationService.cancelAllNotifications()` is called
+- **THEN** the service SHALL remove all active notifications
+- **AND** SHALL clear the notification center for the app
+
+### Requirement: Notification Routing
+
+The system SHALL route notification actions to app destinations via callbacks.
+
+#### Scenario: Route notification to specific screen
+- **GIVEN** a notification contains a route parameter (e.g., `/messages/123`)
+- **WHEN** the user taps the notification
+- **THEN** the service SHALL extract the route parameter
+- **AND** SHALL call the `onNotificationTapped` callback with the route
+- **AND** SHALL allow the app's navigation system to handle the route
+
+#### Scenario: Route notification with custom data
+- **GIVEN** a notification contains custom data payload
+- **WHEN** the user taps the notification
+- **THEN** the service SHALL parse the data payload
+- **AND** SHALL call the `onNotificationTapped` callback with both route and data
+- **AND** SHALL preserve all data types (strings, numbers, booleans)
+
+#### Scenario: Handle action button tap
+- **GIVEN** a notification has action buttons
+- **WHEN** the user taps an action button
+- **THEN** the service SHALL call the `onNotificationAction` callback
+- **AND** SHALL pass the action identifier and notification data
+- **AND** SHALL not launch the app if the action is configured as background
+
+### Requirement: Notification Payload Model
+
+The system SHALL provide a strongly-typed model for notification data.
+
+#### Scenario: Parse FCM remote message
+- **GIVEN** a remote message is received from FCM
+- **WHEN** `NotificationPayload.fromRemoteMessage()` is called
+- **THEN** the system SHALL extract title, body, image, route, and data
+- **AND** SHALL handle missing fields gracefully with null values
+- **AND** SHALL return a valid `NotificationPayload` instance
+
+#### Scenario: Serialize notification to JSON
+- **GIVEN** a `NotificationPayload` instance
+- **WHEN** `payload.toJson()` is called
+- **THEN** the system SHALL return a JSON-serializable map
+- **AND** SHALL include all non-null fields
+- **AND** SHALL support round-trip serialization (toJson → fromJson)
+
+#### Scenario: Deserialize notification from JSON
+- **GIVEN** a JSON map representing a notification
+- **WHEN** `NotificationPayload.fromJson(map)` is called
+- **THEN** the system SHALL create a valid payload instance
+- **AND** SHALL handle missing or invalid fields gracefully
+- **AND** SHALL not throw exceptions for malformed data
+
+### Requirement: Background Message Handling
+
+The system SHALL handle FCM messages when the app is in the background or terminated.
+
+#### Scenario: Register background message handler
+- **GIVEN** the app is initializing
+- **WHEN** `FirebaseMessaging.onBackgroundMessage()` is configured
+- **THEN** the system SHALL register a top-level function handler
+- **AND** SHALL ensure the handler can run in a separate isolate
+- **AND** SHALL not rely on app state or UI
+
+#### Scenario: Process background notification
+- **GIVEN** the app is in the background
+- **WHEN** a notification-only message is received
+- **THEN** the platform SHALL automatically display the notification
+- **AND** SHALL not invoke custom Dart code until the notification is tapped
+
+#### Scenario: Process background data message
+- **GIVEN** the app is in the background
+- **WHEN** a data-only message is received
+- **THEN** the background handler SHALL execute
+- **AND** MAY display a local notification
+- **AND** MAY update local data or perform background work
+
+### Requirement: Notification Channels (Android)
+
+The system SHALL create and manage notification channels on Android.
+
+#### Scenario: Create default notification channel
+- **GIVEN** the app is initializing on Android
+- **WHEN** `NotificationService.initialize()` is called
+- **THEN** the service SHALL create a default notification channel
+- **AND** SHALL set the channel name, description, and importance level
+- **AND** SHALL configure sound, vibration, and lights
+
+#### Scenario: Create custom notification channels
+- **GIVEN** the app needs multiple notification types
+- **WHEN** `NotificationService.createChannel()` is called with channel config
+- **THEN** the service SHALL create a new channel with the given ID and settings
+- **AND** SHALL make the channel available for future notifications
+- **AND** SHALL not recreate existing channels
+
+#### Scenario: Delete notification channel
+- **GIVEN** a notification channel exists
+- **WHEN** `NotificationService.deleteChannel(channelId)` is called
+- **THEN** the service SHALL remove the channel from the system
+- **AND** SHALL not affect notifications already posted to that channel
+
+### Requirement: FCM Token Integration
+
+The system SHALL integrate with existing FCM token management in `AuthServiceImpl`.
+
+#### Scenario: Update notification service when token changes
+- **GIVEN** `AuthServiceImpl` receives a new FCM token
+- **WHEN** the token is updated on the server
+- **THEN** `AuthServiceImpl` SHALL notify `NotificationService` of the new token
+- **AND** `NotificationService` SHALL update its internal state
+- **AND** SHALL be available for diagnostic purposes
+
+#### Scenario: Initialize notifications without authentication
+- **GIVEN** the user is not logged in
+- **WHEN** `NotificationService.initialize()` is called
+- **THEN** the service SHALL initialize local notifications
+- **AND** SHALL defer FCM token registration until authentication completes
+- **AND** SHALL not block initialization on authentication
+
+### Requirement: Error Handling
+
+The system SHALL handle errors gracefully and report them appropriately.
+
+#### Scenario: Handle permission denial
+- **GIVEN** notification permissions are requested
+- **WHEN** the user denies permissions
+- **THEN** the service SHALL return a denied status
+- **AND** SHALL log the denial for diagnostics
+- **AND** SHALL not crash or throw exceptions
+- **AND** SHALL allow the app to continue functioning
+
+#### Scenario: Handle image download failure
+- **GIVEN** a notification includes an image URL
+- **WHEN** the image fails to download (network error, invalid URL)
+- **THEN** the service SHALL log the error
+- **AND** SHALL display the notification without the image
+- **AND** SHALL not delay notification display
+
+#### Scenario: Handle malformed notification data
+- **GIVEN** a notification contains invalid or malformed data
+- **WHEN** the notification is processed
+- **THEN** the service SHALL parse what it can
+- **AND** SHALL log the malformed fields
+- **AND** SHALL display a basic notification if possible
+- **AND** SHALL not crash the app
+
+### Requirement: Platform Compatibility
+
+The system SHALL support iOS, Android, and web platforms with appropriate fallbacks.
+
+#### Scenario: Detect platform capabilities
+- **GIVEN** the app is running on any platform
+- **WHEN** `NotificationService.isSupported()` is called
+- **THEN** the service SHALL return true if notifications are supported
+- **AND** SHALL return false on platforms without notification support
+
+#### Scenario: Graceful degradation on web
+- **GIVEN** the app is running on web
+- **WHEN** notification features are used
+- **THEN** the service SHALL use browser notification API if available
+- **AND** SHALL show a permission prompt in the browser
+- **AND** SHALL fallback gracefully if notifications are blocked
+
+#### Scenario: Handle iOS simulator limitations
+- **GIVEN** the app is running on iOS simulator
+- **WHEN** FCM token is requested
+- **THEN** the service SHALL detect the simulator environment
+- **AND** SHALL log a warning about limited FCM support
+- **AND** SHALL allow local notifications to work
