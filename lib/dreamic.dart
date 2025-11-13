@@ -46,6 +46,7 @@ export 'app/helpers/notification_service.dart';
 export 'app/helpers/notification_permission_helper.dart';
 export 'app/helpers/notification_background_handler.dart';
 export 'app/helpers/notification_channel_manager.dart';
+export 'app/helpers/notification_image_loader.dart';
 
 // Notification Models
 export 'data/models/notification_payload.dart';

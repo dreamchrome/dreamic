@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:app_badge_plus/app_badge_plus.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -9,6 +10,7 @@ import '../../data/models/notification_payload.dart';
 import '../../data/models/notification_permission_status.dart';
 import '../../utils/logger.dart';
 import 'notification_channel_manager.dart';
+import 'notification_image_loader.dart';
 
 /// Callback type for handling notification taps.
 ///
@@ -335,17 +337,22 @@ class NotificationService {
         return;
       }
 
+      final payload = _deserializePayload(payloadStr);
+      if (payload == null) {
+        logi('Failed to deserialize notification payload');
+        return;
+      }
+
       // For action button taps
       if (response.actionId != null && _onNotificationAction != null) {
-        // TODO: Parse route and data from payload string
-        await _onNotificationAction!(response.actionId!, null, null);
+        logi('Action button tapped: ${response.actionId}');
+        await _onNotificationAction!(response.actionId!, payload.route, payload.data);
         return;
       }
 
       // For regular notification taps
       if (_onNotificationTapped != null) {
-        // TODO: Parse route and data from payload string
-        await _onNotificationTapped!(null, null);
+        await _onNotificationTapped!(payload.route, payload.data);
       }
     } catch (e, stackTrace) {
       loge(e, 'Error handling notification tap', stackTrace);
@@ -354,6 +361,12 @@ class NotificationService {
   }
 
   /// Displays a local notification.
+  ///
+  /// Supports rich notifications including:
+  /// - Images (downloaded and cached automatically)
+  /// - Action buttons (up to 3 per notification)
+  /// - Custom sounds
+  /// - Badge updates
   ///
   /// Parameters:
   /// - [payload]: The notification content and configuration
@@ -367,6 +380,31 @@ class NotificationService {
     try {
       final id = payload.id ?? DateTime.now().millisecondsSinceEpoch.remainder(100000);
 
+      // Download image if provided
+      String? imagePath;
+      if (payload.imageUrl != null && payload.imageUrl!.isNotEmpty) {
+        imagePath = await NotificationImageLoader.downloadImage(payload.imageUrl!);
+        if (imagePath != null) {
+          logi('Notification image downloaded: $imagePath');
+        } else {
+          logi('Failed to download notification image, displaying without image');
+        }
+      }
+
+      // Build action buttons for Android
+      List<AndroidNotificationAction>? androidActions;
+      if (payload.actions.isNotEmpty && !kIsWeb && Platform.isAndroid) {
+        androidActions = payload.actions.map((action) {
+          return AndroidNotificationAction(
+            action.id,
+            action.label,
+            icon: action.icon != null ? DrawableResourceAndroidBitmap(action.icon!) : null,
+            showsUserInterface: action.launchesApp,
+            contextual: false,
+          );
+        }).toList();
+      }
+
       // Android-specific settings
       // Use channel from payload, or default to standard channel
       final channelId = payload.channelId ?? NotificationChannelManager.channelDefault;
@@ -379,9 +417,30 @@ class NotificationService {
         playSound: true,
         enableVibration: true,
         enableLights: true,
-        // TODO: Add image support
-        // TODO: Add action buttons support
+        styleInformation: imagePath != null
+            ? BigPictureStyleInformation(
+                FilePathAndroidBitmap(imagePath),
+                contentTitle: payload.title,
+                summaryText: payload.body,
+                hideExpandedLargeIcon: false,
+              )
+            : null,
+        actions: androidActions,
+        category: payload.category != null
+            ? AndroidNotificationCategory.values.firstWhere(
+                (c) => c.toString().split('.').last == payload.category,
+                orElse: () => AndroidNotificationCategory.message,
+              )
+            : null,
       );
+
+      // Build iOS/macOS attachment for image
+      List<DarwinNotificationAttachment>? iosAttachments;
+      if (imagePath != null && !kIsWeb && (Platform.isIOS || Platform.isMacOS)) {
+        iosAttachments = [
+          DarwinNotificationAttachment(imagePath),
+        ];
+      }
 
       // iOS-specific settings
       final iosDetails = DarwinNotificationDetails(
@@ -390,7 +449,7 @@ class NotificationService {
         presentSound: true,
         badgeNumber: payload.badge,
         categoryIdentifier: payload.category,
-        // TODO: Add image support
+        attachments: iosAttachments,
       );
 
       final notificationDetails = NotificationDetails(
@@ -399,15 +458,18 @@ class NotificationService {
         macOS: iosDetails,
       );
 
+      // Serialize payload data for tap handling
+      final payloadJson = _serializePayload(payload);
+
       await _localNotifications!.show(
         id,
         payload.title ?? 'Notification',
         payload.body,
         notificationDetails,
-        payload: '', // TODO: Serialize route and data
+        payload: payloadJson,
       );
 
-      logi('Displayed notification: $id');
+      logi('Displayed notification: $id with ${payload.actions.length} actions');
       return id;
     } catch (e, stackTrace) {
       loge(e, 'Error showing notification', stackTrace);
@@ -722,6 +784,29 @@ class NotificationService {
     _openedAppSubscription = null;
     _initialized = false;
     logi('NotificationService disposed');
+  }
+
+  /// Serializes notification payload to JSON string for tap handling.
+  String _serializePayload(NotificationPayload payload) {
+    try {
+      final json = payload.toJson();
+      return jsonEncode(json);
+    } catch (e) {
+      loge(e, 'Error serializing notification payload');
+      return '{}';
+    }
+  }
+
+  /// Deserializes notification payload from JSON string.
+  NotificationPayload? _deserializePayload(String payloadStr) {
+    try {
+      if (payloadStr.isEmpty) return null;
+      final json = jsonDecode(payloadStr) as Map<String, dynamic>;
+      return NotificationPayload.fromJson(json);
+    } catch (e) {
+      loge(e, 'Error deserializing notification payload');
+      return null;
+    }
   }
 
   /// Gets the channel manager for advanced channel operations.

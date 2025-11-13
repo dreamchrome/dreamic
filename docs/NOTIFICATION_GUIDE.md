@@ -545,6 +545,187 @@ test('notification flow', () async {
 
 See the [Testing Guide](../TESTING_GUIDE.md) for more examples.
 
+## Rich Notifications
+
+**Version:** Added in 0.2.0
+
+Dreamic supports rich media notifications with images and action buttons.
+
+### Images
+
+Display images in notifications that are automatically downloaded and cached:
+
+```dart
+final service = NotificationService();
+
+await service.showNotification(
+  NotificationPayload(
+    title: 'New Photo',
+    body: 'Check out this amazing picture!',
+    imageUrl: 'https://example.com/photo.jpg',
+    route: '/photo/123',
+  ),
+);
+```
+
+**How it works:**
+- Image is downloaded asynchronously (10-second timeout)
+- Cached locally for 7 days to avoid redundant downloads
+- Falls back to text-only notification if download fails
+- Supported formats: JPG, PNG, GIF, WebP
+
+**Platform implementations:**
+- **Android**: BigPictureStyle with full-width expanded image
+- **iOS/macOS**: Notification attachment
+- **Web**: Not supported
+
+**Manual cache management:**
+```dart
+import 'package:dreamic/app/helpers/notification_image_loader.dart';
+
+// Clear all cached images
+await NotificationImageLoader.clearCache();
+
+// Remove images older than 3 days
+await NotificationImageLoader.cleanupOldCache(Duration(days: 3));
+
+// Download image manually
+final imagePath = await NotificationImageLoader.downloadImage(
+  'https://example.com/image.jpg',
+  timeout: Duration(seconds: 5),
+);
+```
+
+### Action Buttons
+
+Add up to 3 interactive buttons to notifications:
+
+```dart
+await service.showNotification(
+  NotificationPayload(
+    title: 'New Message',
+    body: 'Hey, how are you?',
+    route: '/messages/456',
+    actions: [
+      NotificationAction(
+        id: 'reply',
+        label: 'Reply',
+        icon: '@drawable/ic_reply', // Android only
+        launchesApp: true,          // Opens app
+      ),
+      NotificationAction(
+        id: 'mark_read',
+        label: 'Mark Read',
+        launchesApp: false,         // Background action
+      ),
+      NotificationAction(
+        id: 'delete',
+        label: 'Delete',
+        icon: '@drawable/ic_delete',
+        launchesApp: false,
+      ),
+    ],
+  ),
+);
+```
+
+**Handle action button taps:**
+```dart
+await NotificationService().initialize(
+  onNotificationTapped: (route, data) {
+    // Handle regular notification tap
+    if (route != null) Navigator.pushNamed(context, route);
+  },
+  onNotificationAction: (actionId, route, data) {
+    // Handle action button tap
+    switch (actionId) {
+      case 'reply':
+        Navigator.pushNamed(context, '/compose', arguments: data);
+        break;
+      case 'mark_read':
+        markMessageAsRead(data?['messageId']);
+        break;
+      case 'delete':
+        deleteMessage(data?['messageId']);
+        break;
+    }
+  },
+);
+```
+
+**Platform support:**
+- **Android**: Full support with icons
+- **iOS**: Actions via notification categories (no custom icons)
+- **Web**: Not supported
+
+**Best practices:**
+- Limit to 2-3 actions for best UX
+- Use clear, action-oriented labels
+- Consider authentication requirements (`requiresAuth`)
+- Test on different Android manufacturers (behavior varies)
+
+### Notification Channels (Android)
+
+Android 8.0+ requires notification channels for granular control:
+
+```dart
+import 'package:dreamic/app/helpers/notification_channel_manager.dart';
+
+// Access via NotificationService
+final channelManager = NotificationService().channelManager;
+
+// Use default channels (automatically created)
+await service.showNotification(
+  NotificationPayload(
+    title: 'Urgent Alert',
+    channelId: NotificationChannelManager.channelHighPriority,
+  ),
+);
+```
+
+**Default channels:**
+- `channelHighPriority` - Critical alerts with max sound/vibration
+- `channelDefault` - Standard notifications
+- `channelLowPriority` - Non-urgent updates
+- `channelSilent` - Background updates without sound
+
+**Create custom channels:**
+```dart
+await channelManager?.createChannel(
+  AndroidNotificationChannel(
+    'promotions',
+    'Promotional Offers',
+    description: 'Deals and special offers',
+    importance: Importance.low,
+    playSound: true,
+    enableVibration: false,
+  ),
+);
+
+// Use your custom channel
+await service.showNotification(
+  NotificationPayload(
+    title: 'Flash Sale!',
+    channelId: 'promotions',
+  ),
+);
+```
+
+**Channel management:**
+```dart
+// List all channels
+final channels = await channelManager?.getChannels();
+
+// Delete channel (users will need to re-enable if recreated)
+await channelManager?.deleteChannel('promotions');
+```
+
+**Important notes:**
+- Channels can only be created, not modified (Android limitation)
+- Users can customize channel settings (sound, vibration, importance)
+- Deleting and recreating a channel requires users to re-enable it
+- Channel importance determines notification behavior and priority
+
 ## Advanced Usage
 
 ### Custom Background Handler
@@ -586,10 +767,6 @@ await NotificationService().initialize(
   },
 );
 ```
-
-### Rich Notifications (Coming Soon)
-
-Support for images, action buttons, and attachments will be added in a future update.
 
 ## Troubleshooting
 

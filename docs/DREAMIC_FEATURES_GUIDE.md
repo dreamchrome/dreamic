@@ -352,6 +352,66 @@ NotificationBadgeWidget(
 )
 ```
 
+#### Rich Notifications
+
+**Version:** Added in 0.2.0
+
+**Images in Notifications:**
+```dart
+await service.showNotification(
+  NotificationPayload(
+    title: 'New Photo',
+    body: 'Check out this amazing picture!',
+    imageUrl: 'https://example.com/photo.jpg', // Auto-downloaded & cached
+  ),
+);
+```
+
+**Action Buttons (up to 3):**
+```dart
+await service.showNotification(
+  NotificationPayload(
+    title: 'New Message',
+    actions: [
+      NotificationAction(id: 'reply', label: 'Reply', launchesApp: true),
+      NotificationAction(id: 'mark_read', label: 'Mark Read'),
+    ],
+  ),
+);
+
+// Handle in initialize()
+await NotificationService().initialize(
+  onNotificationAction: (actionId, route, data) {
+    // Handle button tap
+  },
+);
+```
+
+**Features:**
+- Automatic image download (10s timeout) + 7-day caching
+- Android: BigPictureStyle, iOS: Attachments
+- Graceful fallback if image fails
+- Full route/data passed to handlers
+
+#### Notification Channels (Android)
+
+**Version:** Added in 0.2.0
+
+```dart
+// Use default channels
+await service.showNotification(
+  NotificationPayload(
+    channelId: NotificationChannelManager.channelHighPriority,
+  ),
+);
+
+// Available: channelHighPriority, channelDefault, channelLowPriority, channelSilent
+
+// Create custom channel
+final manager = NotificationService().channelManager;
+await manager?.createChannel(AndroidNotificationChannel(...));
+```
+
 #### Data Models
 
 **NotificationPayload:**
@@ -359,25 +419,39 @@ NotificationBadgeWidget(
 class NotificationPayload {
   final String? title;
   final String? body;
-  final String? route;           // Deep link route
-  final Map<String, dynamic>? data;
-  final String? imageUrl;        // Android image URL
-  final int? badge;              // iOS badge count
-  final List<NotificationAction>? actions;
+  final String? route;                        // Deep link route
+  final Map<String, dynamic> data;            // Additional data
+  final String? imageUrl;                     // Image URL (auto-downloaded)
+  final List<NotificationAction> actions;     // Action buttons (up to 3)
+  final int? id;                              // Notification ID
+  final String? channelId;                    // Android channel
+  final String? category;                     // iOS category
+  final String? sound;                        // Custom sound
+  final int? badge;                           // iOS badge count
+  final int? ttl;                             // Time to live (seconds)
+  final String? priority;                     // FCM priority
   
-  // Parse from FCM RemoteMessage
+  // Create from FCM RemoteMessage
   factory NotificationPayload.fromRemoteMessage(RemoteMessage message);
+  
+  // JSON serialization
+  factory NotificationPayload.fromJson(Map<String, dynamic> json);
+  Map<String, dynamic> toJson();
 }
 ```
 
 **NotificationAction:**
 ```dart
 class NotificationAction {
-  final String id;
-  final String label;
-  final String? icon;
-  final bool requiresAuth;
-  final bool launchesApp;
+  final String id;                 // Unique action ID
+  final String label;              // Button text
+  final String? icon;              // Android icon (@drawable/name)
+  final bool requiresAuth;         // Requires authentication
+  final bool launchesApp;          // Opens app or background
+  
+  // JSON serialization
+  factory NotificationAction.fromJson(Map<String, dynamic> json);
+  Map<String, dynamic> toJson();
 }
 ```
 
@@ -387,6 +461,8 @@ Automatically included in Dreamic 0.2.0+:
 - `flutter_local_notifications: ^18.0.1` - Local notification display
 - `app_badge_plus: ^1.1.5` - Badge management (iOS/Android/macOS)
 - `adaptive_dialog: ^2.2.0` - Platform-native dialogs
+- `http: ^1.5.0` - Image downloading
+- `path_provider: ^2.1.5` - Cache directory access
 
 #### Best Practices
 
@@ -396,16 +472,27 @@ Automatically included in Dreamic 0.2.0+:
 4. **Handle denied state** - Use `NotificationPermissionHelper` to check if you can prompt again
 5. **Test badge support** - Badge functionality varies by Android manufacturer
 6. **Use the background handler** - Always register `dreamicNotificationBackgroundHandler` for proper background message handling
+7. **Optimize images** - Use reasonably sized images (< 2MB) to avoid slow downloads
+8. **Limit action buttons** - Use 2-3 actions max for best UX
+9. **Test on devices** - Rich notifications behave differently on various Android manufacturers
+10. **Use appropriate channels** - Choose the right channel for notification importance
 
-#### Documentation
+#### Complete Documentation
 
-See **[NOTIFICATION_GUIDE.md](NOTIFICATION_GUIDE.md)** for comprehensive documentation including:
-- Detailed setup instructions
-- Permission strategies
-- Routing implementation
+This is a **quick reference**. For comprehensive documentation, see **[NOTIFICATION_GUIDE.md](NOTIFICATION_GUIDE.md)**:
+
+**What's in the full guide:**
+- Step-by-step setup instructions with platform configurations
+- Permission request strategies (simple, with UI, periodic reminders)
+- Rich notifications (images, action buttons, channels) with detailed examples
+- FCM payload format and routing implementation
+- UI components with localization examples
 - Background message handling
-- Troubleshooting
-- Advanced customization
+- Troubleshooting common issues
+- Migration guide from custom implementations
+
+**Use this guide for:** Quick API reference and feature discovery  
+**Use NOTIFICATION_GUIDE.md for:** Setup, best practices, and detailed implementation
 
 ---
 
