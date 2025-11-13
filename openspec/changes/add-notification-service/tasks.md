@@ -2,9 +2,9 @@
 
 ## 1. Dependencies and Configuration
 
-- [ ] Add `flutter_local_notifications: ^18.0.1` to `pubspec.yaml`
-- [ ] Add `app_badge_plus: ^1.1.5` to `pubspec.yaml`
-- [ ] Run `flutter pub get` to fetch new dependencies
+- [x] Add `flutter_local_notifications: ^18.0.1` to `pubspec.yaml`
+- [x] Add `app_badge_plus: ^1.1.5` to `pubspec.yaml`
+- [x] Run `flutter pub get` to fetch new dependencies
 - [ ] Create `docs/NOTIFICATION_SETUP.md` with platform configuration examples (NOT in package itself):
   - [ ] iOS: Document notification entitlements for `Info.plist` (apps add if needed)
   - [ ] Android: Document notification permissions for `AndroidManifest.xml` (apps add if needed)
@@ -14,59 +14,59 @@
 
 ## 2. Data Models
 
-- [ ] Create `lib/data/models/notification_payload.dart`
-  - [ ] Define `NotificationPayload` class with `title`, `body`, `imageUrl`, `route`, `data`, `actions`
-  - [ ] Implement `fromRemoteMessage(RemoteMessage)` factory
-  - [ ] Implement `fromJson(Map<String, dynamic>)` factory
-  - [ ] Implement `toJson()` method
-  - [ ] Add `json_serializable` annotations
-  - [ ] Run `build_runner` to generate serialization code
-- [ ] Create `lib/data/models/notification_action.dart`
-  - [ ] Define `NotificationAction` class with `id`, `label`, `icon`, `requiresAuth`
-  - [ ] Implement JSON serialization
-- [ ] Create `lib/data/models/notification_permission_status.dart`
-  - [ ] Define `NotificationPermissionStatus` enum (authorized, denied, notDetermined, provisional)
+- [x] Create `lib/data/models/notification_payload.dart`
+  - [x] Define `NotificationPayload` class with `title`, `body`, `imageUrl`, `route`, `data`, `actions`
+  - [x] Implement `fromRemoteMessage(RemoteMessage)` factory
+  - [x] Implement `fromJson(Map<String, dynamic>)` factory
+  - [x] Implement `toJson()` method
+  - [x] Add `json_serializable` annotations
+  - [x] Run `build_runner` to generate serialization code
+- [x] Create `lib/data/models/notification_action.dart`
+  - [x] Define `NotificationAction` class with `id`, `label`, `icon`, `requiresAuth`
+  - [x] Implement JSON serialization
+- [x] Create `lib/data/models/notification_permission_status.dart`
+  - [x] Define `NotificationPermissionStatus` enum (authorized, denied, notDetermined, provisional)
 - [ ] Add tests for `notification_payload.dart` serialization
 - [ ] Add tests for `notification_action.dart` serialization
 
 ## 3. Core Notification Service
 
-- [ ] Create `lib/app/helpers/notification_service.dart`
-  - [ ] Define `NotificationService` class with lazy singleton pattern (no automatic initialization)
-  - [ ] Add private constructor to prevent automatic instantiation
-  - [ ] Add `initialize()` method that handles ALL setup (replaces consuming app boilerplate):
-    - [ ] Initializes `FlutterLocalNotificationsPlugin`
-    - [ ] Creates default Android notification channel
-    - [ ] Registers background message handler automatically
-    - [ ] Sets up `FirebaseMessaging.onMessage` listener (foreground)
-    - [ ] Sets up `FirebaseMessaging.onMessageOpenedApp` listener
-    - [ ] Checks `FirebaseMessaging.instance.getInitialMessage()` for cold start
-    - [ ] Configures iOS foreground presentation options
-    - [ ] Takes callbacks as parameters: `onNotificationTapped`, `onNotificationAction`
-    - [ ] Takes optional `onError` callback for error reporting
-    - [ ] Takes optional `reminderIntervalDays` parameter (default 30) for periodic prompts
-  - [ ] Ensure constructor and factory have NO side effects
-  - [ ] Add `requestPermissions()` method
-  - [ ] Add `getPermissionStatus()` method
-  - [ ] Add `openSettings()` method
-  - [ ] Add `showNotificationsInForeground` flag
+- [x] Create `lib/app/helpers/notification_service.dart`
+  - [x] Define `NotificationService` class with lazy singleton pattern (no automatic initialization)
+  - [x] Add private constructor to prevent automatic instantiation
+  - [x] Add `initialize()` method that handles ALL setup (replaces consuming app boilerplate):
+    - [x] Initializes `FlutterLocalNotificationsPlugin`
+    - [x] Creates default Android notification channel
+    - [x] Registers background message handler automatically
+    - [x] Sets up `FirebaseMessaging.onMessage` listener (foreground)
+    - [x] Sets up `FirebaseMessaging.onMessageOpenedApp` listener
+    - [x] Checks `FirebaseMessaging.instance.getInitialMessage()` for cold start
+    - [x] Configures iOS foreground presentation options
+    - [x] Takes callbacks as parameters: `onNotificationTapped`, `onNotificationAction`
+    - [x] Takes optional `onError` callback for error reporting
+    - [x] Takes optional `reminderIntervalDays` parameter (default 30) for periodic prompts
+  - [x] Ensure constructor and factory have NO side effects
+  - [x] Add `requestPermissions()` method
+  - [x] Add `getPermissionStatus()` method
+  - [x] Add `openSettings()` method
+  - [x] Add `showNotificationsInForeground` flag
   - [ ] **Goal: Consuming app only calls `initialize()` with callbacks, no manual stream setup**
-- [ ] Implement local notification methods:
-  - [ ] `showNotification(NotificationPayload)` - Display local notification
-  - [ ] `cancelNotification(int id)` - Cancel single notification
-  - [ ] `cancelAllNotifications()` - Cancel all notifications
-  - [ ] `getActiveNotifications()` - Get list of active notifications
-- [ ] Implement badge management methods:
-  - [ ] `updateBadgeCount(int count)` - Set badge count
-  - [ ] `clearBadge()` - Clear badge
-  - [ ] `getBadgeCount()` - Get current badge count
-- [ ] Implement FCM message handling (token management stays in AuthServiceImpl):
-  - [ ] Register `onBackgroundMessage` handler for incoming FCM messages
-  - [ ] Handle foreground messages via `onMessage` stream
-  - [ ] Handle notification taps via `onMessageOpenedApp` stream  
-  - [ ] Handle notification taps when app is terminated via `getInitialMessage()`
-  - [ ] Parse `RemoteMessage` to `NotificationPayload`
-  - [ ] Note: Token registration/refresh remains in `AuthServiceImpl.initFCM()`
+- [x] Implement local notification methods:
+  - [x] `showNotification(NotificationPayload)` - Display local notification
+  - [x] `cancelNotification(int id)` - Cancel single notification
+  - [x] `cancelAllNotifications()` - Cancel all notifications
+  - [x] `getActiveNotifications()` - Get list of active notifications
+- [x] Implement badge management methods:
+  - [x] `updateBadgeCount(int count)` - Set badge count
+  - [x] `clearBadge()` - Clear badge
+  - [x] `getBadgeCount()` - Get current badge count
+- [x] Implement FCM message handling (token management stays in AuthServiceImpl):
+  - [x] Register `onBackgroundMessage` handler for incoming FCM messages
+  - [x] Handle foreground messages via `onMessage` stream
+  - [x] Handle notification taps via `onMessageOpenedApp` stream  
+  - [x] Handle notification taps when app is terminated via `getInitialMessage()`
+  - [x] Parse `RemoteMessage` to `NotificationPayload`
+  - [x] Note: Token registration/refresh remains in `AuthServiceImpl.initFCM()`
 - [ ] Add unit tests for `NotificationService` core logic
 
 ## 4. Platform-Specific Implementations
@@ -104,23 +104,25 @@
 
 ## 6. Notification Channels (Android)
 
-- [ ] Create `lib/app/helpers/notification_channel_manager.dart`
-  - [ ] Define default notification channel constants
-  - [ ] Implement `createChannel(NotificationChannel)` method
-  - [ ] Implement `deleteChannel(String channelId)` method
-  - [ ] Implement `getChannels()` method
-  - [ ] Create default channels on initialization (high, medium, low importance)
+- [x] Create `lib/app/helpers/notification_channel_manager.dart`
+  - [x] Define default notification channel constants
+  - [x] Implement `createChannel(NotificationChannel)` method
+  - [x] Implement `deleteChannel(String channelId)` method
+  - [x] Implement `getChannels()` method
+  - [x] Create default channels on initialization (high, default, low, silent)
+  - [x] Integrate with NotificationService
+  - [x] Export in main library
 - [ ] Add tests for notification channel management
 
 ## 7. Permission UI Components
 
-- [ ] Create `lib/presentation/elements/notification_permission_bottom_sheet.dart`
-  - [ ] Implement bottom sheet UI with title, description, buttons
-  - [ ] Add `show()` static method
-  - [ ] Add customization parameters (colors, text, icons)
-  - [ ] Handle "Allow Notifications" button tap → request permissions
-  - [ ] Handle "Not Now" button tap → dismiss
-  - [ ] Handle already-denied state → show settings prompt
+- [x] Create `lib/presentation/elements/notification_permission_bottom_sheet.dart`
+  - [x] Implement bottom sheet UI with title, description, buttons
+  - [x] Add `show()` static method
+  - [x] Add customization parameters (colors, text, icons)
+  - [x] Handle "Allow Notifications" button tap → request permissions
+  - [x] Handle "Not Now" button tap → dismiss
+  - [x] Handle already-denied state → show settings prompt
   - [ ] Add widget tests
 - [ ] Create `lib/presentation/elements/notification_permission_denied_dialog.dart`
   - [ ] Show after user denies permissions
@@ -132,11 +134,11 @@
   - [ ] Stronger rationale explaining consequences of denial
   - [ ] Track denial count and escalate messaging for repeated denials
   - [ ] Add widget tests
-- [ ] Create `lib/presentation/elements/notification_permission_status_widget.dart`
-  - [ ] Display current permission status with icon and text
-  - [ ] Show "Enable" button for notDetermined state
-  - [ ] Show "Open Settings" button for denied state
-  - [ ] Auto-update when permission status changes
+- [x] Create `lib/presentation/elements/notification_permission_status_widget.dart`
+  - [x] Display current permission status with icon and text
+  - [x] Show "Enable" button for notDetermined state
+  - [x] Show "Open Settings" button for denied state
+  - [x] Auto-update when permission status changes
   - [ ] Add widget tests
 - [ ] Create `lib/presentation/elements/notification_settings_page.dart`
   - [ ] Display permission status at top
@@ -149,22 +151,22 @@
 
 ## 8. Additional UI Components
 
-- [ ] Create `lib/presentation/elements/notification_permission_builder.dart`
-  - [ ] Implement headless builder pattern
-  - [ ] Provide permission status via callback
-  - [ ] Provide `requestPermissions()` method
-  - [ ] Rebuild on permission status changes
+- [x] Create `lib/presentation/elements/notification_permission_builder.dart`
+  - [x] Implement headless builder pattern
+  - [x] Provide permission status via callback
+  - [x] Provide `requestPermissions()` method
+  - [x] Rebuild on permission status changes
   - [ ] Add widget tests
 - [ ] Create `lib/presentation/elements/notification_rationale_dialog.dart`
   - [ ] Implement dialog with custom explanation
   - [ ] Add benefit bullet points with icons
   - [ ] Add "Continue" and "Maybe Later" buttons
   - [ ] Add widget tests
-- [ ] Create `lib/presentation/elements/badge_count_widget.dart`
-  - [ ] Display badge with count
-  - [ ] Support `hideWhenZero` parameter
-  - [ ] Handle count overflow (99+)
-  - [ ] Support custom colors and shapes
+- [x] Create `lib/presentation/elements/notification_badge_widget.dart`
+  - [x] Display badge with count
+  - [x] Support `hideWhenZero` parameter
+  - [x] Handle count overflow (99+)
+  - [x] Support custom colors and shapes
   - [ ] Add widget tests
 - [ ] Create `lib/presentation/elements/notification_placeholder_widget.dart`
   - [ ] Empty state for no notifications
@@ -173,38 +175,25 @@
 
 ## 9. Notification Permission Helper
 
-- [ ] Create `lib/app/helpers/notification_permission_helper.dart`
-  - [ ] Implement `isPermissionGranted()` - Returns bool
-  - [ ] Implement `isPermissionDenied()` - Returns bool
-  - [ ] Implement `isPermissionNotDetermined()` - Returns bool
-  - [ ] Implement `hasRequestedPermissionBefore()` - Returns bool
-  - [ ] Implement `shouldShowPermissionRationale()` - Returns bool
-  - [ ] Implement `canPromptForPermission()` - Platform-aware (false on iOS after denial)
-  - [ ] Implement `shouldShowSettingsPrompt()` - Returns true if denied and can't prompt
-  - [ ] Implement `getPermissionDenialCount()` - Returns int
-  - [ ] Implement `shouldShowPeriodicReminder(int intervalDays)` - Returns true if interval passed since last reminder
-  - [ ] Implement `shouldRequestPermissions()` - Check if should request based on state and history
-  - [ ] Implement `trackPermissionRequest()` - Track request attempts and denials
-  - [ ] Implement `updateLastReminderDate()` - Update timestamp when reminder shown
-  - [ ] Implement `getOptimalContext()` - Suggest optimal timing based on user patterns
-  - [ ] Store request history in `SharedPreferences` (count, denials, timestamp, lastReminderDate)
+- [x] Create `lib/app/helpers/notification_permission_helper.dart`
+  - [x] Implement `isPermissionGranted()` - Returns bool
+  - [x] Implement `isPermissionDenied()` - Returns bool
+  - [x] Implement `isPermissionNotDetermined()` - Returns bool
+  - [x] Implement `hasRequestedPermissionBefore()` - Returns bool
+  - [x] Implement `shouldShowPermissionRationale()` - Returns bool
+  - [x] Implement `canPromptForPermission()` - Platform-aware (false on iOS after denial)
+  - [x] Implement `shouldShowSettingsPrompt()` - Returns true if denied and can't prompt
+  - [x] Implement `getPermissionDenialCount()` - Returns int
+  - [x] Implement `shouldShowPeriodicReminder(int intervalDays)` - Returns true if interval passed since last reminder
+  - [x] Implement `shouldRequestPermissions()` - Check if should request based on state and history
+  - [x] Implement `trackPermissionRequest()` - Track request attempts and denials
+  - [x] Implement `updateLastReminderDate()` - Update timestamp when reminder shown
+  - [x] Implement `getOptimalContext()` - Suggest optimal timing based on user patterns
+  - [x] Store request history in `SharedPreferences` (count, denials, timestamp, lastReminderDate)
   - [ ] Cache permission state to avoid repeated checks
   - [ ] Add unit tests
 
-## 10. AppCubit Integration
-
-- [ ] Modify `lib/app/app_cubit.dart`:
-  - [ ] Add `onNotificationTapped(String? route, Map<String, dynamic>? data)` method
-  - [ ] Add `updateBadgeCount(int count)` method to sync with `NotificationService`
-  - [ ] Add `setupNotificationCallbacks()` method that apps can optionally call
-  - [ ] **DO NOT** automatically initialize NotificationService
-  - [ ] **DO NOT** automatically register callbacks
-  - [ ] Route notifications based on app navigation system
-  - [ ] Add tests for notification routing
-- [ ] Document that apps must call `appCubit.setupNotificationCallbacks()` if using notifications
-- [ ] Test badge count synchronization with `AppCubitState.unreadNotificationsCount`
-
-## 11. Integrate with AuthServiceImpl
+## 10. Integrate with AuthServiceImpl
 
 - [ ] **Modify `AuthServiceImpl.initFCM()` for permission control**
   - [ ] Add permission status check at start of `initFCM()`
@@ -231,25 +220,25 @@
   - [ ] Permission control: NotificationService owns prompting, triggers FCM registration after grant
   - [ ] Optional integration: NotificationService can listen to token updates
 
-## 12. Background Message Handler
+## 11. Background Message Handler
 
-- [ ] Create `lib/app/helpers/notification_background_handler.dart`
-  - [ ] Define top-level function `dreamicFirebaseMessagingBackgroundHandler(RemoteMessage)`
-  - [ ] Mark with `@pragma('vm:entry-point')` for tree-shaking protection
-  - [ ] Initialize Firebase in background isolate
-  - [ ] Parse message and display local notification
-  - [ ] Ensure handler is isolate-safe (no UI dependencies)
+- [x] Create `lib/app/helpers/notification_background_handler.dart`
+  - [x] Define top-level function `dreamicFirebaseMessagingBackgroundHandler(RemoteMessage)`
+  - [x] Mark with `@pragma('vm:entry-point')` for tree-shaking protection
+  - [x] Initialize Firebase in background isolate
+  - [x] Parse message and display local notification
+  - [x] Ensure handler is isolate-safe (no UI dependencies)
   - [ ] Handle Remote Config initialization if needed
-- [ ] **Note: Consuming apps MUST register handler in main()** (Dart limitation):
-  - [ ] Document that `FirebaseMessaging.onBackgroundMessage(dreamicNotificationBackgroundHandler)` must be called in main()
-  - [ ] This is required before runApp() due to top-level function requirement
-  - [ ] Still massive simplification: 1 line vs ~100 lines of handler implementation
-- [ ] Provide documentation on background handler requirements (must be top-level)
+- [x] **Note: Consuming apps MUST register handler in main()** (Dart limitation):
+  - [x] Document that `FirebaseMessaging.onBackgroundMessage(dreamicNotificationBackgroundHandler)` must be called in main()
+  - [x] This is required before runApp() due to top-level function requirement
+  - [x] Still massive simplification: 1 line vs ~100 lines of handler implementation
+- [x] Provide documentation on background handler requirements (must be top-level)
 - [ ] Test background message handling on physical devices
 
-## 13. Documentation
+## 12. Documentation
 
-- [ ] Create `docs/NOTIFICATION_GUIDE.md`
+- [x] Create `docs/NOTIFICATION_GUIDE.md`
   - [ ] Getting Started section with **clear opt-in instructions**
   - [ ] Explicitly state: "This feature is completely optional. Your app will not require notification entitlements unless you follow these setup steps."
   - [ ] **Show before/after comparison**:
@@ -279,7 +268,7 @@
     - [ ] Debugging notification delivery
     - [ ] Platform-specific gotchas
 
-## 14. Example Code
+## 13. Example Code
   - [ ] Advanced usage (rich notifications, action buttons, custom routing)
   - [ ] UI component examples
   - [ ] Badge management examples
@@ -288,7 +277,7 @@
   - [ ] Migration guide from manual setup to NotificationService
 - [ ] Add notification examples to main `README.md`
 - [ ] Add inline documentation (dartdoc comments) to all public APIs
-- [ ] Update `CHANGELOG.md` with notification feature addition
+- [x] Update `CHANGELOG.md` with notification feature addition
 
 ## 14. Testing
 
@@ -296,7 +285,7 @@
 - [ ] Unit tests for `NotificationService` methods
 - [ ] Unit tests for `NotificationPermissionHelper`
 - [ ] Widget tests for all UI components
-- [ ] Widget tests using `MockAppCubit` for context
+
 - [ ] Integration tests for notification routing flow
 - [ ] Integration tests for badge count synchronization
 - [ ] Manual testing on physical iOS device

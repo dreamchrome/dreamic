@@ -1,3 +1,78 @@
+## 0.2.0
+
+### ✨ New Feature: Comprehensive Notification Service
+
+#### Overview
+Added a complete, production-ready notification system that abstracts away FCM complexity and eliminates ~300 lines of boilerplate code from consuming apps.
+
+#### Added
+* **NotificationService** - Central service for managing all notification functionality
+  * Lazy initialization (no side effects until explicitly initialized)
+  * Automatic FCM message handling (foreground, background, terminated states)
+  * Local notification display with platform-specific customization
+  * Permission request management with iOS/Android/web support
+  * Notification routing with deep link support
+  * Badge count management across platforms
+  * Permission state tracking and analytics
+  * Periodic reminder system for denied permissions
+
+* **Notification Models** (`lib/data/models/`)
+  * `NotificationPayload` - Complete notification data structure
+  * `NotificationAction` - Action button definitions
+  * `NotificationPermissionStatus` - Unified permission state enum
+
+* **NotificationPermissionHelper** - Permission management utilities
+  * Permission status checking
+  * Optimal timing suggestions for permission requests
+  * Permission request history tracking
+  * Platform-aware permission capabilities
+
+* **Background Handler** - Top-level FCM background message handler
+  * `dreamicNotificationBackgroundHandler` - Ready-to-use background handler
+  * Isolate-safe with automatic Firebase initialization
+  * Extensible for custom background logic
+
+* **UI Components** (`lib/presentation/elements/`)
+  * `NotificationPermissionBottomSheet` - Beautiful permission request UI
+    * Platform-native dialogs (Cupertino on iOS, Material on Android) via `adaptive_dialog`
+    * Full text customization for localization support
+    * Handles denied state with settings prompt
+  * `NotificationPermissionStatusWidget` - Real-time permission status display
+  * `NotificationPermissionBuilder` - Headless builder for custom UIs
+    * Provides permission status and request method via callback
+    * Automatically rebuilds on status changes
+    * Enables fully custom permission UIs
+  * `NotificationBadgeWidget` - Notification count badge overlay
+    * Automatic sync with NotificationService badge count
+    * Manual mode for custom counts
+    * Automatic overflow handling ("99+")
+    * Customizable colors, size, and position
+    * Optional hide-when-zero behavior
+    * Configurable polling interval
+  * Customizable styling and messaging
+  * Automatic platform-specific behavior
+
+* **Documentation**
+  * `NOTIFICATION_GUIDE.md` - Comprehensive usage guide with examples
+  * Before/after code comparisons showing boilerplate reduction
+  * Platform configuration guides
+  * Permission strategy best practices
+
+#### Key Benefits
+* **Massive Boilerplate Reduction**: ~300 lines → 1 `initialize()` call
+* **Better Permission UX**: Controlled timing, contextual prompts, recovery flows
+* **Optional Feature**: Zero impact on apps that don't use notifications
+* **Production Ready**: Error handling, logging, platform-specific optimizations
+* **Framework Agnostic**: Works with any navigation system (Navigator 1.0/2.0, go_router, etc.)
+
+#### Dependencies Added
+* `flutter_local_notifications: ^18.0.1` - Local notification display
+* `app_badge_plus: ^1.1.5` - Badge count management
+* `adaptive_dialog: ^2.2.0` - Platform-native dialogs (iOS/Android)
+
+#### Migration
+No breaking changes. This is a new optional feature. See `NOTIFICATION_GUIDE.md` for setup instructions.
+
 ## 0.1.0
 
 ### 🎉 Major Improvement: Full Web Platform Support for Real-Time Remote Config

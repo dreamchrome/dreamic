@@ -1,6 +1,6 @@
 name: dreamic
 description: "A general-purpose package for Flutter/Firebase apps."
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/dreamchrome/dreamic
 issue_tracker: https://github.com/dreamchrome/dreamic/issues
 
@@ -44,6 +44,9 @@ dependencies:
   internet_connection_checker: ^3.0.1
   path_provider: ^2.1.5
   open_file: ^3.5.10
+  flutter_local_notifications: ^18.0.1
+  app_badge_plus: ^1.1.5
+  adaptive_dialog: ^2.2.0
 
 dev_dependencies:
   flutter_test:

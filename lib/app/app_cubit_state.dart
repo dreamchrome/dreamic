@@ -39,7 +39,6 @@ class AppState extends Equatable {
     this.colorThemeIndex = 0,
     this.overlayFullScreenChild,
     this.overlayFullScreenChildCount = 0,
-    this.unreadNotificationsCount = 0,
     this.networkStatus = NetworkStatus.unknown,
     this.networkErrorMessage = '',
     this.showNetworkRetry = false,
@@ -56,7 +55,6 @@ class AppState extends Equatable {
   final int colorThemeIndex;
   final List<Widget Function()>? overlayFullScreenChild;
   final int overlayFullScreenChildCount;
-  final int unreadNotificationsCount;
   final NetworkStatus networkStatus;
   final String networkErrorMessage;
   final bool showNetworkRetry;
@@ -72,7 +70,6 @@ class AppState extends Equatable {
     int? colorThemeIndex,
     ValueGetter<List<Widget Function()>>? overlayFullScreenChild,
     int? overlayFullScreenChildCount,
-    int? unreadNotificationsCount,
     NetworkStatus? networkStatus,
     String? networkErrorMessage,
     bool? showNetworkRetry,
@@ -89,7 +86,6 @@ class AppState extends Equatable {
       overlayFullScreenChild:
           overlayFullScreenChild != null ? overlayFullScreenChild() : this.overlayFullScreenChild,
       overlayFullScreenChildCount: overlayFullScreenChildCount ?? this.overlayFullScreenChildCount,
-      unreadNotificationsCount: unreadNotificationsCount ?? this.unreadNotificationsCount,
       networkStatus: networkStatus ?? this.networkStatus,
       networkErrorMessage: networkErrorMessage ?? this.networkErrorMessage,
       showNetworkRetry: showNetworkRetry ?? this.showNetworkRetry,
@@ -108,7 +104,6 @@ class AppState extends Equatable {
         colorThemeIndex,
         overlayFullScreenChild,
         overlayFullScreenChildCount,
-        unreadNotificationsCount,
         networkStatus,
         networkErrorMessage,
         showNetworkRetry,

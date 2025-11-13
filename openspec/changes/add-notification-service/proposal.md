@@ -74,7 +74,7 @@ All the boilerplate should be hidden in Dreamic's `NotificationService`.
 - **NEW**: Documentation guide in `docs/NOTIFICATION_GUIDE.md`
 - **NEW**: Migration guide in `docs/NOTIFICATION_MIGRATION_GUIDE.md`
 - **MODIFIED**: `AuthServiceImpl.initFCM()` to integrate with new `NotificationService`
-- **MODIFIED**: `AppCubit` to support notification-driven state updates
+
 - **MODIFIED**: `pubspec.yaml` to add required notification dependencies
 
 ## Impact
@@ -86,7 +86,7 @@ All the boilerplate should be hidden in Dreamic's `NotificationService`.
 ### Affected Code
 - `lib/app/helpers/auth_service_impl.dart` - Integrate with NotificationService
 - `lib/app/app_cubit.dart` - Add notification routing and badge management
-- `lib/app/app_cubit_state.dart` - Already has `unreadNotificationsCount`, extend for notifications
+- Apps initialize `NotificationService` directly with their routing callbacks
 - `lib/presentation/elements/` - New notification UI components
 - `pubspec.yaml` - Add `flutter_local_notifications`, `app_badge_plus`
 

@@ -5,6 +5,7 @@ A comprehensive guide to all features available in the Dreamic package for Flutt
 ## Table of Contents
 
 - [Authentication](#authentication)
+- [Notifications](#notifications)
 - [App Configuration & Remote Config](#app-configuration--remote-config)
 - [Network Management](#network-management)
 - [App State Management](#app-state-management)
@@ -151,6 +152,260 @@ GetIt.I.registerSingleton<AuthServiceInt>(
 3. Use `forceRefreshAuthState()` when you need to ensure the latest auth state
 4. Handle network errors gracefully - the service trusts Firebase's local state during network issues
 5. The service automatically caches auth state for 30 seconds for performance
+
+---
+
+## Notifications
+
+### NotificationService
+
+Location: `lib/app/helpers/notification_service.dart`
+
+**Version:** Added in 0.2.0
+
+Complete notification system that reduces ~300 lines of boilerplate to one `initialize()` call. Handles Firebase Cloud Messaging (FCM), local notifications, permissions, and routing.
+
+**This feature is completely optional.** Zero impact until initialized.
+
+#### Quick Setup
+
+```dart
+// 1. In main.dart (before runApp)
+import 'package:dreamic/app/helpers/notification_background_handler.dart';
+import 'package:dreamic/app/helpers/notification_service.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
+  
+  // Register background handler
+  FirebaseMessaging.onBackgroundMessage(dreamicNotificationBackgroundHandler);
+  
+  // Initialize service
+  await NotificationService().initialize(
+    onNotificationTapped: (route, data) async {
+      if (route != null) Navigator.of(context).pushNamed(route);
+    },
+  );
+  
+  runApp(MyApp());
+}
+
+// 2. Request permissions when appropriate
+await NotificationService().requestPermissions();
+```
+
+#### Platform Configuration
+
+**iOS:**
+```xml
+<!-- ios/Runner/Info.plist -->
+<key>UIBackgroundModes</key>
+<array>
+    <string>remote-notification</string>
+</array>
+```
+
+**Android:**
+```xml
+<!-- android/app/src/main/AndroidManifest.xml -->
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+<uses-permission android:name="android.permission.VIBRATE" />
+
+<!-- Optional: Badge support for specific launchers -->
+<!-- Samsung -->
+<uses-permission android:name="com.sec.android.provider.badge.permission.READ"/>
+<uses-permission android:name="com.sec.android.provider.badge.permission.WRITE"/>
+<!-- HTC -->
+<uses-permission android:name="com.htc.launcher.permission.READ_SETTINGS"/>
+<uses-permission android:name="com.htc.launcher.permission.UPDATE_SHORTCUT"/>
+<!-- Sony -->
+<uses-permission android:name="com.sonyericsson.home.permission.BROADCAST_BADGE"/>
+<uses-permission android:name="com.sonymobile.home.permission.PROVIDER_INSERT_BADGE"/>
+<!-- Huawei -->
+<uses-permission android:name="com.huawei.android.launcher.permission.CHANGE_BADGE"/>
+<uses-permission android:name="com.huawei.android.launcher.permission.READ_SETTINGS"/>
+<uses-permission android:name="com.huawei.android.launcher.permission.WRITE_SETTINGS"/>
+```
+
+> **Note:** Badge permissions are only needed if using `updateBadgeCount()`. Badge support varies by manufacturer.
+
+#### Key Features
+
+**Notification Management:**
+```dart
+final service = NotificationService();
+
+// Show local notification
+await service.showNotification(
+  NotificationPayload(
+    title: 'New Message',
+    body: 'You have a new message',
+    route: '/messages',
+  ),
+);
+
+// Update badge count
+await service.updateBadgeCount(5);
+await service.clearBadge();
+
+// Get FCM token
+final token = await service.getFCMToken();
+```
+
+**Permission Management:**
+```dart
+// Check status
+final status = await service.getPermissionStatus();
+final isGranted = await service.isPermissionGranted();
+
+// Request permissions
+final newStatus = await service.requestPermissions();
+
+// Open system settings
+await service.openSystemSettings();
+```
+
+**Permission Helper:**
+```dart
+import 'package:dreamic/app/helpers/notification_permission_helper.dart';
+
+final helper = NotificationPermissionHelper();
+
+// Check if can prompt
+final canPrompt = await helper.canPromptForPermission(); // False on iOS after denial
+
+// Should show settings prompt
+final shouldShowSettings = await helper.shouldShowSettingsPrompt();
+
+// Get optimal timing context
+final context = await helper.getOptimalContext();
+print(context.message); // "Third time's the charm!"
+```
+
+#### UI Components
+
+**Permission Bottom Sheet:**
+```dart
+import 'package:dreamic/presentation/elements/notification_permission_bottom_sheet.dart';
+
+// Shows platform-native dialogs (Cupertino/Material)
+// Fully customizable for localization
+await NotificationPermissionBottomSheet.show(
+  context,
+  title: 'Enable Notifications',
+  description: 'Stay informed with timely updates',
+  allowButtonText: 'Allow Notifications',
+  declineButtonText: 'Not Now',
+  // Denied state dialog (iOS)
+  deniedDialogTitle: 'Notifications Disabled',
+  deniedDialogMessage: 'Go to Settings to enable notifications',
+  openSettingsButtonText: 'Open Settings',
+  maybeLaterButtonText: 'Maybe Later',
+);
+```
+
+**Status Widget:**
+```dart
+import 'package:dreamic/presentation/elements/notification_permission_status_widget.dart';
+
+NotificationPermissionStatusWidget(
+  onEnablePressed: () async {
+    await NotificationService().requestPermissions();
+  },
+)
+```
+
+**Permission Builder (Headless):**
+```dart
+import 'package:dreamic/presentation/elements/notification_permission_builder.dart';
+
+// Build custom UIs with automatic status updates
+NotificationPermissionBuilder(
+  builder: (context, status, requestPermissions) {
+    if (status == NotificationPermissionStatus.authorized) {
+      return NotificationsList();
+    }
+    return ElevatedButton(
+      onPressed: requestPermissions,
+      child: Text('Enable Notifications'),
+    );
+  },
+)
+```
+
+**Badge Count Widget:**
+```dart
+import 'package:dreamic/presentation/elements/notification_badge_widget.dart';
+
+// Automatic mode - syncs with NotificationService
+NotificationBadgeWidget(
+  child: Icon(Icons.notifications),
+)
+
+// Manual mode - specific count
+NotificationBadgeWidget(
+  count: 5,
+  maxCount: 99,           // Shows "99+"
+  hideWhenZero: true,
+  child: Icon(Icons.shopping_cart),
+)
+```
+
+#### Data Models
+
+**NotificationPayload:**
+```dart
+class NotificationPayload {
+  final String? title;
+  final String? body;
+  final String? route;           // Deep link route
+  final Map<String, dynamic>? data;
+  final String? imageUrl;        // Android image URL
+  final int? badge;              // iOS badge count
+  final List<NotificationAction>? actions;
+  
+  // Parse from FCM RemoteMessage
+  factory NotificationPayload.fromRemoteMessage(RemoteMessage message);
+}
+```
+
+**NotificationAction:**
+```dart
+class NotificationAction {
+  final String id;
+  final String label;
+  final String? icon;
+  final bool requiresAuth;
+  final bool launchesApp;
+}
+```
+
+#### Dependencies
+
+Automatically included in Dreamic 0.2.0+:
+- `flutter_local_notifications: ^18.0.1` - Local notification display
+- `app_badge_plus: ^1.1.5` - Badge management (iOS/Android/macOS)
+- `adaptive_dialog: ^2.2.0` - Platform-native dialogs
+
+#### Best Practices
+
+1. **Initialize early** - Call `initialize()` in `main()` before `runApp()`
+2. **Request permissions contextually** - Show permission request at meaningful moments, not immediately on app start
+3. **Customize all text** - Use localized strings for all UI text parameters
+4. **Handle denied state** - Use `NotificationPermissionHelper` to check if you can prompt again
+5. **Test badge support** - Badge functionality varies by Android manufacturer
+6. **Use the background handler** - Always register `dreamicNotificationBackgroundHandler` for proper background message handling
+
+#### Documentation
+
+See **[NOTIFICATION_GUIDE.md](NOTIFICATION_GUIDE.md)** for comprehensive documentation including:
+- Detailed setup instructions
+- Permission strategies
+- Routing implementation
+- Background message handling
+- Troubleshooting
+- Advanced customization
 
 ---
 

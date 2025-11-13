@@ -178,17 +178,19 @@ class NotificationService {
 
 ### 5. Badge Management
 
-**Decision**: Centralize badge management in `NotificationService` with AppCubit integration.
+**Decision**: Centralize badge management in `NotificationService` with reactive stream.
 
 **Rationale**:
 - Badge count often reflects app-wide state (unread messages, pending tasks)
-- `AppCubit` already tracks `unreadNotificationsCount` in state
-- Centralized management prevents badge drift
-- Easy to update from anywhere in the app
+- `NotificationService.badgeCountStream` provides reactive updates
+- No duplication in AppCubit - keeps notification state decoupled
+- Apps not using notifications have zero overhead
 
 **Implementation**:
-- `NotificationService.updateBadgeCount(int count)` - Single source of truth
-- Optional automatic sync with `AppCubit.state.unreadNotificationsCount`
+- `NotificationService.updateBadgeCount(int count)` - Updates badge and emits to stream
+- `NotificationService.badgeCountStream` - Single source of truth for badge count
+- Widgets listen directly to stream for reactive updates
+- `NotificationBadgeWidget` automatically syncs with stream
 - Platform-specific badge APIs abstracted away
 - Web support via Page Title API fallback
 
@@ -299,9 +301,7 @@ class NotificationPayload {
 - `AuthServiceImpl` can optionally notify `NotificationService` of token updates for diagnostic purposes
 - Apps that don't use `NotificationService` still get FCM tokens registered (for potential backend use)
 
-### With AppCubit
-- `AppCubit.onNotificationTapped()` - Routing callback
-- `AppCubit.updateBadgeCount()` - Badge synchronization
+
 - State updates trigger badge refresh
 - Network-aware notification handling
 
@@ -333,7 +333,7 @@ class NotificationPayload {
 ### No Automatic Initialization
 - NotificationService MUST NOT initialize automatically
 - NotificationService MUST NOT be registered in GetIt by default
-- AppCubit MUST NOT create NotificationService instances
+
 - Apps must explicitly opt-in by calling `NotificationService().initialize()`
 - Documentation must clearly show setup is optional
 - No platform configurations (entitlements, permissions) in package itself

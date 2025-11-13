@@ -162,25 +162,21 @@ The system SHALL provide a widget for displaying badge counts in-app.
 
 #### Scenario: Display badge count
 - **GIVEN** the app has unread items
-- **WHEN** `BadgeCountWidget` is rendered with count 5
-- **THEN** the system SHALL display a badge with "5" text
+- **WHEN** `NotificationBadgeWidget` is rendered with count 5
+- **THEN** Badge displays "5"
 - **AND** SHALL use a circular or rounded rectangle shape
 - **AND** SHALL use the provided background color
 - **AND** SHALL position the badge relative to parent widget
 
-#### Scenario: Hide badge when count is zero
-- **GIVEN** a `BadgeCountWidget` is displayed with count 0
-- **WHEN** the widget is rendered
-- **THEN** the system SHALL not display the badge
-- **OR** SHALL display the badge with reduced opacity
-- **BASED ON** the `hideWhenZero` configuration parameter
+**Scenario: Hide badge when count is zero**
+- **GIVEN** a `NotificationBadgeWidget` is displayed with count 0
+- **WHEN** `hideWhenZero` is true (default)
+- **THEN** No badge is shown
 
-#### Scenario: Badge count overflow
-- **GIVEN** the badge count exceeds 99
-- **WHEN** `BadgeCountWidget` is rendered with count 150
-- **THEN** the system SHALL display "99+" text
-- **AND** SHALL adjust badge size to fit the text
-- **AND** SHALL remain readable
+**Scenario: Show overflow indicator**
+- **WHEN** `NotificationBadgeWidget` is rendered with count 150
+- **AND** maxCount is 99 (default)
+- **THEN** Badge displays "99+"
 
 ### Requirement: Notification Permission Timing Helper
 

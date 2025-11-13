@@ -15,6 +15,12 @@ export 'presentation/elements/overlay_submitting_widget.dart';
 export 'presentation/elements/overlay_progress.dart';
 export 'presentation/elements/app_update_widgets.dart';
 
+// Notification Elements
+export 'presentation/elements/notification_permission_bottom_sheet.dart';
+export 'presentation/elements/notification_permission_status_widget.dart';
+export 'presentation/elements/notification_permission_builder.dart';
+export 'presentation/elements/notification_badge_widget.dart';
+
 // Presentation Helpers
 export 'presentation/helpers/bloc_exception.dart';
 export 'presentation/helpers/colors_common.dart';
@@ -34,6 +40,17 @@ export 'app/helpers/app_remote_config_init.dart';
 export 'app/helpers/debug_remote_config_web.dart';
 export 'app/helpers/error_reporter_interface.dart';
 export 'app/helpers/app_errorhandling_init.dart';
+
+// Notification Helpers
+export 'app/helpers/notification_service.dart';
+export 'app/helpers/notification_permission_helper.dart';
+export 'app/helpers/notification_background_handler.dart';
+export 'app/helpers/notification_channel_manager.dart';
+
+// Notification Models
+export 'data/models/notification_payload.dart';
+export 'data/models/notification_action.dart';
+export 'data/models/notification_permission_status.dart';
 
 // URL Opener
 export 'presentation/helpers/url_opener/url_opener.dart';
