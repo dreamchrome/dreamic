@@ -8,7 +8,7 @@ part 'notification_payload.g.dart';
 ///
 /// This class encapsulates all information needed to display and handle
 /// a notification, including content, routing, actions, and rich media.
-@JsonSerializable()
+@JsonSerializable(explicitToJson: true)
 class NotificationPayload {
   /// Notification title.
   final String? title;

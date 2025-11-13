@@ -12,12 +12,12 @@ NotificationPayload _$NotificationPayloadFromJson(Map<String, dynamic> json) =>
       body: json['body'] as String?,
       imageUrl: json['imageUrl'] as String?,
       route: json['route'] as String?,
-      data: json['data'] as Map<String, dynamic>? ?? {},
+      data: json['data'] as Map<String, dynamic>? ?? const {},
       actions: (json['actions'] as List<dynamic>?)
               ?.map(
                   (e) => NotificationAction.fromJson(e as Map<String, dynamic>))
               .toList() ??
-          [],
+          const [],
       id: (json['id'] as num?)?.toInt(),
       channelId: json['channelId'] as String?,
       category: json['category'] as String?,
@@ -35,7 +35,7 @@ Map<String, dynamic> _$NotificationPayloadToJson(
       'imageUrl': instance.imageUrl,
       'route': instance.route,
       'data': instance.data,
-      'actions': instance.actions,
+      'actions': instance.actions.map((e) => e.toJson()).toList(),
       'id': instance.id,
       'channelId': instance.channelId,
       'category': instance.category,

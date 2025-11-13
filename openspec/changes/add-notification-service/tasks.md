@@ -26,8 +26,8 @@
   - [x] Implement JSON serialization
 - [x] Create `lib/data/models/notification_permission_status.dart`
   - [x] Define `NotificationPermissionStatus` enum (authorized, denied, notDetermined, provisional)
-- [ ] Add tests for `notification_payload.dart` serialization
-- [ ] Add tests for `notification_action.dart` serialization
+- [x] Add tests for `notification_payload.dart` serialization (see section 8)
+- [x] Add tests for `notification_action.dart` serialization (see section 8)
 
 ## 3. Core Notification Service
 
@@ -114,6 +114,30 @@
   - [x] Export in main library
 - [ ] Add tests for notification channel management
 
+## 8. Unit Tests
+
+- [x] Create `test/data/notification_payload_test.dart`
+  - [x] Test JSON serialization/deserialization (round-trip)
+  - [x] Test `fromRemoteMessage` factory with various Firebase message formats
+  - [x] Test route extraction from multiple possible fields
+  - [x] Test image URL extraction from platform-specific fields
+  - [x] Test null handling and default values
+  - [x] Test nested data structures (actions list)
+  - [x] Test `copyWith` method
+  - [x] Test equality operator
+  - [x] Test `toString` method
+- [x] Create `test/data/notification_action_test.dart`
+  - [x] Test JSON serialization/deserialization
+  - [x] Test constructor with all field combinations
+  - [x] Test default values (requiresAuth, launchesApp)
+  - [x] Test equality operator with various scenarios
+  - [x] Test `toString` method
+  - [x] Test edge cases (empty strings, null icon)
+- [x] Fix JSON serialization issue with nested objects
+  - [x] Add `explicitToJson: true` to `@JsonSerializable` annotation
+  - [x] Regenerate code with build_runner
+  - [x] Verify all 122 tests pass
+
 ## 7. Permission UI Components
 
 - [x] Create `lib/presentation/elements/notification_permission_bottom_sheet.dart`
@@ -149,7 +173,7 @@
   - [ ] Show denial count and last request time
   - [ ] Add widget tests
 
-## 8. Additional UI Components
+## 9. Additional UI Components
 
 - [x] Create `lib/presentation/elements/notification_permission_builder.dart`
   - [x] Implement headless builder pattern
@@ -173,7 +197,7 @@
   - [ ] Disabled state for denied permissions
   - [ ] Add widget tests
 
-## 9. Notification Permission Helper
+## 10. Notification Permission Helper
 
 - [x] Create `lib/app/helpers/notification_permission_helper.dart`
   - [x] Implement `isPermissionGranted()` - Returns bool
@@ -193,7 +217,7 @@
   - [ ] Cache permission state to avoid repeated checks
   - [ ] Add unit tests
 
-## 10. Integrate with AuthServiceImpl
+## 11. Integrate with AuthServiceImpl
 
 - [ ] **Modify `AuthServiceImpl.initFCM()` for permission control**
   - [ ] Add permission status check at start of `initFCM()`
@@ -236,7 +260,23 @@
 - [x] Provide documentation on background handler requirements (must be top-level)
 - [ ] Test background message handling on physical devices
 
-## 12. Documentation
+## 12. Background Message Handler
+
+- [x] Create background message handler in `NotificationService`:
+  - [x] Define top-level function `dreamicFirebaseMessagingBackgroundHandler(RemoteMessage)`
+  - [x] Mark with `@pragma('vm:entry-point')` for tree-shaking protection
+  - [x] Initialize Firebase in background isolate
+  - [x] Parse message and display local notification
+  - [x] Ensure handler is isolate-safe (no UI dependencies)
+  - [ ] Handle Remote Config initialization if needed
+- [x] **Note: Consuming apps MUST register handler in main()** (Dart limitation):
+  - [x] Document that `FirebaseMessaging.onBackgroundMessage(dreamicNotificationBackgroundHandler)` must be called in main()
+  - [x] This is required before runApp() due to top-level function requirement
+  - [x] Still massive simplification: 1 line vs ~100 lines of handler implementation
+- [x] Provide documentation on background handler requirements (must be top-level)
+- [ ] Test background message handling on physical devices
+
+## 13. Documentation
 
 - [x] Create `docs/NOTIFICATION_GUIDE.md`
   - [ ] Getting Started section with **clear opt-in instructions**
@@ -268,7 +308,6 @@
     - [ ] Debugging notification delivery
     - [ ] Platform-specific gotchas
 
-## 13. Example Code
   - [ ] Advanced usage (rich notifications, action buttons, custom routing)
   - [ ] UI component examples
   - [ ] Badge management examples
@@ -279,9 +318,9 @@
 - [ ] Add inline documentation (dartdoc comments) to all public APIs
 - [x] Update `CHANGELOG.md` with notification feature addition
 
-## 14. Testing
+## 14. Additional Testing
 
-- [ ] Unit tests for `NotificationPayload` serialization
+- [x] Unit tests for `NotificationPayload` serialization (see section 8)
 - [ ] Unit tests for `NotificationService` methods
 - [ ] Unit tests for `NotificationPermissionHelper`
 - [ ] Widget tests for all UI components
@@ -294,18 +333,7 @@
 - [ ] Test background notification handling
 - [ ] Test notification taps from various app states (foreground, background, terminated)
 
-## 15. Example Implementation
-
-- [ ] Create example implementation in scaffolding or docs:
-  - [ ] Show notification service initialization
-  - [ ] Show permission request flow
-  - [ ] Show notification display
-  - [ ] Show action button handling
-  - [ ] Show routing configuration
-  - [ ] Show badge management
-- [ ] Create example screenshots for documentation
-
-## 16. Testing Utilities and Mocking Support
+## 15. Testing Utilities and Mocking Support
 
 - [ ] Create `lib/test_utils/mock_notification_service.dart`
   - [ ] Implement `MockNotificationService` extending `NotificationService`
@@ -323,7 +351,20 @@
   - [ ] Sample `NotificationPayload` objects for different scenarios
   - [ ] Sample FCM `RemoteMessage` objects
   - [ ] Sample permission states and transitions
-- [ ] Add example tests in `test/` showing:
+- [ ] Add example tests showing usage
+
+## 16. Example Implementation
+
+- [ ] Create example implementation in scaffolding or docs:
+  - [ ] Show notification service initialization
+  - [ ] Show permission request flow
+  - [ ] Show notification display
+  - [ ] Show action button handling
+  - [ ] Show routing configuration
+  - [ ] Show badge management
+- [ ] Create example screenshots for documentation
+
+## 17. Migration Guide
   - [ ] How to test notification routing in app
   - [ ] How to test permission request flows
   - [ ] How to verify badge count updates
@@ -331,8 +372,6 @@
 - [ ] Create `MockFlutterLocalNotificationsPlugin` for isolating platform dependencies
 - [ ] Create `MockFirebaseMessaging` for testing FCM interactions
 - [ ] Document testing best practices in `docs/NOTIFICATION_GUIDE.md`
-
-## 17. Migration Guide
 
 - [ ] Create `docs/NOTIFICATION_MIGRATION_GUIDE.md`
   - [ ] **Section: Apps Already Using Dreamic with Custom Notifications**
