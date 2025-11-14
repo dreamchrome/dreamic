@@ -1,4 +1,4 @@
-# 5-Minute Quick Start: Enum Converters
+# 5-Minute Quick Start: Safe Enum Serialization
 
 Stop your app from crashing when the server adds new enum values. Here's how:
 
@@ -10,6 +10,8 @@ Stop your app from crashing when the server adds new enum values. Here's how:
 // Result: 💥 CRASH when receiving "enterprise" from server
 ```
 
+**Why it crashes:** `json_serializable` ignores `@JsonConverter` on non-nullable enums and uses the built-in `$enumDecode()` which throws exceptions on unknown values.
+
 ## The Solution (Takes 2 minutes)
 
 ### Step 1: Define Your Enum
@@ -19,42 +21,51 @@ enum UserType { guest, member, admin }
 // No "unknown" value needed!
 ```
 
-### Step 2: Create a Converter
+### Step 2: Create Helper Functions
 
 Choose one strategy based on your field:
 
 **Option A: Nullable Field** (returns null for unknown)
 ```dart
-class UserTypeConverter extends NullableEnumConverter<UserType> {
-  const UserTypeConverter();
-  @override
-  List<UserType> get enumValues => UserType.values;
+UserType? _deserializeUserType(String? value) {
+  return safeEnumFromJson(value, UserType.values);
+}
+
+String? _serializeUserType(UserType? value) {
+  return safeEnumToJson(value);
 }
 ```
 
 **Option B: Non-Nullable Field** (returns default for unknown)
 ```dart
-class UserTypeConverter extends DefaultEnumConverter<UserType> {
-  const UserTypeConverter();
-  @override
-  List<UserType> get enumValues => UserType.values;
-  @override
-  UserType get defaultValue => UserType.guest; // Safe default
+UserType _deserializeUserType(String? value) {
+  return safeEnumFromJson(
+    value,
+    UserType.values,
+    defaultValue: UserType.guest,  // Safe default
+  )!;  // Safe to use ! because defaultValue is provided
+}
+
+String? _serializeUserType(UserType? value) {
+  return safeEnumToJson(value);
 }
 ```
 
 **Option C: Need Monitoring** (logs + returns default)
 ```dart
-class UserTypeConverter extends LoggingEnumConverter<UserType> {
-  const UserTypeConverter();
-  @override
-  List<UserType> get enumValues => UserType.values;
-  @override
-  UserType get defaultValue => UserType.guest;
-  @override
-  void logUnknownValue(String value) {
-    logger.log('Unknown UserType: $value', logType: LogType.warning);
-  }
+UserType _deserializeUserType(String? value) {
+  return safeEnumFromJson(
+    value,
+    UserType.values,
+    defaultValue: UserType.guest,
+    onUnknownValue: (v) {
+      logw('Unknown UserType: $v, defaulting to guest');
+    },
+  )!;  // Safe to use ! because defaultValue is provided
+}
+
+String? _serializeUserType(UserType? value) {
+  return safeEnumToJson(value);
 }
 ```
 
@@ -63,8 +74,8 @@ class UserTypeConverter extends LoggingEnumConverter<UserType> {
 ```dart
 @JsonSerializable()
 class UserModel extends BaseFirestoreModel {
-  @UserTypeConverter()  // Add this annotation
-  final UserType? type;
+  @JsonKey(fromJson: _deserializeUserType, toJson: _serializeUserType)
+  final UserType? type;  // Or non-nullable for options B & C
   
   // ... rest of your model
 }
@@ -105,13 +116,17 @@ final user = UserModel.fromJson({'type': 'enterprise', ...});
 // 1. Define enum
 enum OrderStatus { pending, processing, shipped, delivered, cancelled }
 
-// 2. Create converter
-class OrderStatusConverter extends DefaultEnumConverter<OrderStatus> {
-  const OrderStatusConverter();
-  @override
-  List<OrderStatus> get enumValues => OrderStatus.values;
-  @override
-  OrderStatus get defaultValue => OrderStatus.pending;
+// 2. Create helper functions (default strategy)
+OrderStatus _deserializeOrderStatus(String? value) {
+  return safeEnumFromJson(
+    value,
+    OrderStatus.values,
+    defaultValue: OrderStatus.pending,
+  )!;
+}
+
+String? _serializeOrderStatus(OrderStatus? value) {
+  return safeEnumToJson(value);
 }
 
 // 3. Use in model
@@ -119,7 +134,7 @@ class OrderStatusConverter extends DefaultEnumConverter<OrderStatus> {
 class OrderModel extends BaseFirestoreModel {
   final String id;
   
-  @OrderStatusConverter()
+  @JsonKey(fromJson: _deserializeOrderStatus, toJson: _serializeOrderStatus)
   final OrderStatus status;
   
   OrderModel({required this.id, required this.status});
@@ -133,23 +148,24 @@ class OrderModel extends BaseFirestoreModel {
 
 // Server adds "refunded" status
 // Old app receives order with "refunded"
-// Converter returns OrderStatus.pending instead of crashing
+// Helper returns OrderStatus.pending instead of crashing
 // App continues working! ✅
 ```
 
 ## What You Get
 
-✅ **No crashes** - Old apps handle new values  
-✅ **Clean enums** - No "unknown" values  
-✅ **Type-safe** - Full Dart type checking  
-✅ **Simple** - Just extend a class  
-✅ **Flexible** - Choose the right strategy  
+✅ **No crashes** - Old apps handle new values gracefully  
+✅ **Clean enums** - No "unknown" values cluttering your domain  
+✅ **Type-safe** - Full Dart compile-time type checking  
+✅ **Simple** - Just helper functions, no complex hierarchies  
+✅ **Flexible** - Three strategies for different needs  
+✅ **Reliable** - Works with ALL enum fields (nullable and non-nullable)
 
 ## Import Statement
 
 ```dart
 import 'package:dreamic/dreamic.dart';
-// Includes: NullableEnumConverter, DefaultEnumConverter, LoggingEnumConverter
+// Includes: safeEnumFromJson, safeEnumToJson, logw
 ```
 
 ## Next Steps

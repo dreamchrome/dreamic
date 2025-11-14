@@ -616,7 +616,9 @@ final DateTime timestamp;  // Non-nullable
 
 Enums can cause apps to crash when the server adds new enum values that older app versions don't recognize. This happens during deserialization when `json_serializable` encounters an unknown enum value.
 
-**Traditional approach (not recommended):**
+**Critical Discovery:** `json_serializable` has an undocumented limitation - it **completely ignores** `@JsonConverter` annotations on non-nullable enum fields. Only nullable enum fields respect converter annotations.
+
+**Traditional approach (doesn't work):**
 ```dart
 enum UserType {
   admin,
@@ -638,35 +640,45 @@ class UserModel {
 - Forces every enum to have an "unknown" value
 - Inconsistent handling across the codebase
 - No logging or tracking of unknown values
+- Clutters domain models with technical values
 
-### The Solution: Robust Enum Converters
+### The Solution: Safe Enum Helper Functions
 
-The Dreamic package provides three base classes for creating robust enum converters that handle unknown values gracefully:
+The Dreamic package provides `safeEnumFromJson()` and `safeEnumToJson()` helper functions that work with `@JsonKey(fromJson:, toJson:)` - the **only** approach that json_serializable never ignores.
 
-#### 1. NullableEnumConverter (Recommended for nullable fields)
+#### Pattern Overview
+
+1. Define enum (clean business values only)
+2. Create `_deserialize` and `_serialize` helper functions
+3. Use `@JsonKey(fromJson:, toJson:)` on model fields
+4. Run build_runner to generate code
+
+#### Strategy 1: Nullable (Recommended for nullable fields)
 
 Use when the enum field is nullable and you want unknown values to be treated as null.
 
 ```dart
-// Define your enum (no "unknown" value needed!)
+// 1. Define your enum (no "unknown" value needed!)
 enum UserType {
   admin,
   moderator,
   standard,
 }
 
-// Create a converter by extending NullableEnumConverter
-class UserTypeConverter extends NullableEnumConverter<UserType> {
-  const UserTypeConverter();
-
-  @override
-  List<UserType> get enumValues => UserType.values;
+// 2. Create helper functions
+UserType? _deserializeUserType(String? value) {
+  return safeEnumFromJson(value, UserType.values);
+  // No defaultValue - returns null for unknown values
 }
 
-// Use in your model
+String? _serializeUserType(UserType? value) {
+  return safeEnumToJson(value);
+}
+
+// 3. Use in your model
 @JsonSerializable()
 class UserModel extends BaseFirestoreModel {
-  @UserTypeConverter()
+  @JsonKey(fromJson: _deserializeUserType, toJson: _serializeUserType)
   final UserType? type;  // nullable - unknown values become null
   
   UserModel({this.type});
@@ -684,7 +696,7 @@ class UserModel extends BaseFirestoreModel {
 - Unknown values (e.g., "superadmin" added by server) → Become `null`
 - App doesn't crash when server adds new enum values! ✅
 
-#### 2. DefaultEnumConverter (Recommended for non-nullable fields)
+#### Strategy 2: Default (Recommended for non-nullable fields)
 
 Use when the enum field is required and you want unknown values to default to a specific value.
 
@@ -695,19 +707,22 @@ enum Priority {
   high,
 }
 
-class PriorityConverter extends DefaultEnumConverter<Priority> {
-  const PriorityConverter();
+// Create helper functions with default value
+Priority _deserializePriority(String? value) {
+  return safeEnumFromJson(
+    value,
+    Priority.values,
+    defaultValue: Priority.medium,  // Fallback for unknown values
+  )!;  // Safe to use ! because defaultValue guarantees non-null
+}
 
-  @override
-  List<Priority> get enumValues => Priority.values;
-
-  @override
-  Priority get defaultValue => Priority.medium;  // Fallback for unknown values
+String? _serializePriority(Priority? value) {
+  return safeEnumToJson(value);
 }
 
 @JsonSerializable()
 class TaskModel extends BaseFirestoreModel {
-  @PriorityConverter()
+  @JsonKey(fromJson: _deserializePriority, toJson: _serializePriority)
   final Priority priority;  // non-nullable - unknown values become 'medium'
   
   TaskModel({required this.priority});
@@ -725,7 +740,7 @@ class TaskModel extends BaseFirestoreModel {
 - Unknown values (e.g., "urgent" added by server) → Become `Priority.medium`
 - App doesn't crash! ✅
 
-#### 3. LoggingEnumConverter (Recommended for debugging/monitoring)
+#### Strategy 3: Logging (Recommended for debugging/monitoring)
 
 Use when you want to track when unknown values are encountered (useful for debugging or error reporting).
 
@@ -737,31 +752,29 @@ enum PaymentStatus {
   failed,
 }
 
-class PaymentStatusConverter extends LoggingEnumConverter<PaymentStatus> {
-  const PaymentStatusConverter();
+// Create helper functions with logging
+PaymentStatus _deserializePaymentStatus(String? value) {
+  return safeEnumFromJson(
+    value,
+    PaymentStatus.values,
+    defaultValue: PaymentStatus.pending,
+    onUnknownValue: (v) {
+      // Use dreamic's built-in logger
+      logw('Unknown PaymentStatus: $v, defaulting to pending');
+      
+      // Or report to error tracking service
+      // errorReporter.logError('Unknown PaymentStatus', extra: {'value': v});
+    },
+  )!;  // Safe to use ! because defaultValue guarantees non-null
+}
 
-  @override
-  List<PaymentStatus> get enumValues => PaymentStatus.values;
-
-  @override
-  PaymentStatus get defaultValue => PaymentStatus.pending;
-
-  @override
-  void logUnknownValue(String value) {
-    // Use your app's logger
-    logger.log(
-      'Unknown PaymentStatus: $value, defaulting to pending',
-      logType: LogType.error,
-    );
-    
-    // Or report to error tracking service
-    // errorReporter.logError('Unknown PaymentStatus', extra: {'value': value});
-  }
+String? _serializePaymentStatus(PaymentStatus? value) {
+  return safeEnumToJson(value);
 }
 
 @JsonSerializable()
 class PaymentModel extends BaseFirestoreModel {
-  @PaymentStatusConverter()
+  @JsonKey(fromJson: _deserializePaymentStatus, toJson: _serializePaymentStatus)
   final PaymentStatus status;
   
   PaymentModel({required this.status});
@@ -782,11 +795,11 @@ class PaymentModel extends BaseFirestoreModel {
 
 ### Quick Reference
 
-| Converter Type | Field Type | Unknown Value Behavior | Use Case |
-|----------------|------------|------------------------|----------|
-| `NullableEnumConverter` | Nullable | Returns `null` | Optional enum fields |
-| `DefaultEnumConverter` | Non-nullable | Returns default value | Required enum fields |
-| `LoggingEnumConverter` | Non-nullable | Logs + returns default | Debugging/monitoring |
+| Strategy | Field Type | Unknown Value Behavior | Use Case |
+|----------|------------|------------------------|----------|
+| **Nullable** | Nullable | Returns `null` | Optional enum fields |
+| **Default** | Non-nullable | Returns default value | Required enum fields |
+| **Logging** | Non-nullable | Logs + returns default | Debugging/monitoring |
 
 ### Complete Example
 
@@ -811,37 +824,42 @@ enum SubscriptionTier {
   premium,
 }
 
-// 2. Create converters
-class UserRoleConverter extends DefaultEnumConverter<UserRole> {
-  const UserRoleConverter();
+// 2. Create helper functions (one pair per enum)
 
-  @override
-  List<UserRole> get enumValues => UserRole.values;
-
-  @override
-  UserRole get defaultValue => UserRole.guest;
+// Default strategy
+UserRole _deserializeUserRole(String? value) {
+  return safeEnumFromJson(
+    value,
+    UserRole.values,
+    defaultValue: UserRole.guest,
+  )!;
 }
 
-class AccountStatusConverter extends NullableEnumConverter<AccountStatus> {
-  const AccountStatusConverter();
-
-  @override
-  List<AccountStatus> get enumValues => AccountStatus.values;
+String? _serializeUserRole(UserRole? value) {
+  return safeEnumToJson(value);
 }
 
-class SubscriptionTierConverter extends LoggingEnumConverter<SubscriptionTier> {
-  const SubscriptionTierConverter();
+// Nullable strategy
+AccountStatus? _deserializeAccountStatus(String? value) {
+  return safeEnumFromJson(value, AccountStatus.values);
+}
 
-  @override
-  List<SubscriptionTier> get enumValues => SubscriptionTier.values;
+String? _serializeAccountStatus(AccountStatus? value) {
+  return safeEnumToJson(value);
+}
 
-  @override
-  SubscriptionTier get defaultValue => SubscriptionTier.free;
+// Logging strategy
+SubscriptionTier _deserializeSubscriptionTier(String? value) {
+  return safeEnumFromJson(
+    value,
+    SubscriptionTier.values,
+    defaultValue: SubscriptionTier.free,
+    onUnknownValue: (v) => logw('Unknown SubscriptionTier: $v'),
+  )!;
+}
 
-  @override
-  void logUnknownValue(String value) {
-    logger.log('Unknown SubscriptionTier: $value', logType: LogType.warning);
-  }
+String? _serializeSubscriptionTier(SubscriptionTier? value) {
+  return safeEnumToJson(value);
 }
 
 // 3. Use in model
@@ -853,13 +871,13 @@ class UserModel extends BaseFirestoreModel {
   final String name;
   final String email;
   
-  @UserRoleConverter()
+  @JsonKey(fromJson: _deserializeUserRole, toJson: _serializeUserRole)
   final UserRole role;  // Non-nullable, defaults to 'guest'
   
-  @AccountStatusConverter()
+  @JsonKey(fromJson: _deserializeAccountStatus, toJson: _serializeAccountStatus)
   final AccountStatus? status;  // Nullable, unknown becomes null
   
-  @SubscriptionTierConverter()
+  @JsonKey(fromJson: _deserializeSubscriptionTier, toJson: _serializeSubscriptionTier)
   final SubscriptionTier tier;  // Non-nullable, logged, defaults to 'free'
   
   @SmartTimestampConverter()
@@ -895,11 +913,12 @@ class UserModel extends BaseFirestoreModel {
 ### Benefits Over Traditional Approach
 
 ✅ **No "unknown" values required** - Keep enums clean with only meaningful values  
-✅ **Centralized handling** - Define converter once, use everywhere  
-✅ **No forgotten annotations** - Converter handles it automatically  
+✅ **Reliable** - Works with ALL enum fields (nullable and non-nullable)  
+✅ **Type-safe** - @JsonKey is never ignored by json_serializable  
 ✅ **Crash-proof** - Old apps don't crash when server adds new enum values  
 ✅ **Flexible strategies** - Choose null, default, or logging behavior  
 ✅ **Better debugging** - Optional logging shows when unknown values appear  
+✅ **Simple pattern** - Just helper functions, no complex class hierarchies  
 ✅ **Type-safe** - Full Dart type checking maintained  
 ✅ **Migration friendly** - Easy to add to existing enums  
 

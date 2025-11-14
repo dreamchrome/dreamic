@@ -21,7 +21,7 @@
 - **ALWAYS** use descriptive naming: `col` prefix for collections, `subcol` prefix for subcollections, `doc` prefix for documents
 - **ALWAYS** keep collection names unique across the entire database, including subcollections
 - **ALWAYS** design collection names to support `collectionGroup()` queries
-
+q
 **FORBIDDEN:**
 - **NEVER** hardcode collection or document names as string literals in code
 - **NEVER** create duplicate constants for the same collection/document
@@ -124,41 +124,6 @@ padding: ResponsiveValue<EdgeInsets>(
     ),
   ],
 ).value,
-```
-
----
-
-## 🔴 MANDATORY: Network Awareness
-
-### AppCubit Network Status - ALWAYS Check When Needed
-
-**REQUIRED:**
-- **ALWAYS** check network status before network-dependent operations
-- **ALWAYS** access network status via `g<AppCubit>().state.networkStatus`
-- **ALWAYS** handle offline scenarios gracefully
-
-**Example:**
-```dart
-import 'package:dreamic/dreamic.dart';
-
-Future<void> saveData() async {
-  // Check network first
-  final isConnected = g<AppCubit>().state.networkStatus == NetworkStatus.connected;
-  
-  if (!isConnected) {
-    emitSafe(state.copyWith(
-      status: PageStatus.error,
-      errorMessage: 'No internet connection. Please try again when online.',
-    ));
-    return;
-  }
-  
-  // Proceed with save
-  emitSafe(state.copyWith(status: PageStatus.processingAction));
-  
-  final result = await _repo.saveData(state.data);
-  // Handle result...
-}
 ```
 
 ---

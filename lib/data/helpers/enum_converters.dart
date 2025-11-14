@@ -1,307 +1,107 @@
-import 'package:json_annotation/json_annotation.dart';
-
 // ============================================================================
-// Robust Enum Converters
+// Enum Serialization Helpers
 // ============================================================================
-// These converters handle unknown enum values gracefully without requiring
-// an "unknown" value in every enum or manual @JsonKey annotations.
+// These helper functions enable safe enum serialization that handles unknown
+// enum values gracefully. Use them in enum extensions with static methods
+// that are called via @JsonKey annotations.
 //
-// Benefits:
-// - No need for @JsonKey(unknownEnumValue: ...) on every field
-// - No need for an "unknown" value in every enum
-// - Centralized handling of deserialization failures
-// - Choose between nullable or default value strategies
-// - Better error reporting and logging
+// WHY THIS APPROACH:
+// - json_serializable IGNORES @JsonConverter annotations on non-nullable enums
+// - The old converter class approach was broken and would crash on unknown values
+// - Static methods in extensions are ALWAYS called when specified in @JsonKey
+// - This centralizes logic on the enum itself, making it maintainable
+//
+// USAGE PATTERN:
+// 1. Define your enum
+// 2. Add an extension with static deserialize/serialize methods
+// 3. Use @JsonKey(fromJson: EnumType.deserialize, toJson: EnumType.serialize)
+//
+// See examples at the bottom of this file for all three strategies.
 
-/// Base class for enum converters that handle unknown values gracefully.
+// ============================================================================
+// Core Helper Functions
+// ============================================================================
+
+/// Safely deserialize an enum from a JSON string value.
 ///
-/// Instead of throwing an exception when encountering an unknown enum value
-/// (which would crash older app versions when the server adds new enum values),
-/// this converter provides fallback strategies.
+/// Handles unknown enum values by returning null or a default value based
+/// on the strategy chosen.
 ///
-/// **Type Parameters:**
-/// - `T`: The enum type to convert
+/// **Parameters:**
+/// - `value`: The string value from JSON
+/// - `enumValues`: List of all possible enum values (use `EnumType.values`)
+/// - `defaultValue`: Value to return for unknown strings (if null, returns null)
+/// - `onUnknownValue`: Optional callback for logging unknown values
 ///
-/// **Abstract Methods:**
-/// - `enumValues`: Returns all possible enum values for type T
-/// - `handleUnknownValue`: Defines what to do when an unknown value is encountered
+/// **Returns:**
+/// The matched enum value, `defaultValue`, or null
 ///
-/// Example:
+/// **Example:**
 /// ```dart
-/// class UserTypeConverter extends RobustEnumConverter<UserType> {
-///   const UserTypeConverter();
-///
-///   @override
-///   List<UserType> get enumValues => UserType.values;
-///
-///   @override
-///   UserType? handleUnknownValue(String? value) {
-///     // Option 1: Return a default value
-///     return UserType.standard;
-///
-///     // Option 2: Return null (for nullable fields)
-///     // return null;
-///
-///     // Option 3: Log and return default
-///     // logger.warning('Unknown UserType: $value, defaulting to standard');
-///     // return UserType.standard;
+/// extension PostStatusExtension on PostStatus {
+///   static PostStatus? deserialize(String? value) {
+///     return safeEnumFromJson(
+///       value,
+///       PostStatus.values,
+///       defaultValue: PostStatus.draft,
+///       onUnknownValue: (v) => logw('Unknown PostStatus: $v'),
+///     );
 ///   }
 /// }
 /// ```
-abstract class RobustEnumConverter<T extends Enum> implements JsonConverter<T?, String?> {
-  const RobustEnumConverter();
+T? safeEnumFromJson<T extends Enum>(
+  String? value,
+  List<T> enumValues, {
+  T? defaultValue,
+  void Function(String unknownValue)? onUnknownValue,
+}) {
+  if (value == null) return null;
 
-  /// Returns all possible values for the enum type T.
-  /// Should return `T.values` in your implementation.
-  List<T> get enumValues;
-
-  /// Defines the fallback behavior when an unknown value is encountered.
-  ///
-  /// **Options:**
-  /// 1. Return a default enum value (recommended for non-nullable fields)
-  /// 2. Return null (recommended for nullable fields)
-  /// 3. Log the issue and return a default/null
-  ///
-  /// **Parameters:**
-  /// - `value`: The unknown string value from JSON
-  ///
-  /// **Returns:**
-  /// The fallback enum value or null
-  T? handleUnknownValue(String? value);
-
-  @override
-  T? fromJson(String? json) {
-    if (json == null) return null;
-
-    try {
-      // Try to find matching enum by name
-      return enumValues.firstWhere(
-        (e) => e.name == json,
-        orElse: () => throw Exception('Unknown enum value'),
-      );
-    } catch (e) {
-      // Unknown value encountered - use the fallback strategy
-      return handleUnknownValue(json);
-    }
-  }
-
-  @override
-  String? toJson(T? value) => value?.name;
-}
-
-// ============================================================================
-// Convenience Converters for Common Patterns
-// ============================================================================
-
-/// A nullable enum converter that returns null for unknown values.
-///
-/// Use this for nullable enum fields where you want unknown values
-/// to be treated as null.
-///
-/// Example:
-/// ```dart
-/// enum UserType {
-///   admin,
-///   moderator,
-///   standard,
-/// }
-///
-/// class UserTypeNullableConverter extends NullableEnumConverter<UserType> {
-///   const UserTypeNullableConverter();
-///
-///   @override
-///   List<UserType> get enumValues => UserType.values;
-/// }
-///
-/// // Usage in model:
-/// @JsonSerializable()
-/// class UserModel {
-///   @UserTypeNullableConverter()
-///   final UserType? type;
-/// }
-/// ```
-abstract class NullableEnumConverter<T extends Enum> extends RobustEnumConverter<T> {
-  const NullableEnumConverter();
-
-  @override
-  T? handleUnknownValue(String? value) {
-    // Return null for unknown values
-    // Optionally log for debugging:
-    // if (value != null) {
-    //   debugPrint('Unknown enum value for ${T}: $value');
-    // }
-    return null;
-  }
-}
-
-/// A default value enum converter that returns a specified default for unknown values.
-///
-/// Use this for non-nullable enum fields where you want unknown values
-/// to default to a specific value.
-///
-/// Example:
-/// ```dart
-/// enum UserType {
-///   admin,
-///   moderator,
-///   standard,
-/// }
-///
-/// class UserTypeConverter extends DefaultEnumConverter<UserType> {
-///   const UserTypeConverter();
-///
-///   @override
-///   List<UserType> get enumValues => UserType.values;
-///
-///   @override
-///   UserType get defaultValue => UserType.standard;
-/// }
-///
-/// // Usage in model:
-/// @JsonSerializable()
-/// class UserModel {
-///   @UserTypeConverter()
-///   final UserType type;
-/// }
-/// ```
-abstract class DefaultEnumConverter<T extends Enum> extends RobustEnumConverter<T> {
-  const DefaultEnumConverter();
-
-  /// The default value to return for unknown enum values.
-  T get defaultValue;
-
-  @override
-  T? handleUnknownValue(String? value) {
-    // Optionally log for debugging:
-    // if (value != null) {
-    //   debugPrint('Unknown enum value for ${T}: $value, using default: ${defaultValue.name}');
-    // }
-    return defaultValue;
-  }
-}
-
-/// A logging enum converter that logs unknown values before returning a default.
-///
-/// Use this during development or when you want to track when unknown
-/// enum values are encountered in production.
-///
-/// **Note:** You'll need to implement the logging based on your app's logger.
-///
-/// Example:
-/// ```dart
-/// enum UserType {
-///   admin,
-///   moderator,
-///   standard,
-/// }
-///
-/// class UserTypeConverter extends LoggingEnumConverter<UserType> {
-///   const UserTypeConverter();
-///
-///   @override
-///   List<UserType> get enumValues => UserType.values;
-///
-///   @override
-///   UserType get defaultValue => UserType.standard;
-///
-///   @override
-///   void logUnknownValue(String value) {
-///     // Use your app's logger
-///     logger.warning('Unknown UserType encountered: $value');
-///     // Or report to error tracking
-///     // errorReporter.logError('Unknown UserType: $value');
-///   }
-/// }
-/// ```
-abstract class LoggingEnumConverter<T extends Enum> extends DefaultEnumConverter<T> {
-  const LoggingEnumConverter();
-
-  /// Override this to log unknown values using your app's logger.
-  void logUnknownValue(String value);
-
-  @override
-  T? handleUnknownValue(String? value) {
-    if (value != null) {
-      logUnknownValue(value);
+  try {
+    // Try to find matching enum by name
+    return enumValues.firstWhere(
+      (e) => e.name == value,
+      orElse: () => throw Exception('Unknown enum value: $value'),
+    );
+  } catch (e) {
+    // Unknown value encountered
+    if (onUnknownValue != null) {
+      onUnknownValue(value);
     }
     return defaultValue;
   }
 }
 
-// ============================================================================
-// Batch Converter Generator (Advanced)
-// ============================================================================
-
-/// Helper function to create a simple nullable enum converter.
+/// Safely serialize an enum to a JSON string value.
 ///
-/// This is useful for quickly creating converters without defining a class.
+/// This is straightforward - just returns the enum's name or null.
 ///
-/// **Note:** Due to Dart's const constructor requirements, you'll still need
-/// to create actual converter classes for use with @JsonKey annotations.
-/// This is provided as a reference implementation.
+/// **Parameters:**
+/// - `value`: The enum value to serialize (can be null)
 ///
-/// Example:
+/// **Returns:**
+/// The enum's name as a string, or null
+///
+/// **Example:**
 /// ```dart
-/// // This won't work directly with @JsonKey due to const requirements:
-/// // @JsonKey(converter: createNullableEnumConverter<UserType>())  // ❌
-///
-/// // But you can use it as a pattern to create your converters:
-/// class UserTypeConverter extends NullableEnumConverter<UserType> {
-///   const UserTypeConverter();
-///   @override
-///   List<UserType> get enumValues => UserType.values;
+/// extension PostStatusExtension on PostStatus {
+///   static String? serialize(PostStatus? value) {
+///     return safeEnumToJson(value);
+///   }
 /// }
 /// ```
-JsonConverter<T?, String?> createNullableEnumConverter<T extends Enum>(
-  List<T> enumValues,
-) {
-  return _NullableEnumConverterImpl<T>(enumValues);
-}
-
-class _NullableEnumConverterImpl<T extends Enum> extends NullableEnumConverter<T> {
-  final List<T> _enumValues;
-
-  const _NullableEnumConverterImpl(this._enumValues);
-
-  @override
-  List<T> get enumValues => _enumValues;
+String? safeEnumToJson<T extends Enum>(T? value) {
+  return value?.name;
 }
 
 // ============================================================================
-// Usage Examples
+// Usage Examples - Three Strategies
 // ============================================================================
 
-// Example 1: Nullable enum (returns null for unknown values)
-// ------------------------------------------------------------
-// enum NotificationPriority {
-//   low,
-//   medium,
-//   high,
-//   urgent,
-// }
+// STRATEGY 1: NULLABLE (Unknown → null)
+// ============================================
+// Use for optional enum fields where null is an acceptable state.
 //
-// class NotificationPriorityConverter extends NullableEnumConverter<NotificationPriority> {
-//   const NotificationPriorityConverter();
-//
-//   @override
-//   List<NotificationPriority> get enumValues => NotificationPriority.values;
-// }
-//
-// @JsonSerializable()
-// class NotificationModel {
-//   final String message;
-//
-//   @NotificationPriorityConverter()
-//   final NotificationPriority? priority;  // nullable - unknown values become null
-//
-//   NotificationModel({
-//     required this.message,
-//     this.priority,
-//   });
-// }
-
-// Example 2: Non-nullable enum with default value
-// ------------------------------------------------
 // enum UserRole {
 //   guest,
 //   member,
@@ -309,31 +109,86 @@ class _NullableEnumConverterImpl<T extends Enum> extends NullableEnumConverter<T
 //   admin,
 // }
 //
-// class UserRoleConverter extends DefaultEnumConverter<UserRole> {
-//   const UserRoleConverter();
+// extension on UserRole {
+//   static UserRole? deserialize(String? value) {
+//     return safeEnumFromJson(
+//       value,
+//       UserRole.values,
+//       // No defaultValue - returns null for unknown values
+//     );
+//   }
 //
-//   @override
-//   List<UserRole> get enumValues => UserRole.values;
-//
-//   @override
-//   UserRole get defaultValue => UserRole.guest;  // Unknown values become 'guest'
+//   static String? serialize(UserRole? value) {
+//     return safeEnumToJson(value);
+//   }
 // }
 //
 // @JsonSerializable()
-// class UserModel {
-//   final String name;
+// class UserModel extends BaseFirestoreModel {
+//   @JsonKey(fromJson: UserRole.deserialize, toJson: UserRole.serialize)
+//   final UserRole? role;  // nullable
 //
-//   @UserRoleConverter()
-//   final UserRole role;  // non-nullable - unknown values become 'guest'
+//   UserModel({this.role});
 //
-//   UserModel({
-//     required this.name,
-//     required this.role,
-//   });
+//   factory UserModel.fromJson(Map<String, dynamic> json) =>
+//       _$UserModelFromJson(json);
+//
+//   @override
+//   Map<String, dynamic> toJson() => _$UserModelToJson(this);
 // }
+//
+// WHAT HAPPENS:
+// - Server sends "superAdmin" (unknown)
+// - App receives: role = null
+// - No crash! ✅
 
-// Example 3: Enum with logging (for debugging/monitoring)
-// --------------------------------------------------------
+// STRATEGY 2: DEFAULT VALUE (Unknown → default)
+// ===============================================
+// Use for required enum fields where you want a safe fallback value.
+//
+// enum PostStatus {
+//   draft,
+//   published,
+//   archived,
+// }
+//
+// extension on PostStatus {
+//   static PostStatus? deserialize(String? value) {
+//     return safeEnumFromJson(
+//       value,
+//       PostStatus.values,
+//       defaultValue: PostStatus.draft,  // Safe default
+//     );
+//   }
+//
+//   static String? serialize(PostStatus? value) {
+//     return safeEnumToJson(value);
+//   }
+// }
+//
+// @JsonSerializable()
+// class PostModel extends BaseFirestoreModel {
+//   @JsonKey(fromJson: PostStatus.deserialize, toJson: PostStatus.serialize)
+//   final PostStatus status;  // non-nullable with default
+//
+//   PostModel({required this.status});
+//
+//   factory PostModel.fromJson(Map<String, dynamic> json) =>
+//       _$PostModelFromJson(json);
+//
+//   @override
+//   Map<String, dynamic> toJson() => _$PostModelToJson(this);
+// }
+//
+// WHAT HAPPENS:
+// - Server sends "scheduled" (unknown)
+// - App receives: status = PostStatus.draft
+// - No crash! ✅
+
+// STRATEGY 3: LOGGING + DEFAULT (Unknown → log + default)
+// =========================================================
+// Use for critical fields where you want visibility into unknown values.
+//
 // enum PaymentStatus {
 //   pending,
 //   processing,
@@ -341,61 +196,114 @@ class _NullableEnumConverterImpl<T extends Enum> extends NullableEnumConverter<T
 //   failed,
 // }
 //
-// class PaymentStatusConverter extends LoggingEnumConverter<PaymentStatus> {
-//   const PaymentStatusConverter();
-//
-//   @override
-//   List<PaymentStatus> get enumValues => PaymentStatus.values;
-//
-//   @override
-//   PaymentStatus get defaultValue => PaymentStatus.pending;
-//
-//   @override
-//   void logUnknownValue(String value) {
-//     // Use your app's logger - example with dreamic logger:
-//     logger.log(
-//       'Unknown PaymentStatus value: $value, defaulting to pending',
-//       logType: LogType.error,
+// extension on PaymentStatus {
+//   static PaymentStatus? deserialize(String? value) {
+//     return safeEnumFromJson(
+//       value,
+//       PaymentStatus.values,
+//       defaultValue: PaymentStatus.pending,
+//       onUnknownValue: (v) {
+//         // Use dreamic's logging
+//         logw('Unknown PaymentStatus: $v, defaulting to pending');
+//       },
 //     );
+//   }
+//
+//   static String? serialize(PaymentStatus? value) {
+//     return safeEnumToJson(value);
 //   }
 // }
 //
 // @JsonSerializable()
-// class PaymentModel {
-//   final String id;
-//   final double amount;
+// class PaymentModel extends BaseFirestoreModel {
+//   @JsonKey(fromJson: PaymentStatus.deserialize, toJson: PaymentStatus.serialize)
+//   final PaymentStatus status;  // non-nullable with logging
 //
-//   @PaymentStatusConverter()
-//   final PaymentStatus status;
+//   PaymentModel({required this.status});
 //
-//   PaymentModel({
-//     required this.id,
-//     required this.amount,
-//     required this.status,
-//   });
+//   factory PaymentModel.fromJson(Map<String, dynamic> json) =>
+//       _$PaymentModelFromJson(json);
+//
+//   @override
+//   Map<String, dynamic> toJson() => _$PaymentModelToJson(this);
+// }
+//
+// WHAT HAPPENS:
+// - Server sends "refunded" (unknown)
+// - App logs: "Unknown PaymentStatus: refunded, defaulting to pending"
+// - App receives: status = PaymentStatus.pending
+// - No crash! ✅
+//
+// You can also send this to error reporting:
+// onUnknownValue: (v) {
+//   loge('Critical: Unknown PaymentStatus: $v');
+//   // This will report to configured error reporter (Sentry, etc.)
 // }
 
-// Example 4: Multiple enums in one model
-// ---------------------------------------
-// @JsonSerializable()
-// class ContentModel {
-//   final String id;
-//   final String title;
+// ============================================================================
+// Real-World Scenario
+// ============================================================================
 //
-//   @ContentTypeConverter()
-//   final ContentType type;
+// TIMELINE:
+// 1. App v1.0 ships with PostStatus { draft, published, archived }
+// 2. Server update adds PostStatus.scheduled
+// 3. App v1.0 users receive posts with status: "scheduled"
 //
-//   @ContentStatusConverter()
-//   final ContentStatus? status;
+// WITHOUT THIS SOLUTION:
+// - json_serializable encounters "scheduled"
+// - Throws exception: "Unknown enum value"
+// - App crashes 💥
 //
-//   @ContentVisibilityConverter()
-//   final ContentVisibility visibility;
+// WITH THIS SOLUTION (using extension + @JsonKey):
+// - Extension's deserialize() method is called
+// - safeEnumFromJson() catches unknown value
+// - Returns PostStatus.draft (or null, depending on strategy)
+// - App continues working ✅
 //
-//   ContentModel({
-//     required this.id,
-//     required this.title,
-//     required this.type,
-//     this.status,
-//     required this.visibility,
-//   });
-// }
+// KEY INSIGHT:
+// @JsonKey explicitly tells json_serializable to call YOUR method,
+// bypassing its built-in enum handling that would crash.
+
+// ============================================================================
+// AI Implementation Guide
+// ============================================================================
+//
+// When creating a new enum that needs safe serialization:
+//
+// 1. Define the enum:
+//    ```dart
+//    enum Priority { low, medium, high }
+//    ```
+//
+// 2. Add unnamed extension with static methods:
+//    ```dart
+//    extension on Priority {
+//      static Priority? deserialize(String? value) {
+//        return safeEnumFromJson(
+//          value,
+//          Priority.values,
+//          defaultValue: Priority.medium,  // or omit for nullable
+//          onUnknownValue: (v) => logw('Unknown Priority: $v'),  // optional
+//        );
+//      }
+//
+//      static String? serialize(Priority? value) {
+//        return safeEnumToJson(value);
+//      }
+//    }
+//    ```
+//
+// 3. In your model, use @JsonKey:
+//    ```dart
+//    @JsonKey(fromJson: Priority.deserialize, toJson: Priority.serialize)
+//    final Priority priority;
+//    ```
+//
+// 4. Run build_runner:
+//    ```bash
+//    dart run build_runner build --delete-conflicting-outputs
+//    ```
+//
+// IMPORTANT: Always use @JsonKey(fromJson:, toJson:) for enums.
+// Never use just the enum type alone - json_serializable's default
+// enum handling will crash on unknown values!

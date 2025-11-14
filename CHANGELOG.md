@@ -1,3 +1,111 @@
+## 0.3.0
+
+### ⚠️ BREAKING CHANGE: Enum Serialization Rewrite
+
+#### Overview
+Complete rewrite of enum serialization system. The previous converter class approach was fundamentally broken - json_serializable **ignores** `@JsonConverter` annotations on non-nullable enum fields. This caused crashes when servers sent unknown enum values.
+
+#### Breaking Changes
+* **REMOVED:** `RobustEnumConverter`, `NullableEnumConverter`, `DefaultEnumConverter`, `LoggingEnumConverter` classes
+* **ADDED:** `safeEnumFromJson<T>()` and `safeEnumToJson<T>()` helper functions
+* **CHANGED:** Enum fields now require `@JsonKey(fromJson:, toJson:)` annotations instead of converter class annotations
+
+#### Migration Required
+
+**Old Pattern (BROKEN):**
+```dart
+enum Priority { low, medium, high }
+
+class PriorityConverter extends DefaultEnumConverter<Priority> {
+  const PriorityConverter();
+  @override
+  List<Priority> get enumValues => Priority.values;
+  @override
+  Priority get defaultValue => Priority.medium;
+}
+
+@JsonSerializable()
+class TaskModel {
+  @PriorityConverter()  // This was IGNORED by json_serializable!
+  final Priority priority;
+}
+```
+
+**New Pattern (WORKS):**
+```dart
+enum Priority { low, medium, high }
+
+// Create helper functions
+Priority _deserializePriority(String? value) {
+  return safeEnumFromJson(
+    value,
+    Priority.values,
+    defaultValue: Priority.medium,
+  )!;  // Safe to use ! when defaultValue is provided
+}
+
+String? _serializePriority(Priority? value) {
+  return safeEnumToJson(value);
+}
+
+@JsonSerializable()
+class TaskModel {
+  @JsonKey(fromJson: _deserializePriority, toJson: _serializePriority)
+  final Priority priority;  // Now properly handled!
+}
+```
+
+#### Three Strategies
+
+**1. Nullable (Unknown → null):** For optional fields
+```dart
+UserRole? _deserializeUserRole(String? value) {
+  return safeEnumFromJson(value, UserRole.values);
+}
+```
+
+**2. Default (Unknown → default value):** For required fields
+```dart
+Priority _deserializePriority(String? value) {
+  return safeEnumFromJson(
+    value, 
+    Priority.values, 
+    defaultValue: Priority.medium,
+  )!;
+}
+```
+
+**3. Logging (Unknown → log + default):** For monitoring
+```dart
+Status _deserializeStatus(String? value) {
+  return safeEnumFromJson(
+    value,
+    Status.values,
+    defaultValue: Status.draft,
+    onUnknownValue: (v) => logw('Unknown Status: $v'),
+  )!;
+}
+```
+
+#### Migration Steps
+
+1. **Remove all enum converter classes** from your models
+2. **Create helper functions** for each enum using the patterns above
+3. **Update all enum fields** to use `@JsonKey(fromJson:, toJson:)`
+4. **Run code generation:** `dart run build_runner build --delete-conflicting-outputs`
+5. **Test with unknown enum values** to verify graceful handling
+
+See `lib/data/models/enum_example.dart` for complete working examples.
+
+#### Why This Change
+- Previous approach **did not work** - crashes were inevitable with unknown enum values
+- New approach **always works** - @JsonKey is never ignored by json_serializable
+- Simpler for AI to implement - just helper functions, no class hierarchies
+- Full type safety maintained
+- Three clear strategies for different requirements
+
+---
+
 ## 0.2.0
 
 ### ✨ New Feature: Comprehensive Notification Service

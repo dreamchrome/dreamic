@@ -1,7 +1,16 @@
-/// Example: Real-world enum converter usage in a social media app
+/// Example: Real-world enum serialization with helper functions
 ///
-/// This example demonstrates how to use robust enum converters in a complete
-/// application with various enum types and fields.
+/// This example demonstrates the helper function pattern for safe enum
+/// serialization that handles unknown values gracefully.
+///
+/// KEY INSIGHT: json_serializable IGNORES @Converter annotations on non-nullable
+/// enums. We must use @JsonKey(fromJson:, toJson:) to explicitly tell it to
+/// call our helper functions.
+///
+/// PATTERN:
+/// 1. Define enum (no "unknown" values needed)
+/// 2. Create top-level _deserialize and _serialize functions for each enum
+/// 3. Use @JsonKey(fromJson: _deserializeFoo, toJson: _serializeFoo) on fields
 
 import 'package:dreamic/dreamic.dart';
 import 'package:json_annotation/json_annotation.dart';
@@ -45,74 +54,86 @@ enum AccountVerificationStatus {
 }
 
 // ============================================================================
-// 2. Create Enum Converters
+// 2. Add Serialization Helper Functions for Each Enum
 // ============================================================================
+// These functions wrap the generic safeEnumFromJson to provide type-specific
+// deserialization for each enum with appropriate strategies.
 
-/// Nullable converter - unknown values become null
-class UserRoleConverter extends NullableEnumConverter<UserRole> {
-  const UserRoleConverter();
-
-  @override
-  List<UserRole> get enumValues => UserRole.values;
+/// STRATEGY 1: Nullable (Unknown → null)
+/// Use for optional fields where null is acceptable
+UserRole? _deserializeUserRole(String? value) {
+  return safeEnumFromJson(
+    value,
+    UserRole.values,
+    // No defaultValue - returns null for unknown values
+  );
 }
 
-/// Default converter - unknown values become 'draft'
-class PostStatusConverter extends DefaultEnumConverter<PostStatus> {
-  const PostStatusConverter();
-
-  @override
-  List<PostStatus> get enumValues => PostStatus.values;
-
-  @override
-  PostStatus get defaultValue => PostStatus.draft;
+String? _serializeUserRole(UserRole? value) {
+  return safeEnumToJson(value);
 }
 
-/// Default converter - unknown values become 'private' (safe default)
-class PostVisibilityConverter extends DefaultEnumConverter<PostVisibility> {
-  const PostVisibilityConverter();
-
-  @override
-  List<PostVisibility> get enumValues => PostVisibility.values;
-
-  @override
-  PostVisibility get defaultValue => PostVisibility.private;
+/// STRATEGY 2: Default Value (Unknown → draft)
+/// Use for required fields with a safe fallback
+PostStatus _deserializePostStatus(String? value) {
+  return safeEnumFromJson(
+    value,
+    PostStatus.values,
+    defaultValue: PostStatus.draft,
+  )!; // Safe to use ! because default is provided
 }
 
-/// Logging converter - tracks unknown values for monitoring
-class NotificationPriorityConverter extends LoggingEnumConverter<NotificationPriority> {
-  const NotificationPriorityConverter();
-
-  @override
-  List<NotificationPriority> get enumValues => NotificationPriority.values;
-
-  @override
-  NotificationPriority get defaultValue => NotificationPriority.medium;
-
-  @override
-  void logUnknownValue(String value) {
-    // In production, use your app's logger
-    // Example with dreamic logger:
-    // logger.log(
-    //   'Unknown NotificationPriority: $value, using default: medium',
-    //   logType: LogType.warning,
-    // );
-
-    // Or use print for simple debugging:
-    // ignore: avoid_print
-    print('Unknown NotificationPriority: $value, using default: medium');
-  }
+String? _serializePostStatus(PostStatus? value) {
+  return safeEnumToJson(value);
 }
 
-/// Nullable converter - verification status is optional
-class AccountVerificationStatusConverter extends NullableEnumConverter<AccountVerificationStatus> {
-  const AccountVerificationStatusConverter();
+/// STRATEGY 2: Default Value (Unknown → private for safety)
+/// Private is the most secure default for visibility
+PostVisibility _deserializePostVisibility(String? value) {
+  return safeEnumFromJson(
+    value,
+    PostVisibility.values,
+    defaultValue: PostVisibility.private,
+  )!; // Safe to use ! because default is provided
+}
 
-  @override
-  List<AccountVerificationStatus> get enumValues => AccountVerificationStatus.values;
+String? _serializePostVisibility(PostVisibility? value) {
+  return safeEnumToJson(value);
+}
+
+/// STRATEGY 3: Logging + Default (Unknown → log + medium)
+/// Use for critical fields where you want visibility
+NotificationPriority _deserializeNotificationPriority(String? value) {
+  return safeEnumFromJson(
+    value,
+    NotificationPriority.values,
+    defaultValue: NotificationPriority.medium,
+    onUnknownValue: (v) {
+      // Use dreamic's logging
+      logw('Unknown NotificationPriority: $v, defaulting to medium');
+    },
+  )!; // Safe to use ! because default is provided
+}
+
+String? _serializeNotificationPriority(NotificationPriority? value) {
+  return safeEnumToJson(value);
+}
+
+/// STRATEGY 1: Nullable (Unknown → null)
+/// Verification status is optional
+AccountVerificationStatus? _deserializeAccountVerificationStatus(String? value) {
+  return safeEnumFromJson(
+    value,
+    AccountVerificationStatus.values,
+  );
+}
+
+String? _serializeAccountVerificationStatus(AccountVerificationStatus? value) {
+  return safeEnumToJson(value);
 }
 
 // ============================================================================
-// 3. Define Models Using the Converters
+// 3. Define Models Using @JsonKey with Static Methods
 // ============================================================================
 
 @JsonSerializable(explicitToJson: true)
@@ -126,11 +147,14 @@ class UserProfileModel extends BaseFirestoreModel {
   final String? avatarUrl;
 
   /// Nullable role - if server adds new role, old app gets null
-  @UserRoleConverter()
+  @JsonKey(fromJson: _deserializeUserRole, toJson: _serializeUserRole)
   final UserRole? role;
 
   /// Optional verification status
-  @AccountVerificationStatusConverter()
+  @JsonKey(
+    fromJson: _deserializeAccountVerificationStatus,
+    toJson: _serializeAccountVerificationStatus,
+  )
   final AccountVerificationStatus? verificationStatus;
 
   @SmartTimestampConverter()
@@ -184,6 +208,12 @@ class UserProfileModel extends BaseFirestoreModel {
       updatedAt: updatedAt ?? this.updatedAt,
     );
   }
+
+  @override
+  List<String> getCreateTimestampFields() => ['createdAt'];
+
+  @override
+  List<String> getUpdateTimestampFields() => ['updatedAt'];
 }
 
 @JsonSerializable(explicitToJson: true)
@@ -197,11 +227,11 @@ class PostModel extends BaseFirestoreModel {
   final List<String> tags;
 
   /// Non-nullable status with safe default
-  @PostStatusConverter()
+  @JsonKey(fromJson: _deserializePostStatus, toJson: _serializePostStatus)
   final PostStatus status;
 
   /// Non-nullable visibility with private as safe default
-  @PostVisibilityConverter()
+  @JsonKey(fromJson: _deserializePostVisibility, toJson: _serializePostVisibility)
   final PostVisibility visibility;
 
   @SmartTimestampConverter()
@@ -261,6 +291,12 @@ class PostModel extends BaseFirestoreModel {
       publishedAt: publishedAt ?? this.publishedAt,
     );
   }
+
+  @override
+  List<String> getCreateTimestampFields() => ['createdAt'];
+
+  @override
+  List<String> getUpdateTimestampFields() => ['updatedAt'];
 }
 
 @JsonSerializable(explicitToJson: true)
@@ -273,8 +309,11 @@ class NotificationModel extends BaseFirestoreModel {
   final String userId;
   final bool isRead;
 
-  /// Uses logging converter to track when unknown priorities appear
-  @NotificationPriorityConverter()
+  /// Uses logging strategy to track when unknown priorities appear
+  @JsonKey(
+    fromJson: _deserializeNotificationPriority,
+    toJson: _serializeNotificationPriority,
+  )
   final NotificationPriority priority;
 
   @SmartTimestampConverter()
@@ -320,10 +359,16 @@ class NotificationModel extends BaseFirestoreModel {
       createdAt: createdAt ?? this.createdAt,
     );
   }
+
+  @override
+  List<String> getCreateTimestampFields() => ['createdAt'];
+
+  @override
+  List<String> getUpdateTimestampFields() => [];
 }
 
 // ============================================================================
-// 4. Usage Examples
+// 4. Real-World Usage Examples
 // ============================================================================
 
 /// Example service showing how these models handle enum updates gracefully

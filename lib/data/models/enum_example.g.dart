@@ -13,9 +13,9 @@ UserProfileModel _$UserProfileModelFromJson(Map<String, dynamic> json) =>
       email: json['email'] as String,
       bio: json['bio'] as String?,
       avatarUrl: json['avatarUrl'] as String?,
-      role: const UserRoleConverter().fromJson(json['role'] as String?),
-      verificationStatus: const AccountVerificationStatusConverter()
-          .fromJson(json['verificationStatus'] as String?),
+      role: _deserializeUserRole(json['role'] as String?),
+      verificationStatus: _deserializeAccountVerificationStatus(
+          json['verificationStatus'] as String?),
       createdAt: const SmartTimestampConverter().fromJson(json['createdAt']),
       updatedAt: const SmartTimestampConverter().fromJson(json['updatedAt']),
     );
@@ -26,9 +26,9 @@ Map<String, dynamic> _$UserProfileModelToJson(UserProfileModel instance) =>
       'email': instance.email,
       'bio': instance.bio,
       'avatarUrl': instance.avatarUrl,
-      'role': const UserRoleConverter().toJson(instance.role),
-      'verificationStatus': const AccountVerificationStatusConverter()
-          .toJson(instance.verificationStatus),
+      'role': _serializeUserRole(instance.role),
+      'verificationStatus':
+          _serializeAccountVerificationStatus(instance.verificationStatus),
       'createdAt': const SmartTimestampConverter().toJson(instance.createdAt),
       'updatedAt': const SmartTimestampConverter().toJson(instance.updatedAt),
     };
@@ -41,11 +41,12 @@ PostModel _$PostModelFromJson(Map<String, dynamic> json) => PostModel(
       tags:
           (json['tags'] as List<dynamic>?)?.map((e) => e as String).toList() ??
               const [],
-      status: $enumDecodeNullable(_$PostStatusEnumMap, json['status']) ??
-          PostStatus.draft,
-      visibility:
-          $enumDecodeNullable(_$PostVisibilityEnumMap, json['visibility']) ??
-              PostVisibility.private,
+      status: json['status'] == null
+          ? PostStatus.draft
+          : _deserializePostStatus(json['status'] as String?),
+      visibility: json['visibility'] == null
+          ? PostVisibility.private
+          : _deserializePostVisibility(json['visibility'] as String?),
       createdAt: const SmartTimestampConverter().fromJson(json['createdAt']),
       updatedAt: const SmartTimestampConverter().fromJson(json['updatedAt']),
       publishedAt:
@@ -57,25 +58,13 @@ Map<String, dynamic> _$PostModelToJson(PostModel instance) => <String, dynamic>{
       'content': instance.content,
       'authorId': instance.authorId,
       'tags': instance.tags,
-      'status': _$PostStatusEnumMap[instance.status]!,
-      'visibility': _$PostVisibilityEnumMap[instance.visibility]!,
+      'status': _serializePostStatus(instance.status),
+      'visibility': _serializePostVisibility(instance.visibility),
       'createdAt': const SmartTimestampConverter().toJson(instance.createdAt),
       'updatedAt': const SmartTimestampConverter().toJson(instance.updatedAt),
       'publishedAt':
           const SmartTimestampConverter().toJson(instance.publishedAt),
     };
-
-const _$PostStatusEnumMap = {
-  PostStatus.draft: 'draft',
-  PostStatus.published: 'published',
-  PostStatus.archived: 'archived',
-};
-
-const _$PostVisibilityEnumMap = {
-  PostVisibility.public: 'public',
-  PostVisibility.friendsOnly: 'friendsOnly',
-  PostVisibility.private: 'private',
-};
 
 NotificationModel _$NotificationModelFromJson(Map<String, dynamic> json) =>
     NotificationModel(
@@ -84,9 +73,9 @@ NotificationModel _$NotificationModelFromJson(Map<String, dynamic> json) =>
       message: json['message'] as String,
       userId: json['userId'] as String,
       isRead: json['isRead'] as bool? ?? false,
-      priority: $enumDecodeNullable(
-              _$NotificationPriorityEnumMap, json['priority']) ??
-          NotificationPriority.medium,
+      priority: json['priority'] == null
+          ? NotificationPriority.medium
+          : _deserializeNotificationPriority(json['priority'] as String?),
       createdAt: const SmartTimestampConverter().fromJson(json['createdAt']),
     );
 
@@ -96,12 +85,6 @@ Map<String, dynamic> _$NotificationModelToJson(NotificationModel instance) =>
       'message': instance.message,
       'userId': instance.userId,
       'isRead': instance.isRead,
-      'priority': _$NotificationPriorityEnumMap[instance.priority]!,
+      'priority': _serializeNotificationPriority(instance.priority),
       'createdAt': const SmartTimestampConverter().toJson(instance.createdAt),
     };
-
-const _$NotificationPriorityEnumMap = {
-  NotificationPriority.low: 'low',
-  NotificationPriority.medium: 'medium',
-  NotificationPriority.high: 'high',
-};

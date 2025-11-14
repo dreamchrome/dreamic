@@ -57,8 +57,9 @@ class MyPageState extends CubitBaseState {
 
 // Cubit class
 class MyPageCubit extends CubitBase<MyPageState> {
+  final MyRepoInt _repo;
   
-  MyPageCubit() : super(const MyPageState());
+  MyPageCubit(this._repo) : super(const MyPageState());
   
   Future<void> loadData() async {
     emitSafe(state.copyWith(pageStatus: PageStatus.loading));
@@ -88,18 +89,21 @@ class MyPageCubit extends CubitBase<MyPageState> {
 **REQUIRED:**
 - **ALWAYS** wrap pages with `PageStatusWrapper` from dreamic
 - **ALWAYS** wrap page content with `PageStatusBodyWrapper` from dreamic
-- **ALWAYS** provide `PageStatusWrapperConfigs` to `PageStatusWrapper`
+- **ALWAYS** provide `cubitFactory` parameter to `PageStatusWrapper` for cubit instantiation
+- **ALWAYS** use `loadedChildBuilder` parameter in `PageStatusBodyWrapper` to build content when data is loaded
 
 **FORBIDDEN:**
 - **NEVER** create pages without these wrappers
 - **NEVER** handle loading/error states manually when PageStatusWrapper exists
+- **NEVER** use `BlocProvider` directly when `PageStatusWrapper` is available
 
 **Benefits:** Automatic handling of loading states, errors, and offline scenarios
 
 **Example:**
 ```dart
 import 'package:flutter/material.dart';
-import 'package:dreamic/presentation/elements/page_status_wrapper.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:dreamic/dreamic.dart';
 
 class MyPage extends StatelessWidget {
   const MyPage({super.key});
@@ -135,7 +139,7 @@ class MyPage extends StatelessWidget {
 **REQUIRED:**
 - **ALWAYS** wrap tappable widgets with dreamic's `TappableAction`
 - **ALWAYS** use `TappableActionInkedWell` instead of `InkWell`
-- **ALWAYS** configure `requireNetwork` in `TappableActionConfig` based on whether the action needs network connectivity
+- **ALWAYS** add `config: TappableActionConfig(requireNetwork: false)` when action works offline (navigation, local filtering, UI-only changes)
 
 **FORBIDDEN:**
 - **NEVER** use bare `GestureDetector`, `InkWell`, or `InkResponse` without dreamic wrappers
@@ -144,12 +148,14 @@ class MyPage extends StatelessWidget {
 
 **Example:**
 ```dart
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dreamic/dreamic.dart';
 
-// Default config - requires network (for API calls, cloud functions)
+// Default - requires network (for API calls, cloud functions, server operations)
+// No config needed - network required is the default
 TappableAction(
   onTap: () => context.read<MyCubit>().saveToServer(),
-  config: TappableActionConfig(), // requireNetwork: true (default)
   builder: (context, onTap) {
     return ElevatedButton(
       onPressed: onTap,
@@ -158,7 +164,8 @@ TappableAction(
   },
 )
 
-// No network required (for local operations, navigation)
+// No network required (for local operations, navigation, UI changes)
+// Only need config when overriding the default
 TappableAction(
   onTap: () => context.read<MyCubit>().filterLocalData(),
   config: TappableActionConfig(requireNetwork: false),
@@ -170,7 +177,14 @@ TappableAction(
   },
 )
 
-// High-frequency interactions (no network, fast cooldown)
+// Navigation - no network required
+TappableActionInkedWell(
+  onTap: () => context.read<MyCubit>().navigateToDetails(),
+  config: TappableActionConfig(requireNetwork: false),
+  child: ListTile(title: Text('View Details')),
+)
+
+// Advanced: High-frequency interactions (only when needed)
 TappableAction(
   onTap: () => context.read<MyCubit>().incrementCounter(),
   config: TappableActionConfig.highFrequency(),
@@ -182,7 +196,7 @@ TappableAction(
   },
 )
 
-// Critical actions (requires network, longer cooldown, initial delay)
+// Advanced: Critical actions (only when needed)
 TappableAction(
   onTap: () => context.read<MyCubit>().deleteAccount(),
   config: TappableActionConfig.critical(),
@@ -194,29 +208,22 @@ TappableAction(
     );
   },
 )
-
-// InkWell with custom config
-TappableActionInkedWell(
-  onTap: () => context.read<MyCubit>().navigateToDetails(),
-  config: TappableActionConfig(requireNetwork: false),
-  child: ListTile(title: Text('View Details')),
-)
 ```
 
-**TappableActionConfig Options:**
-- `requireNetwork: true` (default) - Disables action when offline, for server operations
-- `requireNetwork: false` - Allows action when offline, for local operations
-- `debounceTaps: true` (default) - Prevents rapid repeated taps
-- `coolDownDuration` - Minimum time between taps
-- `delayBeforeFirstTapDuration` - Initial delay before first tap is allowed
-- `minDisabledDuration` - Minimum time action stays disabled after tap
-- `groupId` - Groups multiple TappableActions to disable together
-- `disableVisuallyDuringDebouncing` - Shows disabled state during cooldown
+**When to Use `config` Parameter:**
 
-**Preset Configs:**
-- `TappableActionConfig()` - Default (requires network, debouncing enabled)
-- `TappableActionConfig.highFrequency()` - For rapid interactions (no network required, short cooldown)
-- `TappableActionConfig.critical()` - For dangerous operations (requires network, long cooldown, initial delay)
+Most common case - **ONLY** use `config` when:
+- Action works offline: `config: TappableActionConfig(requireNetwork: false)`
+
+Rare advanced cases:
+- `TappableActionConfig.highFrequency()` - Rapid UI interactions (counters, sliders)
+- `TappableActionConfig.critical()` - Dangerous operations (delete account, irreversible actions)
+- Custom `coolDownDuration`, `delayBeforeFirstTapDuration`, or `groupId` for special UX requirements
+
+**Default behavior (no config needed):**
+- Requires network connection (disables when offline)
+- Debounces taps automatically
+- Standard cooldown timing
 
 ### StatefulWidgets - ALWAYS Required
 
@@ -312,6 +319,7 @@ final name = await showTextInputDialog(
 
 **REQUIRED:**
 - **ALWAYS** use dreamic's logging functions: `logd()`, `logw()`, `loge()`
+- **ALWAYS** pass the error object directly to `loge()` as the first parameter
 - **ALWAYS** include meaningful context in log messages
 
 **FORBIDDEN:**
@@ -321,10 +329,35 @@ final name = await showTextInputDialog(
 ```dart
 import 'package:dreamic/dreamic.dart';
 
+// Debug and warning logs
 logd('loadData: Starting data fetch');
-logw('loadData: Retry attempt ${retryCount}');
-loge('loadData: Failed with error: ${error}');
+logw('loadData: Retry attempt $retryCount');
+
+// Error logging - pass error object directly
+try {
+  await repository.getData();
+} catch (e, stackTrace) {
+  loge(e);  // Simple: just pass the error
+  // Or with custom message:
+  loge(e, 'loadData: Failed to fetch data');
+  // Or with stack trace:
+  loge(e, 'loadData: Critical failure', stackTrace);
+}
+
+// In a fold() or result handler
+result.fold(
+  (failure) => loge(failure, 'Operation failed'),
+  (data) => logd('Operation succeeded'),
+);
 ```
+
+**loge() Signature:**
+```dart
+void loge(Object error, [String? message, StackTrace? trace])
+```
+- First parameter: The error object (required)
+- Second parameter: Optional custom message for additional context
+- Third parameter: Optional stack trace for detailed debugging
 
 ---
 
@@ -542,66 +575,220 @@ class PostService {
 }
 ```
 
+---
+
+## 🔴 MANDATORY: Server-Side Timestamp Management (Cloud Functions)
+
+### Critical Rules for TypeScript/JavaScript Cloud Functions
+
+When receiving data from Flutter clients using `toCallable()`, the client intentionally **removes** `createdAt` and `updatedAt` fields. The server **MUST** add these timestamp fields.
+
+**REQUIRED (Server-Side):**
+- **ALWAYS** add both `createdAt` and `updatedAt` with `FieldValue.serverTimestamp()` for CREATE operations
+- **ALWAYS** add/update only `updatedAt` with `FieldValue.serverTimestamp()` for UPDATE operations
+- **ALWAYS** verify authentication with `if (!request.auth)` before any database operation
+- **ALWAYS** add server-side `uid` from `request.auth.uid` for ownership tracking
+- **ALWAYS** validate input data before writing to Firestore
+- **ALWAYS** import `FieldValue` from `firebase-admin/firestore`
+
+**FORBIDDEN (Server-Side):**
+- **NEVER** trust client-provided timestamps for `createdAt` or `updatedAt` (security vulnerability)
+- **NEVER** include `createdAt` when updating documents (preserve original value)
+- **NEVER** skip authentication checks
+
+**Pattern - CREATE Operation:**
+```typescript
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { FieldValue } from 'firebase-admin/firestore';
+
+export const createPost = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Must be logged in');
+  }
+  
+  const data = request.data;
+  
+  // Client sent via toCallable() - NO timestamps included
+  // Server adds timestamps + uid
+  const postDoc = {
+    ...data,
+    createdAt: FieldValue.serverTimestamp(),  // Server adds
+    updatedAt: FieldValue.serverTimestamp(),  // Server adds
+    uid: request.auth.uid,                    // Server adds
+  };
+  
+  const docRef = await db.collection('posts').add(postDoc);
+  return { success: true, postId: docRef.id };
+});
+```
+
+**Pattern - UPDATE Operation:**
+```typescript
+export const updatePost = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Must be logged in');
+  }
+  
+  const { postId, ...updateData } = request.data;
+  
+  // Verify ownership
+  const postDoc = await db.collection('posts').doc(postId).get();
+  if (postDoc.data()?.uid !== request.auth.uid) {
+    throw new HttpsError('permission-denied', 'Not authorized');
+  }
+  
+  // Client sent via toCallable() - NO timestamps included
+  // Server adds updatedAt ONLY (preserves createdAt)
+  const update = {
+    ...updateData,
+    updatedAt: FieldValue.serverTimestamp(),  // Server adds
+    // Do NOT include createdAt - preserve original
+  };
+  
+  await db.collection('posts').doc(postId).update(update);
+  return { success: true };
+});
+```
+
+**Security Checklist:**
+1. ✅ Verify authentication: `if (!request.auth) throw new HttpsError(...)`
+2. ✅ Validate input: Check required fields exist
+3. ✅ Verify authorization: Check ownership before updates
+4. ✅ CREATE: Add both `createdAt` and `updatedAt` with `FieldValue.serverTimestamp()`
+5. ✅ UPDATE: Add only `updatedAt`, never include `createdAt`
+6. ✅ Add `uid: request.auth.uid` for ownership tracking
+
+---
+
 ### Enum Serialization - ALWAYS Required
 
+**CRITICAL CONTEXT:**
+json_serializable **IGNORES** `@JsonConverter` annotations on non-nullable enum fields. The ONLY way to handle unknown enum values safely is to use `@JsonKey(fromJson:, toJson:)` with custom helper functions.
+
 **REQUIRED:**
-- **ALWAYS** use `RobustEnumConverter` base classes from dreamic for enum fields
-- **ALWAYS** choose the appropriate converter strategy:
-  - `NullableEnumConverter<T>` - For optional enum fields (unknown values → null)
-  - `DefaultEnumConverter<T>` - For required enum fields (unknown values → default value)
-  - `LoggingEnumConverter<T>` - For required enum fields with monitoring (unknown values → log + default)
-- **ALWAYS** annotate enum fields with `@YourEnumConverter()` annotation
-- **ALWAYS** implement `enumValues` getter returning `EnumType.values`
-- **ALWAYS** implement `defaultValue` getter for `DefaultEnumConverter` and `LoggingEnumConverter`
+- **ALWAYS** create top-level `_deserialize` and `_serialize` helper functions for each enum
+- **ALWAYS** use `safeEnumFromJson()` from dreamic in deserialize functions
+- **ALWAYS** use `safeEnumToJson()` from dreamic in serialize functions
+- **ALWAYS** annotate enum fields with `@JsonKey(fromJson: _deserializeYourEnum, toJson: _serializeYourEnum)`
+- **ALWAYS** choose the appropriate strategy:
+  - **Nullable** - For optional enum fields (unknown values → null)
+  - **Default** - For required enum fields (unknown values → default value)
+  - **Logging** - For required enum fields with monitoring (unknown values → log + default)
+- **ALWAYS** use the `!` operator on non-nullable fields when defaultValue is provided (it's safe!)
 
 **FORBIDDEN:**
 - **NEVER** add "unknown" or similar technical values to enums
-- **NEVER** use `@JsonKey(unknownEnumValue: ...)` annotations
-- **NEVER** leave enum fields without robust enum converters
+- **NEVER** use `@JsonKey(unknownEnumValue: ...)` annotations (they don't work with non-nullable enums!)
+- **NEVER** use `@JsonConverter` annotations (json_serializable ignores them!)
+- **NEVER** leave enum fields without safe serialization
 
-**Example:**
+**PATTERN:**
+1. Define enum (clean business values only)
+2. Create `_deserializeEnumName` and `_serializeEnumName` helper functions
+3. Use `@JsonKey(fromJson: _deserializeEnumName, toJson: _serializeEnumName)` on model fields
+
+**Example 1: Nullable Strategy (Optional Fields)**
 ```dart
 import 'package:dreamic/dreamic.dart';
 
-// 1. Nullable strategy for optional fields
-enum UserType { guest, member, admin }
+// 1. Define enum
+enum UserRole { guest, member, moderator, admin }
 
-class UserTypeConverter extends NullableEnumConverter<UserType> {
-  const UserTypeConverter();
-  
-  @override
-  List<UserType> get enumValues => UserType.values;
+// 2. Create helper functions - returns nullable
+UserRole? _deserializeUserRole(String? value) {
+  return safeEnumFromJson(
+    value,
+    UserRole.values,
+    // No defaultValue - returns null for unknown values
+  );
 }
 
+String? _serializeUserRole(UserRole? value) {
+  return safeEnumToJson(value);
+}
+
+// 3. Use in model
 @JsonSerializable(explicitToJson: true)
 class UserModel extends BaseFirestoreModel {
-  @UserTypeConverter()
-  final UserType? type;  // nullable - unknown values become null
+  @JsonKey(fromJson: _deserializeUserRole, toJson: _serializeUserRole)
+  final UserRole? role;  // nullable - unknown values become null
   
   // ... rest of model
 }
+```
 
-// 2. Default strategy for required fields
+**Example 2: Default Strategy (Required Fields)**
+```dart
+import 'package:dreamic/dreamic.dart';
+
+// 1. Define enum
 enum Priority { low, medium, high }
 
-class PriorityConverter extends DefaultEnumConverter<Priority> {
-  const PriorityConverter();
-  
-  @override
-  List<Priority> get enumValues => Priority.values;
-  
-  @override
-  Priority get defaultValue => Priority.medium;  // Safe default
+// 2. Create helper functions - returns non-nullable
+Priority _deserializePriority(String? value) {
+  return safeEnumFromJson(
+    value,
+    Priority.values,
+    defaultValue: Priority.medium,  // Safe fallback
+  )!;  // Safe to use ! because defaultValue is provided
 }
 
+String? _serializePriority(Priority? value) {
+  return safeEnumToJson(value);
+}
+
+// 3. Use in model
 @JsonSerializable(explicitToJson: true)
 class TaskModel extends BaseFirestoreModel {
-  @PriorityConverter()
+  @JsonKey(fromJson: _deserializePriority, toJson: _serializePriority)
   final Priority priority;  // non-nullable - unknown values become medium
   
   // ... rest of model
 }
 ```
+
+**Example 3: Logging Strategy (Monitoring Unknown Values)**
+```dart
+import 'package:dreamic/dreamic.dart';
+
+// 1. Define enum
+enum Status { draft, published, archived }
+
+// 2. Create helper functions with logging
+Status _deserializeStatus(String? value) {
+  return safeEnumFromJson(
+    value,
+    Status.values,
+    defaultValue: Status.draft,
+    onUnknownValue: (v) {
+      // Use dreamic's logging to track unknown values
+      logw('Unknown Status: $v, defaulting to draft');
+    },
+  )!;  // Safe to use ! because defaultValue is provided
+}
+
+String? _serializeStatus(Status? value) {
+  return safeEnumToJson(value);
+}
+
+// 3. Use in model
+@JsonSerializable(explicitToJson: true)
+class PostModel extends BaseFirestoreModel {
+  @JsonKey(fromJson: _deserializeStatus, toJson: _serializeStatus)
+  final Status status;  // non-nullable - logs unknown values
+  
+  // ... rest of model
+}
+```
+
+**WHY THIS PATTERN:**
+- ✅ Works with non-nullable enum fields (the common case)
+- ✅ Prevents crashes when server adds new enum values
+- ✅ Keeps enum definitions clean (no technical "unknown" values)
+- ✅ Type-safe with full Dart compile-time checking
+- ✅ Flexible strategies for different requirements
+
+See `lib/data/models/enum_example.dart` in dreamic for complete real-world examples.
 
 ### Code Generation - ALWAYS Run After Changes
 
@@ -933,11 +1120,11 @@ Future<void> criticalOperation() async {
   
   result.fold(
     (failure) => emitSafe(state.copyWith(
-      status: PageStatus.errorRetryable,
+      pageStatus: PageStatus.errorRetryable,
       errorMessage: failure.message,
     )),
     (data) => emitSafe(state.copyWith(
-      status: PageStatus.loaded,
+      pageStatus: PageStatus.loaded,
       data: data,
     )),
   );
@@ -1044,7 +1231,7 @@ void main() {
     
     await cubit.loadData();
     
-    expect(cubit.state.status, PageStatus.loaded);
+    expect(cubit.state.pageStatus, PageStatus.loaded);
     expect(cubit.state.items, items);
   });
 }
@@ -1064,7 +1251,7 @@ When creating/modifying code, verify:
 - [ ] StatefulWidget uses `SetStateSafeMixin` and `setStateSafe()`
 - [ ] Using `adaptive_dialog` for standard dialogs
 - [ ] Using `logd()`, `logw()`, `loge()` (not `print()`)
-- [ ] Using AutoRoute for navigation (not Navigator directly)
+- [ ] Configured `requireNetwork` in `TappableActionConfig` appropriately
 - [ ] Using `AppConfigBase.firebaseFunctionCallable()` for Firebase functions
 - [ ] Firestore collection/document names are constants in `db_constants.dart`
 - [ ] Models extend `BaseFirestoreModel`
@@ -1073,10 +1260,9 @@ When creating/modifying code, verify:
 - [ ] Using correct serialization method (`toFirestoreCreate()`, `toFirestoreUpdate()`, `toCallable()`, `toJson()`)
 - [ ] Enums use robust enum converters from dreamic
 - [ ] Repository uses `Either<RepositoryFailure, T>` return type
-- [ ] Using `callWithLoadingAfterTimeout()` for time-consuming operations
-- [ ] Using design system constants (AppColors, AppStyles, AppSizes)
-- [ ] Using `ResponsiveBreakpoints` or `ResponsiveValue` for responsive design
-- [ ] Ran `dart run build_runner build` after model changes
+- [ ] Using `callWithLoadingAfterTimeout()` only for fast operations that occasionally slow down
+- [ ] Using `retryIt()` for network-dependent operations that may fail
+- [ ] Ran `dart run build_runner build --delete-conflicting-outputs` after model changes
 
 ---
 
@@ -1087,16 +1273,14 @@ When creating/modifying code, verify:
 3. **Safe Mutations:** SetStateSafeMixin + setStateSafe()
 4. **Dialogs:** adaptive_dialog package methods
 5. **Logging:** logd(), logw(), loge()
-6. **Navigation:** AutoRoute typed routes
-7. **Firebase:** AppConfigBase.firebaseFunctionCallable()
-8. **Database:** Constants in db_constants.dart
-9. **Models:** BaseFirestoreModel + JsonSerializable + SmartTimestampConverter
-10. **Serialization:** Context-aware methods (toFirestoreCreate/Update/Callable/Json)
-11. **Enums:** RobustEnumConverter subclasses
-12. **Repositories:** Either<RepositoryFailure, T>
-13. **Loading:** callWithLoadingAfterTimeout()
-14. **Design:** AppColors + AppStyles + AppSizes
-15. **Responsive:** ResponsiveBreakpoints + ResponsiveValue
-16. **Network:** Check AppCubit.networkStatus
+6. **Firebase:** AppConfigBase.firebaseFunctionCallable()
+7. **Database:** Constants in db_constants.dart
+8. **Models:** BaseFirestoreModel + JsonSerializable + SmartTimestampConverter
+9. **Serialization:** Context-aware methods (toFirestoreCreate/Update/Callable/Json)
+10. **Enums:** RobustEnumConverter subclasses
+11. **Repositories:** Either<RepositoryFailure, T>
+12. **Loading:** callWithLoadingAfterTimeout() for fast operations
+13. **Tappable Actions:** TappableAction with network configuration
+14. **Error Handling:** retryIt() for network-dependent operations
 
 **Remember:** These patterns are NOT optional suggestions. They are MANDATORY architectural requirements when using the dreamic package. Following them ensures consistency, reliability, and maintainability across the entire application.
