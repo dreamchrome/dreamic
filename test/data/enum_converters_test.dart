@@ -147,7 +147,7 @@ void main() {
 
       test('logs multiple unknown values', () {
         final loggedValues = <String>[];
-        
+
         safeEnumFromJson(
           'unknown1',
           TestEnum.values,
@@ -229,9 +229,7 @@ void main() {
 
       test('mixed known and unknown values in list', () {
         final values = ['guest', 'member', 'newValue', 'admin', 'anotherNew'];
-        final results = values
-            .map((v) => safeEnumFromJson(v, UserType.values))
-            .toList();
+        final results = values.map((v) => safeEnumFromJson(v, UserType.values)).toList();
 
         expect(results[0], UserType.guest);
         expect(results[1], UserType.member);

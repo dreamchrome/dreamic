@@ -47,6 +47,7 @@ dependencies:
   flutter_local_notifications: ^18.0.1
   app_badge_plus: ^1.1.5
   adaptive_dialog: ^2.2.0
+  path: ^1.9.1
 
 dev_dependencies:
   flutter_test:
