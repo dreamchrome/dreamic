@@ -1,109 +1,118 @@
 import 'package:dreamic/dreamic.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Tests for Robust Enum Converters
+/// Tests for Safe Enum Serialization Helper Functions
 ///
-/// These tests verify that enum converters handle unknown values gracefully
+/// These tests verify that safeEnumFromJson handles unknown values gracefully
 /// without crashing the app.
 void main() {
-  group('RobustEnumConverter', () {
-    group('NullableEnumConverter', () {
+  group('safeEnumFromJson', () {
+    group('Nullable Strategy (no default)', () {
       test('converts known enum value correctly', () {
-        const converter = TestNullableConverter();
-        final result = converter.fromJson('value1');
+        final result = safeEnumFromJson('value1', TestEnum.values);
         expect(result, TestEnum.value1);
       });
 
       test('converts all enum values correctly', () {
-        const converter = TestNullableConverter();
-        expect(converter.fromJson('value1'), TestEnum.value1);
-        expect(converter.fromJson('value2'), TestEnum.value2);
-        expect(converter.fromJson('value3'), TestEnum.value3);
+        expect(safeEnumFromJson('value1', TestEnum.values), TestEnum.value1);
+        expect(safeEnumFromJson('value2', TestEnum.values), TestEnum.value2);
+        expect(safeEnumFromJson('value3', TestEnum.values), TestEnum.value3);
       });
 
       test('returns null for unknown enum value', () {
-        const converter = TestNullableConverter();
-        final result = converter.fromJson('unknownValue');
+        final result = safeEnumFromJson('unknownValue', TestEnum.values);
         expect(result, isNull);
       });
 
       test('returns null for null input', () {
-        const converter = TestNullableConverter();
-        final result = converter.fromJson(null);
-        expect(result, isNull);
-      });
-
-      test('toJson returns enum name', () {
-        const converter = TestNullableConverter();
-        final result = converter.toJson(TestEnum.value2);
-        expect(result, 'value2');
-      });
-
-      test('toJson returns null for null input', () {
-        const converter = TestNullableConverter();
-        final result = converter.toJson(null);
+        final result = safeEnumFromJson(null, TestEnum.values);
         expect(result, isNull);
       });
 
       test('handles future server enum values gracefully', () {
-        const converter = TestNullableConverter();
-
         // Simulate server adding new enum values that old app doesn't know about
-        final newValue1 = converter.fromJson('value4'); // Future value
-        final newValue2 = converter.fromJson('premiumUser'); // Future value
-        final newValue3 = converter.fromJson('superAdmin'); // Future value
+        final newValue1 = safeEnumFromJson('value4', TestEnum.values);
+        final newValue2 = safeEnumFromJson('premiumUser', TestEnum.values);
+        final newValue3 = safeEnumFromJson('superAdmin', TestEnum.values);
 
         // Old app should not crash, should return null
         expect(newValue1, isNull);
         expect(newValue2, isNull);
         expect(newValue3, isNull);
       });
+
+      test('handles empty string', () {
+        expect(safeEnumFromJson('', TestEnum.values), isNull);
+      });
+
+      test('handles whitespace', () {
+        expect(safeEnumFromJson(' ', TestEnum.values), isNull);
+        expect(safeEnumFromJson('  value1  ', TestEnum.values), isNull);
+      });
+
+      test('case sensitive matching', () {
+        expect(safeEnumFromJson('VALUE1', TestEnum.values), isNull);
+        expect(safeEnumFromJson('Value1', TestEnum.values), isNull);
+        expect(safeEnumFromJson('value1', TestEnum.values), TestEnum.value1);
+      });
     });
 
-    group('DefaultEnumConverter', () {
+    group('Default Strategy (with default value)', () {
       test('converts known enum value correctly', () {
-        const converter = TestDefaultConverter();
-        final result = converter.fromJson('value1');
+        final result = safeEnumFromJson(
+          'value1',
+          TestEnum.values,
+          defaultValue: TestEnum.value1,
+        );
         expect(result, TestEnum.value1);
       });
 
       test('converts all enum values correctly', () {
-        const converter = TestDefaultConverter();
-        expect(converter.fromJson('value1'), TestEnum.value1);
-        expect(converter.fromJson('value2'), TestEnum.value2);
-        expect(converter.fromJson('value3'), TestEnum.value3);
+        expect(
+          safeEnumFromJson('value1', TestEnum.values, defaultValue: TestEnum.value1),
+          TestEnum.value1,
+        );
+        expect(
+          safeEnumFromJson('value2', TestEnum.values, defaultValue: TestEnum.value1),
+          TestEnum.value2,
+        );
+        expect(
+          safeEnumFromJson('value3', TestEnum.values, defaultValue: TestEnum.value1),
+          TestEnum.value3,
+        );
       });
 
       test('returns default value for unknown enum value', () {
-        const converter = TestDefaultConverter();
-        final result = converter.fromJson('unknownValue');
-        expect(result, TestEnum.value1); // default value
+        final result = safeEnumFromJson(
+          'unknownValue',
+          TestEnum.values,
+          defaultValue: TestEnum.value2,
+        );
+        expect(result, TestEnum.value2);
       });
 
-      test('returns null for null input', () {
-        const converter = TestDefaultConverter();
-        final result = converter.fromJson(null);
-        expect(result, isNull);
-      });
-
-      test('toJson returns enum name', () {
-        const converter = TestDefaultConverter();
-        final result = converter.toJson(TestEnum.value3);
-        expect(result, 'value3');
-      });
-
-      test('toJson returns null for null input', () {
-        const converter = TestDefaultConverter();
-        final result = converter.toJson(null);
+      test('returns null for null input even with default', () {
+        // null input should stay null to distinguish from unknown strings
+        final result = safeEnumFromJson(
+          null,
+          TestEnum.values,
+          defaultValue: TestEnum.value3,
+        );
         expect(result, isNull);
       });
 
       test('handles future server enum values gracefully', () {
-        const converter = TestDefaultConverter();
-
         // Simulate server adding new enum values that old app doesn't know about
-        final newValue1 = converter.fromJson('value4'); // Future value
-        final newValue2 = converter.fromJson('premiumUser'); // Future value
+        final newValue1 = safeEnumFromJson(
+          'value4',
+          TestEnum.values,
+          defaultValue: TestEnum.value1,
+        );
+        final newValue2 = safeEnumFromJson(
+          'premiumUser',
+          TestEnum.values,
+          defaultValue: TestEnum.value1,
+        );
 
         // Old app should not crash, should return default
         expect(newValue1, TestEnum.value1);
@@ -111,39 +120,75 @@ void main() {
       });
     });
 
-    group('LoggingEnumConverter', () {
-      test('converts known enum value correctly', () {
-        final converter = TestLoggingConverter();
-        final result = converter.fromJson('value2');
+    group('Logging Strategy (with callback)', () {
+      test('converts known enum value correctly without logging', () {
+        final loggedValues = <String>[];
+        final result = safeEnumFromJson(
+          'value2',
+          TestEnum.values,
+          defaultValue: TestEnum.value3,
+          onUnknownValue: loggedValues.add,
+        );
         expect(result, TestEnum.value2);
-        expect(converter.loggedValues, isEmpty);
+        expect(loggedValues, isEmpty);
       });
 
       test('logs unknown values', () {
-        final converter = TestLoggingConverter();
-        final result = converter.fromJson('unknownValue');
-        expect(result, TestEnum.value3); // default value
-        expect(converter.loggedValues, contains('unknownValue'));
+        final loggedValues = <String>[];
+        final result = safeEnumFromJson(
+          'unknownValue',
+          TestEnum.values,
+          defaultValue: TestEnum.value3,
+          onUnknownValue: loggedValues.add,
+        );
+        expect(result, TestEnum.value3);
+        expect(loggedValues, contains('unknownValue'));
       });
 
       test('logs multiple unknown values', () {
-        final converter = TestLoggingConverter();
-        converter.fromJson('unknown1');
-        converter.fromJson('unknown2');
-        converter.fromJson('value1'); // known value
-        converter.fromJson('unknown3');
+        final loggedValues = <String>[];
+        
+        safeEnumFromJson(
+          'unknown1',
+          TestEnum.values,
+          defaultValue: TestEnum.value1,
+          onUnknownValue: loggedValues.add,
+        );
+        safeEnumFromJson(
+          'unknown2',
+          TestEnum.values,
+          defaultValue: TestEnum.value1,
+          onUnknownValue: loggedValues.add,
+        );
+        safeEnumFromJson(
+          'value1',
+          TestEnum.values,
+          defaultValue: TestEnum.value1,
+          onUnknownValue: loggedValues.add,
+        ); // known value
+        safeEnumFromJson(
+          'unknown3',
+          TestEnum.values,
+          defaultValue: TestEnum.value1,
+          onUnknownValue: loggedValues.add,
+        );
 
-        expect(converter.loggedValues.length, 3);
-        expect(converter.loggedValues, contains('unknown1'));
-        expect(converter.loggedValues, contains('unknown2'));
-        expect(converter.loggedValues, contains('unknown3'));
-        expect(converter.loggedValues, isNot(contains('value1')));
+        expect(loggedValues.length, 3);
+        expect(loggedValues, contains('unknown1'));
+        expect(loggedValues, contains('unknown2'));
+        expect(loggedValues, contains('unknown3'));
+        expect(loggedValues, isNot(contains('value1')));
       });
 
       test('does not log null values', () {
-        final converter = TestLoggingConverter();
-        converter.fromJson(null);
-        expect(converter.loggedValues, isEmpty);
+        final loggedValues = <String>[];
+        safeEnumFromJson(
+          null,
+          TestEnum.values,
+          defaultValue: TestEnum.value1,
+          onUnknownValue: loggedValues.add,
+        );
+        expect(loggedValues, isEmpty);
       });
     });
 
@@ -153,8 +198,7 @@ void main() {
         // Old app only knows: guest, member, admin
         // Server sends: enterprise (unknown to old app)
 
-        const converter = UserTypeNullableConverter();
-        final result = converter.fromJson('enterprise');
+        final result = safeEnumFromJson('enterprise', UserType.values);
 
         // Old app should not crash
         expect(result, isNull);
@@ -165,28 +209,29 @@ void main() {
         // Old app only knows: low, medium, high
         // Server sends: critical (unknown to old app)
 
-        const converter = PriorityConverter();
-        final result = converter.fromJson('critical');
+        final result = safeEnumFromJson(
+          'critical',
+          Priority.values,
+          defaultValue: Priority.medium,
+        );
 
         // Old app should not crash, uses default
         expect(result, Priority.medium);
       });
 
       test('handles typos or corrupted data gracefully', () {
-        const converter = UserTypeNullableConverter();
-
         // Various corrupted/invalid data
-        expect(converter.fromJson('ADMIN'), isNull); // Wrong case
-        expect(converter.fromJson('admi'), isNull); // Typo
-        expect(converter.fromJson(''), isNull); // Empty string
-        expect(converter.fromJson('123'), isNull); // Invalid
+        expect(safeEnumFromJson('ADMIN', UserType.values), isNull); // Wrong case
+        expect(safeEnumFromJson('admi', UserType.values), isNull); // Typo
+        expect(safeEnumFromJson('', UserType.values), isNull); // Empty string
+        expect(safeEnumFromJson('123', UserType.values), isNull); // Invalid
       });
 
       test('mixed known and unknown values in list', () {
-        const converter = UserTypeNullableConverter();
-
         final values = ['guest', 'member', 'newValue', 'admin', 'anotherNew'];
-        final results = values.map((v) => converter.fromJson(v)).toList();
+        final results = values
+            .map((v) => safeEnumFromJson(v, UserType.values))
+            .toList();
 
         expect(results[0], UserType.guest);
         expect(results[1], UserType.member);
@@ -195,36 +240,49 @@ void main() {
         expect(results[4], isNull); // unknown
       });
     });
+  });
 
-    group('Edge cases', () {
-      test('handles empty string', () {
-        const converter = TestNullableConverter();
-        expect(converter.fromJson(''), isNull);
-      });
+  group('safeEnumToJson', () {
+    test('returns enum name for valid enum', () {
+      expect(safeEnumToJson(TestEnum.value1), 'value1');
+      expect(safeEnumToJson(TestEnum.value2), 'value2');
+      expect(safeEnumToJson(TestEnum.value3), 'value3');
+    });
 
-      test('handles whitespace', () {
-        const converter = TestNullableConverter();
-        expect(converter.fromJson(' '), isNull);
-        expect(converter.fromJson('  value1  '), isNull); // exact match required
-      });
+    test('returns null for null input', () {
+      expect(safeEnumToJson<TestEnum>(null), isNull);
+    });
 
-      test('case sensitive matching', () {
-        const converter = TestNullableConverter();
-        expect(converter.fromJson('VALUE1'), isNull);
-        expect(converter.fromJson('Value1'), isNull);
-        expect(converter.fromJson('value1'), TestEnum.value1);
-      });
+    test('works with all test enums', () {
+      expect(safeEnumToJson(UserType.guest), 'guest');
+      expect(safeEnumToJson(UserType.member), 'member');
+      expect(safeEnumToJson(UserType.admin), 'admin');
 
-      test('roundtrip conversion', () {
-        const converter = TestNullableConverter();
+      expect(safeEnumToJson(Priority.low), 'low');
+      expect(safeEnumToJson(Priority.medium), 'medium');
+      expect(safeEnumToJson(Priority.high), 'high');
+    });
 
-        // Convert to JSON and back
-        for (final value in TestEnum.values) {
-          final json = converter.toJson(value);
-          final restored = converter.fromJson(json);
-          expect(restored, value);
-        }
-      });
+    test('roundtrip conversion - nullable', () {
+      // Convert to JSON and back
+      for (final value in TestEnum.values) {
+        final json = safeEnumToJson(value);
+        final restored = safeEnumFromJson(json, TestEnum.values);
+        expect(restored, value);
+      }
+    });
+
+    test('roundtrip conversion - with default', () {
+      // Convert to JSON and back
+      for (final value in Priority.values) {
+        final json = safeEnumToJson(value);
+        final restored = safeEnumFromJson(
+          json,
+          Priority.values,
+          defaultValue: Priority.medium,
+        );
+        expect(restored, value);
+      }
     });
   });
 }
@@ -246,56 +304,4 @@ enum Priority {
   low,
   medium,
   high,
-}
-
-// Test converters
-class TestNullableConverter extends NullableEnumConverter<TestEnum> {
-  const TestNullableConverter();
-
-  @override
-  List<TestEnum> get enumValues => TestEnum.values;
-}
-
-class TestDefaultConverter extends DefaultEnumConverter<TestEnum> {
-  const TestDefaultConverter();
-
-  @override
-  List<TestEnum> get enumValues => TestEnum.values;
-
-  @override
-  TestEnum get defaultValue => TestEnum.value1;
-}
-
-class TestLoggingConverter extends LoggingEnumConverter<TestEnum> {
-  TestLoggingConverter();
-
-  final List<String> loggedValues = [];
-
-  @override
-  List<TestEnum> get enumValues => TestEnum.values;
-
-  @override
-  TestEnum get defaultValue => TestEnum.value3;
-
-  @override
-  void logUnknownValue(String value) {
-    loggedValues.add(value);
-  }
-}
-
-class UserTypeNullableConverter extends NullableEnumConverter<UserType> {
-  const UserTypeNullableConverter();
-
-  @override
-  List<UserType> get enumValues => UserType.values;
-}
-
-class PriorityConverter extends DefaultEnumConverter<Priority> {
-  const PriorityConverter();
-
-  @override
-  List<Priority> get enumValues => Priority.values;
-
-  @override
-  Priority get defaultValue => Priority.medium;
 }
