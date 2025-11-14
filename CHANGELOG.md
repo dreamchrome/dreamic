@@ -1,3 +1,30 @@
+## 0.3.1
+
+### Enhancements
+
+* **Added:** Automated migration script `migration_scripts/migrate_enum_converters.dart` with dry-run support
+* **Added:** Comprehensive migration guide `docs/ENUM_MIGRATION_GUIDE.md` for AI-assisted migrations
+* **Added:** 27 integration tests in `test/data/enum_serialization_test.dart` proving unknown enum values don't crash
+* **Improved:** Documentation with complete examples for all three enum serialization strategies
+* **Fixed:** All example models in `lib/data/models/enum_example.dart` now use correct pattern
+
+### Migration Tools
+
+Run the automated migration script to convert old converter classes:
+```bash
+# Preview changes
+dart run migration_scripts/migrate_enum_converters.dart --dry-run
+
+# Apply migration
+dart run migration_scripts/migrate_enum_converters.dart
+```
+
+### Documentation
+
+* `docs/ENUM_MIGRATION_GUIDE.md` - AI-readable migration guide for other projects
+* `docs/ENUM_SOLUTION_ARCHITECTURE.md` - Technical deep dive
+* `docs/ENUM_QUICK_START.md` - 5-minute quick start
+
 ## 0.3.0
 
 ### ⚠️ BREAKING CHANGE: Enum Serialization Rewrite

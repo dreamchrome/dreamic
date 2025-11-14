@@ -382,9 +382,7 @@ void main() {
         );
 
         // Should handle efficiently without crashes
-        final profiles = jsonList
-            .map((json) => UserProfileModel.fromJson(json))
-            .toList();
+        final profiles = jsonList.map((json) => UserProfileModel.fromJson(json)).toList();
 
         expect(profiles, hasLength(1000));
         expect(profiles.every((p) => p.role == null), isTrue); // Nullable strategy
@@ -408,8 +406,7 @@ void main() {
 
         expect(posts, hasLength(500));
         // Verify mix of valid and default values
-        expect(posts.where((p) => p.status == PostStatus.published).length,
-            greaterThan(0));
+        expect(posts.where((p) => p.status == PostStatus.published).length, greaterThan(0));
         expect(posts.where((p) => p.status == PostStatus.draft).length, greaterThan(0));
       });
     });

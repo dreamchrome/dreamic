@@ -196,13 +196,11 @@ List<ConverterInfo> _extractConverters(String content) {
     } else if (baseClass == 'DefaultEnumConverter') {
       type = 'default';
       // Try to extract default value
-      final defaultMatch = RegExp(r'get\s+defaultValue\s*=>\s*(\w+\.\w+);')
-          .firstMatch(fullText);
+      final defaultMatch = RegExp(r'get\s+defaultValue\s*=>\s*(\w+\.\w+);').firstMatch(fullText);
       defaultValue = defaultMatch?.group(1);
     } else {
       type = 'logging';
-      final defaultMatch = RegExp(r'get\s+defaultValue\s*=>\s*(\w+\.\w+);')
-          .firstMatch(fullText);
+      final defaultMatch = RegExp(r'get\s+defaultValue\s*=>\s*(\w+\.\w+);').firstMatch(fullText);
       defaultValue = defaultMatch?.group(1);
     }
 
@@ -287,9 +285,7 @@ String _addHelperFunctions(
 
   // Insert helper functions after the enum
   final enumEnd = enumMatch.end;
-  return content.substring(0, enumEnd) +
-      '\n\n$helperFunctions\n' +
-      content.substring(enumEnd);
+  return content.substring(0, enumEnd) + '\n\n$helperFunctions\n' + content.substring(enumEnd);
 }
 
 class UpdateResult {
@@ -314,14 +310,15 @@ UpdateResult _updateFieldAnnotations(String content, ConverterInfo converter) {
   );
 
   final matches = annotationPattern.allMatches(content).toList();
-  
+
   // Replace from end to start to maintain indices
   for (final match in matches.reversed) {
     final oldAnnotation = match.group(0)!;
     final isNullable = oldAnnotation.contains('${converter.enumName}?');
-    
-    final newAnnotation = '@JsonKey(fromJson: $funcBaseName, toJson: $serializeFuncName)\n  final ${converter.enumName}${isNullable ? '?' : ''}';
-    
+
+    final newAnnotation =
+        '@JsonKey(fromJson: $funcBaseName, toJson: $serializeFuncName)\n  final ${converter.enumName}${isNullable ? '?' : ''}';
+
     newContent = newContent.replaceRange(
       match.start,
       match.end,
@@ -337,13 +334,14 @@ UpdateResult _updateFieldAnnotations(String content, ConverterInfo converter) {
   );
 
   final matches2 = annotationPattern2.allMatches(newContent).toList();
-  
+
   for (final match in matches2.reversed) {
     final oldAnnotation = match.group(0)!;
     final isNullable = oldAnnotation.contains('${converter.enumName}?');
-    
-    final newAnnotation = '@JsonKey(fromJson: $funcBaseName, toJson: $serializeFuncName)\n  final ${converter.enumName}${isNullable ? '?' : ''}';
-    
+
+    final newAnnotation =
+        '@JsonKey(fromJson: $funcBaseName, toJson: $serializeFuncName)\n  final ${converter.enumName}${isNullable ? '?' : ''}';
+
     newContent = newContent.replaceRange(
       match.start,
       match.end,
