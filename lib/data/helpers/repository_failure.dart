@@ -4,4 +4,5 @@ enum RepositoryFailure {
   expectedRecordNotFound,
   notAuthorizedToRead,
   notAuthorizedToWrite,
+  duplicateRecord,
 }

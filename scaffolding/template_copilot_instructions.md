@@ -666,10 +666,13 @@ export const updatePost = onCall(async (request) => {
 json_serializable **IGNORES** `@JsonConverter` annotations on non-nullable enum fields. The ONLY way to handle unknown enum values safely is to use `@JsonKey(fromJson:, toJson:)` with custom helper functions.
 
 **REQUIRED:**
-- **ALWAYS** create top-level `_deserialize` and `_serialize` helper functions for each enum
+- **ALWAYS** create public `deserializeEnumName()` and `serializeEnumName()` helper functions **in the same file as the enum definition**
+- **ALWAYS** place these helper functions at the top level of the enum file (outside the enum declaration)
+- **ALWAYS** make helper functions **public** (no `_` prefix) so models can import and use them
 - **ALWAYS** use `safeEnumFromJson()` from dreamic in deserialize functions
 - **ALWAYS** use `safeEnumToJson()` from dreamic in serialize functions
-- **ALWAYS** annotate enum fields with `@JsonKey(fromJson: _deserializeYourEnum, toJson: _serializeYourEnum)`
+- **ALWAYS** annotate enum fields in models with `@JsonKey(fromJson: deserializeYourEnum, toJson: serializeYourEnum)`
+- **ALWAYS** import the enum file in models to access these public helper functions
 - **ALWAYS** choose the appropriate strategy:
   - **Nullable** - For optional enum fields (unknown values → null)
   - **Default** - For required enum fields (unknown values → default value)
@@ -681,21 +684,26 @@ json_serializable **IGNORES** `@JsonConverter` annotations on non-nullable enum 
 - **NEVER** use `@JsonKey(unknownEnumValue: ...)` annotations (they don't work with non-nullable enums!)
 - **NEVER** use `@JsonConverter` annotations (json_serializable ignores them!)
 - **NEVER** leave enum fields without safe serialization
+- **NEVER** put serialization helpers in model files - they belong with the enum definition
+- **NEVER** make helpers private with `_` prefix - models need to access them
 
 **PATTERN:**
-1. Define enum (clean business values only)
-2. Create `_deserializeEnumName` and `_serializeEnumName` helper functions
-3. Use `@JsonKey(fromJson: _deserializeEnumName, toJson: _serializeEnumName)` on model fields
+1. Define enum in its own file (clean business values only)
+2. Create public `deserializeEnumName()` and `serializeEnumName()` helper functions **in the same file**
+3. In model files, import the enum file
+4. Use `@JsonKey(fromJson: deserializeEnumName, toJson: serializeEnumName)` on model fields
 
 **Example 1: Nullable Strategy (Optional Fields)**
+
+**In enum file** (`user_role.dart`):
 ```dart
 import 'package:dreamic/dreamic.dart';
 
 // 1. Define enum
 enum UserRole { guest, member, moderator, admin }
 
-// 2. Create helper functions - returns nullable
-UserRole? _deserializeUserRole(String? value) {
+// 2. Create PUBLIC helper functions in the SAME FILE as enum
+UserRole? deserializeUserRole(String? value) {
   return safeEnumFromJson(
     value,
     UserRole.values,
@@ -703,14 +711,19 @@ UserRole? _deserializeUserRole(String? value) {
   );
 }
 
-String? _serializeUserRole(UserRole? value) {
+String? serializeUserRole(UserRole? value) {
   return safeEnumToJson(value);
 }
+```
 
-// 3. Use in model
+**In model file** (`user_model.dart`):
+```dart
+import 'package:dreamic/dreamic.dart';
+import 'user_role.dart'; // Import enum file to access helpers
+
 @JsonSerializable(explicitToJson: true)
 class UserModel extends BaseFirestoreModel {
-  @JsonKey(fromJson: _deserializeUserRole, toJson: _serializeUserRole)
+  @JsonKey(fromJson: deserializeUserRole, toJson: serializeUserRole)
   final UserRole? role;  // nullable - unknown values become null
   
   // ... rest of model
@@ -718,14 +731,16 @@ class UserModel extends BaseFirestoreModel {
 ```
 
 **Example 2: Default Strategy (Required Fields)**
+
+**In enum file** (`priority.dart`):
 ```dart
 import 'package:dreamic/dreamic.dart';
 
 // 1. Define enum
 enum Priority { low, medium, high }
 
-// 2. Create helper functions - returns non-nullable
-Priority _deserializePriority(String? value) {
+// 2. Create PUBLIC helper functions in the SAME FILE as enum
+Priority deserializePriority(String? value) {
   return safeEnumFromJson(
     value,
     Priority.values,
@@ -733,14 +748,19 @@ Priority _deserializePriority(String? value) {
   )!;  // Safe to use ! because defaultValue is provided
 }
 
-String? _serializePriority(Priority? value) {
+String? serializePriority(Priority? value) {
   return safeEnumToJson(value);
 }
+```
 
-// 3. Use in model
+**In model file** (`task_model.dart`):
+```dart
+import 'package:dreamic/dreamic.dart';
+import 'priority.dart'; // Import enum file to access helpers
+
 @JsonSerializable(explicitToJson: true)
 class TaskModel extends BaseFirestoreModel {
-  @JsonKey(fromJson: _deserializePriority, toJson: _serializePriority)
+  @JsonKey(fromJson: deserializePriority, toJson: serializePriority)
   final Priority priority;  // non-nullable - unknown values become medium
   
   // ... rest of model
@@ -748,14 +768,16 @@ class TaskModel extends BaseFirestoreModel {
 ```
 
 **Example 3: Logging Strategy (Monitoring Unknown Values)**
+
+**In enum file** (`status.dart`):
 ```dart
 import 'package:dreamic/dreamic.dart';
 
 // 1. Define enum
 enum Status { draft, published, archived }
 
-// 2. Create helper functions with logging
-Status _deserializeStatus(String? value) {
+// 2. Create PUBLIC helper functions with logging in the SAME FILE
+Status deserializeStatus(String? value) {
   return safeEnumFromJson(
     value,
     Status.values,
@@ -767,14 +789,19 @@ Status _deserializeStatus(String? value) {
   )!;  // Safe to use ! because defaultValue is provided
 }
 
-String? _serializeStatus(Status? value) {
+String? serializeStatus(Status? value) {
   return safeEnumToJson(value);
 }
+```
 
-// 3. Use in model
+**In model file** (`post_model.dart`):
+```dart
+import 'package:dreamic/dreamic.dart';
+import 'status.dart'; // Import enum file to access helpers
+
 @JsonSerializable(explicitToJson: true)
 class PostModel extends BaseFirestoreModel {
-  @JsonKey(fromJson: _deserializeStatus, toJson: _serializeStatus)
+  @JsonKey(fromJson: deserializeStatus, toJson: serializeStatus)
   final Status status;  // non-nullable - logs unknown values
   
   // ... rest of model

@@ -40,6 +40,9 @@ export 'app/helpers/app_remote_config_init.dart';
 export 'app/helpers/debug_remote_config_web.dart';
 export 'app/helpers/error_reporter_interface.dart';
 export 'app/helpers/app_errorhandling_init.dart';
+export 'app/helpers/app_configs_init.dart';
+export 'app/helpers/app_firebase_init.dart';
+export 'app/helpers/app_version_handler.dart';
 
 // Notification Helpers
 export 'app/helpers/notification_service.dart';
@@ -66,9 +69,17 @@ export 'presentation/helpers/app_reloader/appreloader.dart';
 export 'data/models_bases/base_firestore_model.dart';
 export 'data/helpers/model_converters.dart';
 export 'data/helpers/enum_converters.dart';
+export 'data/helpers/repository_failure.dart';
+
+// Data Repositories
+export 'data/repos/auth_service_int.dart';
+export 'data/repos/auth_service_impl.dart';
+export 'data/repos/remote_config_repo_int.dart';
+export 'data/repos/remote_config_repo_liveimple.dart';
 
 // Utilities
 export 'utils/logger.dart';
+export 'utils/retry_it.dart';
 
 // Test Utilities
 export 'test_utils/mock_app_cubit.dart';
