@@ -32,34 +32,47 @@ Future<void> appInitErrorHandling() async {
   // Set the error reporting configuration in Logger
   Logger.setErrorReportingConfig(config);
 
-  // Initialize custom reporter if provided
-  if (config.customReporter != null) {
-    await config.customReporter!.initialize();
-    // Set the custom error reporter in Logger for crash reporting
-    Logger.setCustomErrorReporter(config.customReporter);
-  }
+  // Determine if we should use error reporting FIRST
+  // This must be checked BEFORE initializing reporters to prevent
+  // Sentry/Crashlytics from capturing errors when running in emulator
+  final shouldUseErrorReporting = !AppConfigBase.doUseBackendEmulator &&
+      (config.enableInDebug || !kDebugMode) &&
+      (config.enableOnWeb || !kIsWeb);
+
+  // Also check if custom reporter should be enabled for web/debug scenarios
+  // even when main error reporting is disabled
+  final shouldUseCustomReporter = config.customReporter != null &&
+      (shouldUseErrorReporting ||
+          (kIsWeb && config.enableOnWeb) ||
+          (kDebugMode && config.enableInDebug));
 
   debugPrint('Error Reporting Configuration: '
       'useFirebaseCrashlytics=${config.useFirebaseCrashlytics}, '
       'customReporter=${config.customReporter != null}, '
       'customReporterManagesErrorHandlers=${config.customReporterManagesErrorHandlers}, '
       'enableInDebug=${config.enableInDebug}, '
-      'enableOnWeb=${config.enableOnWeb}'
+      'enableOnWeb=${config.enableOnWeb}, '
+      'doUseBackendEmulator=${AppConfigBase.doUseBackendEmulator}, '
+      'shouldUseErrorReporting=$shouldUseErrorReporting, '
+      'shouldUseCustomReporter=$shouldUseCustomReporter, '
       'environmentType=${AppConfigBase.environmentType.value}');
 
-  // Determine if we should use error reporting
-  final shouldUseErrorReporting = !AppConfigBase.doUseBackendEmulator &&
-      (config.enableInDebug || !kDebugMode) &&
-      (config.enableOnWeb || !kIsWeb);
+  // Initialize custom reporter ONLY if it should be used
+  // This prevents Sentry/etc from setting up internal error handlers
+  // when running in emulator mode
+  if (shouldUseCustomReporter) {
+    await config.customReporter!.initialize();
+    // Set the custom error reporter in Logger for crash reporting
+    Logger.setCustomErrorReporter(config.customReporter);
+  }
 
   // Disable analytics and crashlytics for web or emulator (unless configured otherwise)
   if (!shouldUseErrorReporting) {
     FlutterError.onError = (details) {
       loge(details.stack ?? StackTrace.current, details.exceptionAsString());
 
-      // Still report to custom reporter if enabled on web/debug
-      if (config.customReporter != null &&
-          ((kIsWeb && config.enableOnWeb) || (kDebugMode && config.enableInDebug))) {
+      // Still report to custom reporter if it was initialized (enabled on web/debug)
+      if (shouldUseCustomReporter) {
         config.customReporter!.recordFlutterError(details);
       }
     };
@@ -67,9 +80,8 @@ Future<void> appInitErrorHandling() async {
     PlatformDispatcher.instance.onError = (exception, stackTrace) {
       loge(stackTrace, exception.toString());
 
-      // Still report to custom reporter if enabled on web/debug
-      if (config.customReporter != null &&
-          ((kIsWeb && config.enableOnWeb) || (kDebugMode && config.enableInDebug))) {
+      // Still report to custom reporter if it was initialized (enabled on web/debug)
+      if (shouldUseCustomReporter) {
         config.customReporter!.recordError(exception, stackTrace);
       }
       return true;
@@ -88,7 +100,7 @@ Future<void> appInitErrorHandling() async {
         if (config.useFirebaseCrashlytics && !kIsWeb) {
           FirebaseCrashlytics.instance.recordFlutterError(details);
         }
-        if (config.customReporter != null) {
+        if (shouldUseCustomReporter) {
           config.customReporter!.recordFlutterError(details);
         }
       };
@@ -99,7 +111,7 @@ Future<void> appInitErrorHandling() async {
         if (config.useFirebaseCrashlytics && !kIsWeb) {
           FirebaseCrashlytics.instance.recordError(error, stack);
         }
-        if (config.customReporter != null) {
+        if (shouldUseCustomReporter) {
           config.customReporter!.recordError(error, stack);
         }
         return true;
@@ -144,7 +156,7 @@ Future<void> appInitErrorHandling() async {
             if (config.useFirebaseCrashlytics) {
               await FirebaseCrashlytics.instance.recordError(error, stackTrace);
             }
-            if (config.customReporter != null) {
+            if (shouldUseCustomReporter) {
               config.customReporter!.recordError(error, stackTrace);
             }
           }).sendPort,

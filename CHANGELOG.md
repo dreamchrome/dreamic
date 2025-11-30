@@ -1,3 +1,24 @@
+## 0.3.2
+
+### Enhancements
+
+* **Added:** Email verification support with `isEmailVerified`, `sendEmailVerification()`, and `reloadUser()` methods in `AuthServiceInt`
+* **Added:** Re-authentication support with `reauthenticateWithPassword()` for sensitive operations like changing email, password, or deleting account
+* **Added:** `AuthServiceEmailVerificationFailure` enum for handling email verification errors
+* **Added:** `duplicateRecord` case to `RepositoryFailure` enum
+
+### Fixes
+
+* **Fixed:** Custom error reporters (Sentry, etc.) are now only initialized when `shouldUseErrorReporting` is true, preventing error capture when running in emulator mode
+* **Fixed:** Error reporting now respects `DO_USE_BACKEND_EMULATOR` environment variable by not initializing Sentry SDK in emulator mode
+
+### Documentation
+
+* **Updated:** Error Reporting Guide with clarified conditional initialization flow
+* **Cleaned:** Removed legacy commented code from template snippets
+
+---
+
 ## 0.3.1
 
 ### Enhancements

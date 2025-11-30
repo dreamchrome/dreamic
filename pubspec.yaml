@@ -1,6 +1,6 @@
 name: dreamic
 description: "A general-purpose package for Flutter/Firebase apps."
-version: 0.3.1
+version: 0.3.2
 repository: https://github.com/dreamchrome/dreamic
 issue_tracker: https://github.com/dreamchrome/dreamic/issues
 

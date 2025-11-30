@@ -43,6 +43,25 @@ abstract class AuthServiceInt {
   Future<Either<AuthServiceSignInFailure, Unit>> setPassword(String newPassword);
   Future<Either<AuthServiceSignInFailure, bool>> isEmailUser(String email);
   Future<Either<AuthServiceSignOutFailure, Unit>> signOut();
+
+  // Email verification
+  /// Check if current user's email is verified
+  bool get isEmailVerified;
+
+  /// Send email verification to current user
+  Future<Either<AuthServiceEmailVerificationFailure, Unit>> sendEmailVerification();
+
+  /// Reload user data to get latest email verification status
+  Future<Either<AuthServiceSignInFailure, Unit>> reloadUser();
+
+  // Re-authentication
+  /// Re-authenticate current user with password for sensitive operations
+  ///
+  /// Required before operations like changing email, password, or deleting account
+  Future<Either<AuthServiceSignInFailure, Unit>> reauthenticateWithPassword(
+    String password,
+  );
+
   Future<Either<AuthServiceSignInFailure, Unit>> signInWithDevOnly();
   Future<Either<AuthServiceSignInFailure, Unit>> signInWithCustomToken(String customToken);
 
@@ -104,6 +123,12 @@ enum AuthServiceEmailLinkFailure {
 }
 
 enum AuthServiceSignOutFailure {
+  unexpected,
+}
+
+enum AuthServiceEmailVerificationFailure {
+  userNotLoggedIn,
+  tooManyRequests,
   unexpected,
 }
 

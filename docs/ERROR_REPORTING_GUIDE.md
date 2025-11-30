@@ -427,12 +427,14 @@ Future<void> main() async {
    - Configures `enableInDebug: false` (no reporting in debug mode)
 
 2. **`appInitErrorHandling()`**:
-   - Calls `SentryErrorReporter.initialize()` → Sentry SDK initializes
+   - **First** checks `shouldUseErrorReporting` based on configuration
+   - **Only if needed**: Calls `SentryErrorReporter.initialize()` → Sentry SDK initializes
    - Sets up `FlutterError.onError` to call both `recordFlutterError()` 
    - Sets up `PlatformDispatcher.instance.onError` to call `recordError()`
    - Respects your `enableInDebug`, `enableOnWeb`, `doUseBackendEmulator` settings
    - Configures `Logger.setCustomErrorReporter()` for manual `loge()` calls
    - Sets up isolate error listeners (non-web platforms)
+   - **When running in emulator**: Sentry SDK is **NOT initialized**, preventing any error capture
 
 3. **`appRunIfValidVersion()`**:
    - Checks app version requirements
@@ -441,19 +443,22 @@ Future<void> main() async {
 **How configuration controls work:**
 
 ```dart
-// In app_errorhandling_init.dart (lines 43-47):
+// In app_errorhandling_init.dart:
+// Sentry is ONLY initialized when shouldUseErrorReporting is true
 final shouldUseErrorReporting = !AppConfigBase.doUseBackendEmulator &&
     (config.enableInDebug || !kDebugMode) &&
     (config.enableOnWeb || !kIsWeb);
 
-// Error handlers only set up when shouldUseErrorReporting is true
-// Your recordError() methods only called when conditions are met
+// Custom reporter (Sentry) is only initialized if conditions are met
+if (shouldUseCustomReporter) {
+  await config.customReporter!.initialize();  // Sentry.init() called here
+}
 ```
 
 **This means:**
 - ✅ `enableInDebug: false` → No errors reported in debug mode
 - ✅ `enableOnWeb: false` → No errors reported on web platform  
-- ✅ Backend emulator active → No errors reported
+- ✅ Backend emulator active (`DO_USE_BACKEND_EMULATOR=true`) → Sentry SDK **not initialized**
 - ✅ All logic in one place: `app_errorhandling_init.dart`
 
 **Key advantages over appRunner approach:**

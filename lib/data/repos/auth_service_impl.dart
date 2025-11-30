@@ -270,6 +270,110 @@ class AuthServiceImpl implements AuthServiceInt {
     return right(unit);
   }
 
+  // Email verification
+  @override
+  bool get isEmailVerified {
+    return _fbAuth.currentUser?.emailVerified ?? false;
+  }
+
+  @override
+  Future<Either<AuthServiceEmailVerificationFailure, Unit>> sendEmailVerification() async {
+    try {
+      final user = _fbAuth.currentUser;
+      if (user == null) {
+        logw('sendEmailVerification: No user logged in');
+        return left(AuthServiceEmailVerificationFailure.userNotLoggedIn);
+      }
+
+      logd('sendEmailVerification: Sending verification email to ${user.email}');
+      await user.sendEmailVerification();
+      logd('sendEmailVerification: Email sent successfully');
+
+      return right(unit);
+    } on fb_auth.FirebaseAuthException catch (e) {
+      loge(e, 'sendEmailVerification failed');
+      if (e.code == 'too-many-requests') {
+        return left(AuthServiceEmailVerificationFailure.tooManyRequests);
+      }
+      return left(AuthServiceEmailVerificationFailure.unexpected);
+    } catch (e) {
+      loge(e, 'sendEmailVerification failed');
+      return left(AuthServiceEmailVerificationFailure.unexpected);
+    }
+  }
+
+  @override
+  Future<Either<AuthServiceSignInFailure, Unit>> reloadUser() async {
+    try {
+      final user = _fbAuth.currentUser;
+      if (user == null) {
+        logw('reloadUser: No user logged in');
+        return left(AuthServiceSignInFailure.userNotFound);
+      }
+
+      logd('reloadUser: Reloading user data');
+      await user.reload();
+      logd('reloadUser: User data reloaded, emailVerified=${_fbAuth.currentUser?.emailVerified}');
+
+      return right(unit);
+    } on fb_auth.FirebaseAuthException catch (e) {
+      loge(e, 'reloadUser failed');
+      return left(AuthServiceSignInFailure.unexpected);
+    } catch (e) {
+      loge(e, 'reloadUser failed');
+      return left(AuthServiceSignInFailure.unexpected);
+    }
+  }
+
+  @override
+  Future<Either<AuthServiceSignInFailure, Unit>> reauthenticateWithPassword(
+    String password,
+  ) async {
+    try {
+      final user = _fbAuth.currentUser;
+      if (user == null) {
+        logw('reauthenticateWithPassword: No user logged in');
+        return left(AuthServiceSignInFailure.userNotFound);
+      }
+
+      final email = user.email;
+      if (email == null) {
+        logw('reauthenticateWithPassword: User has no email');
+        return left(AuthServiceSignInFailure.invalidEmail);
+      }
+
+      logd('reauthenticateWithPassword: Re-authenticating user');
+
+      // Create credential and re-authenticate
+      final credential = fb_auth.EmailAuthProvider.credential(
+        email: email,
+        password: password,
+      );
+
+      await user.reauthenticateWithCredential(credential);
+      logd('reauthenticateWithPassword: Re-authentication successful');
+
+      return right(unit);
+    } on fb_auth.FirebaseAuthException catch (e) {
+      loge(e, 'reauthenticateWithPassword failed');
+      switch (e.code) {
+        case 'wrong-password':
+          return left(AuthServiceSignInFailure.wrongPassword);
+        case 'invalid-credential':
+          return left(AuthServiceSignInFailure.invalidCredential);
+        case 'user-disabled':
+          return left(AuthServiceSignInFailure.userDisabled);
+        case 'too-many-requests':
+          return left(AuthServiceSignInFailure.tooManyRequests);
+        default:
+          return left(AuthServiceSignInFailure.unexpected);
+      }
+    } catch (e) {
+      loge(e, 'reauthenticateWithPassword failed');
+      return left(AuthServiceSignInFailure.unexpected);
+    }
+  }
+
   // @override
   // bool isLoggedIn() {
   //   return _fbAuth.currentUser != null;
