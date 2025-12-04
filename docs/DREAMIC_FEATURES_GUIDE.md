@@ -587,6 +587,124 @@ await AppConfigBase.init(); // Initialize platform detection
 4. Set sensible defaults for all configuration values
 5. Use `firebaseFunctionCallable()` for consistent Firebase function setup
 
+### Git Build Information
+
+Dreamic supports injecting git build information at compile time for precise build identification in error reporting, analytics, and debugging.
+
+#### Git Info Getters
+
+```dart
+// Git branch name (sanitized: / and \ replaced with -)
+AppConfigBase.gitBranch // e.g., "feature-login" (from "feature/login")
+
+// Git tag (for release builds)
+AppConfigBase.gitTag // e.g., "v1.0.0"
+
+// Git commit SHA (short, 7 characters)
+AppConfigBase.gitCommit // e.g., "abc1234"
+```
+
+#### App Release Strings
+
+```dart
+// Basic release string (version info only)
+final basic = await AppConfigBase.getAppReleaseBuild();
+// Returns: "my-app@1.0.0+42"
+
+// Full release string with git info
+final full = await AppConfigBase.getAppReleaseFullInfo();
+// Returns vary based on available git info (see table below)
+```
+
+**Release String Formats:**
+
+| Build Type | Format | Example |
+|------------|--------|---------|
+| Tag build | `app@ver+build_tag-{tag}` | `my-app@1.0.0+42_tag-v1.0.0` |
+| Branch + commit | `app@ver+build_{branch}_{sha}` | `my-app@1.0.0+42_feature-login_abc1234` |
+| Branch only | `app@ver+build_{branch}` | `my-app@1.0.0+42_feature-login` |
+| Commit only | `app@ver+build_{sha}` | `my-app@1.0.0+42_abc1234` |
+| No git info | `app@ver+build` | `my-app@1.0.0+42` |
+
+#### Local Development Builds
+
+```bash
+# With branch and commit
+flutter run \
+  --dart-define=GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD) \
+  --dart-define=GIT_COMMIT=$(git rev-parse --short HEAD)
+
+# Tag build (for releases)
+flutter build ios --dart-define=GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
+```
+
+#### GitHub Actions Workflow
+
+GitHub Actions checks out code in detached HEAD mode, so `git rev-parse --abbrev-ref HEAD` won't work. Use GitHub's environment variables instead:
+
+```yaml
+name: Build Flutter App
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+      
+      - name: Determine git info
+        id: git_info
+        run: |
+          # Short commit SHA (7 chars)
+          echo "commit=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+          
+          # Branch or tag
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "branch=" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "branch=${{ github.head_ref }}" >> $GITHUB_OUTPUT
+            echo "tag=" >> $GITHUB_OUTPUT
+          else
+            echo "branch=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "tag=" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Build iOS
+        run: |
+          flutter build ios --release \
+            --dart-define=GIT_BRANCH=${{ steps.git_info.outputs.branch }} \
+            --dart-define=GIT_TAG=${{ steps.git_info.outputs.tag }} \
+            --dart-define=GIT_COMMIT=${{ steps.git_info.outputs.commit }} \
+            --dart-define=ENVIRONMENT_TYPE=production
+```
+
+**Key points:**
+- `GITHUB_SHA` - Full commit SHA (use `cut -c1-7` for short version)
+- `GITHUB_REF_NAME` - Branch name for pushes, tag name for tag pushes
+- `GITHUB_HEAD_REF` - Source branch name for pull requests
+- `github.ref_type` - Either `'branch'` or `'tag'`
+
+#### Branch Name Sanitization
+
+Branch names like `feature/user-auth` contain `/` which is prohibited by Sentry in release names. Dreamic automatically sanitizes branch names when building release strings:
+
+- `feature/login` → `feature-login`
+- `bugfix\issue-123` → `bugfix-issue-123`
+
+The raw `gitBranch` getter returns the original value; sanitization happens in `getAppReleaseFullInfo()`.
+
 ---
 
 ## Network Management

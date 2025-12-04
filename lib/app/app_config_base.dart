@@ -812,13 +812,109 @@ class AppConfigBase {
     return info.buildNumber;
   }
 
-  /// Get the app release string in format: appName@version+buildNumber
+  /// Get the basic app release string in format: appName@version+buildNumber
   /// This is useful for error reporting services like Sentry
   ///
   /// Example: "my-app@1.0.0+42"
-  static Future<String> getAppRelease() async {
+  ///
+  /// See also [getAppReleaseFullInfo] which includes git branch/tag/commit info.
+  static Future<String> getAppReleaseBuild() async {
     final info = await getAppVersion();
     return '${info.appName}@${info.version}+${info.buildNumber}';
+  }
+
+  /// Get the full app release string including git build information.
+  /// This is useful for error reporting services like Sentry to identify exact builds.
+  ///
+  /// Format varies based on available git info (set via --dart-define):
+  /// - Tag build: "my-app@1.0.0+42_tag-v1.0.0"
+  /// - Branch + commit: "my-app@1.0.0+42_feature-login_abc1234"
+  /// - Branch only: "my-app@1.0.0+42_feature-login"
+  /// - Commit only: "my-app@1.0.0+42_abc1234"
+  /// - No git info: "my-app@1.0.0+42" (same as [getAppReleaseBuild])
+  ///
+  /// Branch names are sanitized (/ and \ replaced with -) to comply with
+  /// Sentry's release name restrictions.
+  ///
+  /// Set git info via dart-define:
+  /// ```bash
+  /// flutter build ios \
+  ///   --dart-define=GIT_BRANCH=feature/login \
+  ///   --dart-define=GIT_COMMIT=abc1234
+  /// ```
+  ///
+  /// Or for tag builds:
+  /// ```bash
+  /// flutter build ios --dart-define=GIT_TAG=v1.0.0
+  /// ```
+  static Future<String> getAppReleaseFullInfo() async {
+    final base = await getAppReleaseBuild();
+
+    // Tag builds take precedence (no commit needed for tags)
+    if (gitTag.isNotEmpty) {
+      return '${base}_tag-${_sanitizeForReleaseName(gitTag)}';
+    }
+
+    // Branch + commit
+    if (gitBranch.isNotEmpty && gitCommit.isNotEmpty) {
+      return '${base}_${_sanitizeForReleaseName(gitBranch)}_$gitCommit';
+    }
+
+    // Branch only
+    if (gitBranch.isNotEmpty) {
+      return '${base}_${_sanitizeForReleaseName(gitBranch)}';
+    }
+
+    // Commit only
+    if (gitCommit.isNotEmpty) {
+      return '${base}_$gitCommit';
+    }
+
+    // No git info - return base
+    return base;
+  }
+
+  /// Sanitize a string for use in release names.
+  /// Replaces forward slashes and backslashes with hyphens.
+  /// This is required by Sentry which prohibits / and \ in release names.
+  static String _sanitizeForReleaseName(String value) {
+    return value.replaceAll('/', '-').replaceAll('\\', '-');
+  }
+
+  //
+  // Git Build Information (dart-define support)
+  //
+
+  /// Git branch name from build-time configuration.
+  /// Set via --dart-define=GIT_BRANCH=feature/my-branch
+  ///
+  /// In GitHub Actions, use GITHUB_HEAD_REF (for PRs) or GITHUB_REF_NAME (for pushes).
+  /// Branch names with slashes are automatically sanitized when used in release strings.
+  static String? _gitBranch;
+  static String get gitBranch {
+    _gitBranch ??= const String.fromEnvironment('GIT_BRANCH', defaultValue: '');
+    return _gitBranch!;
+  }
+
+  /// Git tag from build-time configuration.
+  /// Set via --dart-define=GIT_TAG=v1.0.0
+  ///
+  /// In GitHub Actions, use GITHUB_REF_NAME when github.ref_type == 'tag'.
+  /// When set, this takes precedence over branch/commit in release strings.
+  static String? _gitTag;
+  static String get gitTag {
+    _gitTag ??= const String.fromEnvironment('GIT_TAG', defaultValue: '');
+    return _gitTag!;
+  }
+
+  /// Git commit SHA (short, 7 characters) from build-time configuration.
+  /// Set via --dart-define=GIT_COMMIT=abc1234
+  ///
+  /// In GitHub Actions, use: $(echo $GITHUB_SHA | cut -c1-7)
+  static String? _gitCommit;
+  static String get gitCommit {
+    _gitCommit ??= const String.fromEnvironment('GIT_COMMIT', defaultValue: '');
+    return _gitCommit!;
   }
 
   //

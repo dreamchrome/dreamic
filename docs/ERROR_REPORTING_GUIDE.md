@@ -129,7 +129,7 @@ class SentryErrorReporter implements ErrorReporter {
       (options) {
         options.dsn = dsn;
         options.environment = AppConfigBase.environmentType.value;
-        options.release = await AppConfigBase.getAppRelease();
+        options.release = await AppConfigBase.getAppReleaseFullInfo();
         options.tracesSampleRate = 1.0;
       },
       // NO appRunner parameter
@@ -261,7 +261,7 @@ Future<void> main() async {
     (options) {
       options.dsn = 'https://your-dsn@sentry.io/project-id';
       options.environment = AppConfigBase.environmentType.value;
-      options.release = await AppConfigBase.getAppRelease();
+      options.release = await AppConfigBase.getAppReleaseFullInfo();
       options.tracesSampleRate = 1.0;
     },
     appRunner: () => appRunIfValidVersion(() => MyApp()),
@@ -377,7 +377,7 @@ class SentryErrorReporter implements ErrorReporter {
       (options) {
         options.dsn = dsn;
         options.environment = AppConfigBase.environmentType.value;
-        options.release = await AppConfigBase.getAppRelease();
+        options.release = await AppConfigBase.getAppReleaseFullInfo();
         options.tracesSampleRate = 1.0;
       },
       // NO appRunner - let Dreamic manage error handlers
@@ -491,7 +491,7 @@ class SentryErrorReporter implements ErrorReporter {
       (options) {
         options.dsn = dsn;
         options.environment = AppConfigBase.environmentType.value;
-        options.release = await AppConfigBase.getAppRelease();
+        options.release = await AppConfigBase.getAppReleaseFullInfo();
         options.tracesSampleRate = 1.0;
       },
       // NO appRunner - Dreamic manages error handlers
@@ -623,7 +623,7 @@ Future<void> main() async {
     (options) {
       options.dsn = 'https://your-dsn@sentry.io/project-id';
       options.environment = AppConfigBase.environmentType.value;
-      options.release = await AppConfigBase.getAppRelease();
+      options.release = await AppConfigBase.getAppReleaseFullInfo();
       options.tracesSampleRate = 1.0;
       
       // ⚠️ REQUIRED: Must configure Sentry directly for debug mode
@@ -754,7 +754,7 @@ flutter build web --dart-define=ENVIRONMENT_TYPE=production
 class SentryErrorReporter implements ErrorReporter {
   @override
   Future<void> initialize() async {
-    final release = await AppConfigBase.getAppRelease();
+    final release = await AppConfigBase.getAppReleaseFullInfo();
     
     await SentryFlutter.init((options) {
       options.dsn = 'your-dsn';
@@ -784,7 +784,7 @@ print('Package: ${packageInfo.packageName}');
 // Convenience methods
 final version = await AppConfigBase.getAppVersionString();      // "1.0.0"
 final build = await AppConfigBase.getAppBuildNumber();          // "42"
-final release = await AppConfigBase.getAppRelease();            // "my-app@1.0.0+42"
+final release = await AppConfigBase.getAppReleaseFullInfo();            // "my-app@1.0.0+42"
 ```
 
 **Benefits:**
@@ -803,14 +803,14 @@ configureErrorReporting(
     reporter: SentryErrorReporter(
       dsn: 'your-dsn',
       // environment from AppConfigBase.environmentType
-      // release from AppConfigBase.getAppRelease()
+      // release from AppConfigBase.getAppReleaseFullInfo()
     ),
     enableOnWeb: true,
   ),
 );
 
 // Or with explicit control
-final release = await AppConfigBase.getAppRelease();
+final release = await AppConfigBase.getAppReleaseFullInfo();
 configureErrorReporting(
   ErrorReportingConfig.customOnly(
     reporter: SentryErrorReporter(
@@ -1333,7 +1333,7 @@ Future<void> main() async {
         dsn: 'https://your-dsn@sentry.io/project-id',  // Same DSN for all environments
         // environment from AppConfigBase.environmentType (ENVIRONMENT_TYPE dart-define)
         // Sentry uses this to differentiate development/staging/production
-        // release auto-generated from AppConfigBase.getAppRelease()
+        // release auto-generated from AppConfigBase.getAppReleaseFullInfo()
       ),
       customReporterManagesErrorHandlers: true,
       enableInDebug: AppConfigBase.environmentType != EnvironmentType.production,
@@ -1448,7 +1448,7 @@ Always include version information for tracking which version has issues:
 import 'package:dreamic/app/app_config_base.dart';
 
 // RECOMMENDED: Use centralized app version method
-final release = await AppConfigBase.getAppRelease();
+final release = await AppConfigBase.getAppReleaseFullInfo();
 // Returns format: "my-app@1.0.0+42"
 
 SentryErrorReporter(
@@ -1461,7 +1461,7 @@ SentryErrorReporter(
 SentryErrorReporter(
   dsn: 'your-dsn',
   // environment from AppConfigBase.environmentType
-  // release from AppConfigBase.getAppRelease()
+  // release from AppConfigBase.getAppReleaseFullInfo()
 );
 ```
 
@@ -1474,7 +1474,7 @@ SentryErrorReporter(
 
 **Legacy approach (not recommended):**
 ```dart
-// Don't do this - use AppConfigBase.getAppRelease() instead
+// Don't do this - use AppConfigBase.getAppReleaseFullInfo() instead
 import 'package:package_info_plus/package_info_plus.dart';
 
 final packageInfo = await PackageInfo.fromPlatform();
@@ -1518,7 +1518,7 @@ await SentryFlutter.init(
   (options) {
     options.dsn = 'https://your-dsn@sentry.io/project-id';  // Same DSN
     options.environment = AppConfigBase.environmentType.value;  // 'staging' or 'production'
-    options.release = await AppConfigBase.getAppRelease();
+    options.release = await AppConfigBase.getAppReleaseFullInfo();
   },
   appRunner: () => appRunIfValidVersion(() => MyApp()),
 );
