@@ -26,25 +26,56 @@ void configureErrorReporting(ErrorReportingConfig config) {
 ErrorReportingConfig get errorReportingConfig =>
     _errorReportingConfig ?? const ErrorReportingConfig();
 
+/// Sets up minimal error handlers that only log to console.
+/// Used when error reporting is completely disabled.
+/// Note: Uses debugPrint directly to avoid any potential for error reporting
+/// loops through loge -> _crashReport.
+void _setupMinimalErrorHandlers() {
+  FlutterError.onError = (details) {
+    debugPrint('Flutter Error: ${details.exceptionAsString()}');
+    debugPrint('Stack trace:\n${details.stack}');
+  };
+
+  PlatformDispatcher.instance.onError = (exception, stackTrace) {
+    debugPrint('Platform Error: $exception');
+    debugPrint('Stack trace:\n$stackTrace');
+    return true;
+  };
+}
+
 Future<void> appInitErrorHandling() async {
   final config = errorReportingConfig;
 
   // Set the error reporting configuration in Logger
   Logger.setErrorReportingConfig(config);
 
-  // Determine if we should use error reporting FIRST
+  // Check for master kill switch first - this disables ALL error reporting
+  // regardless of other settings. Use for live Firebase dev projects.
+  if (AppConfigBase.doDisableErrorReporting) {
+    debugPrint('Error Reporting DISABLED via DO_DISABLE_ERROR_REPORTING');
+    _setupMinimalErrorHandlers();
+    return;
+  }
+
+  // Determine if error reporting is blocked by emulator mode
+  // Can be overridden with DO_FORCE_ERROR_REPORTING for testing
+  final isBlockedByEmulator = AppConfigBase.doUseBackendEmulator &&
+      !AppConfigBase.doForceErrorReporting;
+
+  // Determine if we should use error reporting
   // This must be checked BEFORE initializing reporters to prevent
   // Sentry/Crashlytics from capturing errors when running in emulator
-  final shouldUseErrorReporting = !AppConfigBase.doUseBackendEmulator &&
+  final shouldUseErrorReporting = !isBlockedByEmulator &&
       (config.enableInDebug || !kDebugMode) &&
       (config.enableOnWeb || !kIsWeb);
 
-  // Also check if custom reporter should be enabled for web/debug scenarios
-  // even when main error reporting is disabled
+  // Custom reporter follows the same rules as main error reporting
+  // The enableOnWeb/enableInDebug flags allow reporting on those platforms,
+  // but only when not blocked by emulator mode or master kill switch
   final shouldUseCustomReporter = config.customReporter != null &&
-      (shouldUseErrorReporting ||
-          (kIsWeb && config.enableOnWeb) ||
-          (kDebugMode && config.enableInDebug));
+      !isBlockedByEmulator &&
+      ((config.enableInDebug || !kDebugMode) &&
+          (config.enableOnWeb || !kIsWeb));
 
   debugPrint('Error Reporting Configuration: '
       'useFirebaseCrashlytics=${config.useFirebaseCrashlytics}, '
@@ -53,6 +84,8 @@ Future<void> appInitErrorHandling() async {
       'enableInDebug=${config.enableInDebug}, '
       'enableOnWeb=${config.enableOnWeb}, '
       'doUseBackendEmulator=${AppConfigBase.doUseBackendEmulator}, '
+      'doForceErrorReporting=${AppConfigBase.doForceErrorReporting}, '
+      'isBlockedByEmulator=$isBlockedByEmulator, '
       'shouldUseErrorReporting=$shouldUseErrorReporting, '
       'shouldUseCustomReporter=$shouldUseCustomReporter, '
       'environmentType=${AppConfigBase.environmentType.value}');

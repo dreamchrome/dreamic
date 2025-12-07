@@ -1284,10 +1284,22 @@ class AuthServiceImpl implements AuthServiceInt {
   @override
   Future<Either<AuthServiceSignInFailure, Unit>> resetPassword(String email) async {
     try {
-      _fbAuth.sendPasswordResetEmail(email: email);
+      logd('resetPassword: Sending password reset email to $email');
+      await _fbAuth.sendPasswordResetEmail(email: email);
+      logd('resetPassword: Password reset email sent successfully');
       return right(unit);
+    } on fb_auth.FirebaseAuthException catch (e) {
+      loge(e, 'resetPassword failed');
+      switch (e.code) {
+        case 'invalid-email':
+          return left(AuthServiceSignInFailure.invalidEmail);
+        case 'user-not-found':
+          return left(AuthServiceSignInFailure.userNotFound);
+        default:
+          return left(AuthServiceSignInFailure.unexpected);
+      }
     } catch (e) {
-      loge(e);
+      loge(e, 'resetPassword failed');
       return left(AuthServiceSignInFailure.unexpected);
     }
   }

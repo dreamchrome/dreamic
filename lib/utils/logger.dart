@@ -89,8 +89,17 @@ class Logger {
     final stackTrace = trace ?? StackTrace.current;
     final config = _errorReportingConfig ?? const ErrorReportingConfig();
 
+    // Check for master kill switch first
+    if (AppConfigBase.doDisableErrorReporting) {
+      return;
+    }
+
+    // Check if blocked by emulator mode (unless force override is set)
+    final isBlockedByEmulator = AppConfigBase.doUseBackendEmulator &&
+        !AppConfigBase.doForceErrorReporting;
+
     // Determine if we should use error reporting based on configuration
-    final shouldUseErrorReporting = !AppConfigBase.doUseBackendEmulator &&
+    final shouldUseErrorReporting = !isBlockedByEmulator &&
         (config.enableInDebug || !kDebugMode) &&
         (config.enableOnWeb || !kIsWeb);
 
@@ -101,13 +110,9 @@ class Logger {
     }
 
     // Report to custom error reporter if configured
-    if (_customErrorReporter != null) {
-      // Custom reporter should respect the config's enableOnWeb and enableInDebug settings
-      if (shouldUseErrorReporting ||
-          (kIsWeb && config.enableOnWeb) ||
-          (kDebugMode && config.enableInDebug)) {
-        _customErrorReporter!.recordError(error, stackTrace);
-      }
+    // Custom reporter follows the same rules - blocked by emulator and respects config
+    if (_customErrorReporter != null && shouldUseErrorReporting) {
+      _customErrorReporter!.recordError(error, stackTrace);
     }
   }
 }

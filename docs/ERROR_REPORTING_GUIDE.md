@@ -726,6 +726,72 @@ This flag determines who sets up the error handlers (`FlutterError.onError` and 
 
 ## Build Configuration (dart-define)
 
+### Error Reporting Control Flags
+
+Dreamic provides several `--dart-define` flags to control when error reporting is active. This is essential for development workflows where you don't want to pollute your error tracking with local testing errors.
+
+#### Control Flow
+
+Error reporting follows this decision tree:
+
+1. **`DO_DISABLE_ERROR_REPORTING=true`** → All error reporting disabled (master kill switch)
+2. **`DO_USE_BACKEND_EMULATOR=true`** AND NOT **`DO_FORCE_ERROR_REPORTING=true`** → Error reporting disabled
+3. Otherwise → Apply normal `enableInDebug`/`enableOnWeb` checks
+
+#### DO_DISABLE_ERROR_REPORTING
+
+Master kill switch for error reporting. Use this when running against a **live Firebase development project** (not the local emulator) but you still don't want error reports sent to Sentry/Crashlytics.
+
+```bash
+# Disable all error reporting for dev project testing
+flutter run --dart-define=DO_DISABLE_ERROR_REPORTING=true
+```
+
+**Common use cases:**
+- Testing against a live Firebase development/staging project
+- Running automated tests that shouldn't report errors
+- Debugging without polluting error tracking
+
+#### DO_USE_BACKEND_EMULATOR
+
+Controls whether the app uses local Firebase emulators. When `true` (the default in debug mode), error reporting is automatically disabled.
+
+```bash
+# Use local emulators (default in debug mode)
+flutter run --dart-define=DO_USE_BACKEND_EMULATOR=true
+
+# Use live Firebase (default in release mode)
+flutter run --dart-define=DO_USE_BACKEND_EMULATOR=false
+```
+
+**Default behavior:**
+- Debug mode (`kReleaseMode=false`): defaults to `true` (use emulator)
+- Release mode (`kReleaseMode=true`): defaults to `false` (use live Firebase)
+
+#### DO_FORCE_ERROR_REPORTING
+
+Override to enable error reporting even when using the backend emulator. Use this to **test that your error reporting integration works** in a local development environment.
+
+```bash
+# Test error reporting while using emulator
+flutter run --dart-define=DO_USE_BACKEND_EMULATOR=true --dart-define=DO_FORCE_ERROR_REPORTING=true
+```
+
+**Common use cases:**
+- Verifying Sentry/Crashlytics integration works correctly
+- Testing error formatting and breadcrumbs
+- Debugging error reporting issues
+
+#### Common Scenarios
+
+| Scenario | Command | Result |
+|----------|---------|--------|
+| **Local dev (default)** | `flutter run` | Emulator ON, errors logged locally only |
+| **Test error reporting locally** | `flutter run --dart-define=DO_FORCE_ERROR_REPORTING=true` | Emulator ON, errors sent to Sentry |
+| **Live dev project, no reports** | `flutter run --dart-define=DO_USE_BACKEND_EMULATOR=false --dart-define=DO_DISABLE_ERROR_REPORTING=true` | Live Firebase, errors logged locally only |
+| **Live dev project, with reports** | `flutter run --dart-define=DO_USE_BACKEND_EMULATOR=false` | Live Firebase, errors sent to Sentry |
+| **Production build** | `flutter build ios --release` | Live Firebase, full error reporting |
+
 ### Environment Type Configuration
 
 You can configure the build environment type using `--dart-define=ENVIRONMENT_TYPE`. This is useful for error reporting, analytics, feature flags, and other environment-specific behavior.

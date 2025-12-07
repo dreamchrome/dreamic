@@ -1,3 +1,4 @@
+import 'package:dreamic/app/app_config_base.dart';
 import 'package:dreamic/app/helpers/error_reporter_interface.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:flutter/foundation.dart';
@@ -36,12 +37,27 @@ void main() {
       // Reset logger state
       Logger.setErrorReportingConfig(null);
       Logger.setCustomErrorReporter(null);
+      // Override emulator check to allow error reporting in tests
+      AppConfigBase.doUseBackendEmulatorOverride = false;
+      AppConfigBase.doDisableErrorReportingOverride = false;
+      AppConfigBase.doForceErrorReportingOverride = null;
     });
 
-    test('Scenario 1: Firebase only - custom reporter is null', () {
-      // Firebase only config (customReporter is null)
+    tearDown(() {
+      // Reset overrides
+      AppConfigBase.doUseBackendEmulatorOverride = null;
+      AppConfigBase.doDisableErrorReportingOverride = null;
+      AppConfigBase.doForceErrorReportingOverride = null;
+    });
+
+    test('Scenario 1: No custom reporter - logs to console only', () {
+      // Config with no custom reporter, Firebase disabled
+      // (we can't mock Firebase in unit tests)
       Logger.setErrorReportingConfig(
-        const ErrorReportingConfig.firebaseOnly(enableInDebug: true),
+        const ErrorReportingConfig(
+          useFirebaseCrashlytics: false,
+          enableInDebug: true,
+        ),
       );
       Logger.setCustomErrorReporter(null);
 
@@ -88,11 +104,11 @@ void main() {
       expect(mockReporter.recordedErrors.first, equals(error));
     });
 
-    test('Scenario 4: Both (manual) - logs to custom reporter', () {
+    test('Scenario 4: Custom reporter (manual handlers) - logs to custom reporter', () {
       Logger.setErrorReportingConfig(
-        ErrorReportingConfig.both(
+        ErrorReportingConfig.customOnly(
           reporter: mockReporter,
-          customReporterManagesErrorHandlers: false,
+          managesOwnErrorHandlers: false,
           enableInDebug: true,
         ),
       );
@@ -105,11 +121,11 @@ void main() {
       expect(mockReporter.recordedErrors.first, equals(error));
     });
 
-    test('Scenario 5: Both (wrapper) - logs to custom reporter', () {
+    test('Scenario 5: Custom reporter (wrapper mode) - logs to custom reporter', () {
       Logger.setErrorReportingConfig(
-        ErrorReportingConfig.both(
+        ErrorReportingConfig.customOnly(
           reporter: mockReporter,
-          customReporterManagesErrorHandlers: true,
+          managesOwnErrorHandlers: true,
           enableInDebug: true,
         ),
       );

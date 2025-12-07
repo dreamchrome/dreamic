@@ -484,6 +484,11 @@ class AppConfigBase {
     return _doUseBackendEmulator!;
   }
 
+  /// For testing only: override the doUseBackendEmulator value
+  @visibleForTesting
+  static set doUseBackendEmulatorOverride(bool? value) =>
+      _doUseBackendEmulator = value;
+
   static bool? _doOverrideUseLiveRemoteConfig;
   static bool get doOverrideUseLiveRemoteConfig {
     _doOverrideUseLiveRemoteConfig ??=
@@ -491,6 +496,40 @@ class AppConfigBase {
             'true';
     return _doOverrideUseLiveRemoteConfig!;
   }
+
+  /// Master kill switch for error reporting.
+  /// Use this to disable error reporting when running against a live Firebase
+  /// development project (not the local emulator).
+  /// Set via --dart-define=DO_DISABLE_ERROR_REPORTING=true
+  static bool? _doDisableErrorReporting;
+  static bool get doDisableErrorReporting {
+    _doDisableErrorReporting ??=
+        const String.fromEnvironment('DO_DISABLE_ERROR_REPORTING', defaultValue: 'false') ==
+            'true';
+    return _doDisableErrorReporting!;
+  }
+
+  /// For testing only: override the doDisableErrorReporting value
+  @visibleForTesting
+  static set doDisableErrorReportingOverride(bool? value) =>
+      _doDisableErrorReporting = value;
+
+  /// Force error reporting even when using the backend emulator.
+  /// Use this to test that error reporting (Sentry, Crashlytics) is working
+  /// correctly in a local development environment.
+  /// Set via --dart-define=DO_FORCE_ERROR_REPORTING=true
+  static bool? _doForceErrorReporting;
+  static bool get doForceErrorReporting {
+    _doForceErrorReporting ??=
+        const String.fromEnvironment('DO_FORCE_ERROR_REPORTING', defaultValue: 'false') ==
+            'true';
+    return _doForceErrorReporting!;
+  }
+
+  /// For testing only: override the doForceErrorReporting value
+  @visibleForTesting
+  static set doForceErrorReportingOverride(bool? value) =>
+      _doForceErrorReporting = value;
 
   static bool? _isStandalonePwaOverride;
   static bool get isStandalonePwaOverride {
