@@ -59,8 +59,8 @@ Future<void> appInitErrorHandling() async {
 
   // Determine if error reporting is blocked by emulator mode
   // Can be overridden with DO_FORCE_ERROR_REPORTING for testing
-  final isBlockedByEmulator = AppConfigBase.doUseBackendEmulator &&
-      !AppConfigBase.doForceErrorReporting;
+  final isBlockedByEmulator =
+      AppConfigBase.doUseBackendEmulator && !AppConfigBase.doForceErrorReporting;
 
   // Determine if we should use error reporting
   // This must be checked BEFORE initializing reporters to prevent
@@ -74,8 +74,7 @@ Future<void> appInitErrorHandling() async {
   // but only when not blocked by emulator mode or master kill switch
   final shouldUseCustomReporter = config.customReporter != null &&
       !isBlockedByEmulator &&
-      ((config.enableInDebug || !kDebugMode) &&
-          (config.enableOnWeb || !kIsWeb));
+      ((config.enableInDebug || !kDebugMode) && (config.enableOnWeb || !kIsWeb));
 
   debugPrint('Error Reporting Configuration: '
       'useFirebaseCrashlytics=${config.useFirebaseCrashlytics}, '

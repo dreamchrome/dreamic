@@ -486,8 +486,7 @@ class AppConfigBase {
 
   /// For testing only: override the doUseBackendEmulator value
   @visibleForTesting
-  static set doUseBackendEmulatorOverride(bool? value) =>
-      _doUseBackendEmulator = value;
+  static set doUseBackendEmulatorOverride(bool? value) => _doUseBackendEmulator = value;
 
   static bool? _doOverrideUseLiveRemoteConfig;
   static bool get doOverrideUseLiveRemoteConfig {
@@ -504,15 +503,13 @@ class AppConfigBase {
   static bool? _doDisableErrorReporting;
   static bool get doDisableErrorReporting {
     _doDisableErrorReporting ??=
-        const String.fromEnvironment('DO_DISABLE_ERROR_REPORTING', defaultValue: 'false') ==
-            'true';
+        const String.fromEnvironment('DO_DISABLE_ERROR_REPORTING', defaultValue: 'false') == 'true';
     return _doDisableErrorReporting!;
   }
 
   /// For testing only: override the doDisableErrorReporting value
   @visibleForTesting
-  static set doDisableErrorReportingOverride(bool? value) =>
-      _doDisableErrorReporting = value;
+  static set doDisableErrorReportingOverride(bool? value) => _doDisableErrorReporting = value;
 
   /// Force error reporting even when using the backend emulator.
   /// Use this to test that error reporting (Sentry, Crashlytics) is working
@@ -521,15 +518,13 @@ class AppConfigBase {
   static bool? _doForceErrorReporting;
   static bool get doForceErrorReporting {
     _doForceErrorReporting ??=
-        const String.fromEnvironment('DO_FORCE_ERROR_REPORTING', defaultValue: 'false') ==
-            'true';
+        const String.fromEnvironment('DO_FORCE_ERROR_REPORTING', defaultValue: 'false') == 'true';
     return _doForceErrorReporting!;
   }
 
   /// For testing only: override the doForceErrorReporting value
   @visibleForTesting
-  static set doForceErrorReportingOverride(bool? value) =>
-      _doForceErrorReporting = value;
+  static set doForceErrorReportingOverride(bool? value) => _doForceErrorReporting = value;
 
   static bool? _isStandalonePwaOverride;
   static bool get isStandalonePwaOverride {

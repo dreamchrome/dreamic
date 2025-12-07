@@ -95,8 +95,8 @@ class Logger {
     }
 
     // Check if blocked by emulator mode (unless force override is set)
-    final isBlockedByEmulator = AppConfigBase.doUseBackendEmulator &&
-        !AppConfigBase.doForceErrorReporting;
+    final isBlockedByEmulator =
+        AppConfigBase.doUseBackendEmulator && !AppConfigBase.doForceErrorReporting;
 
     // Determine if we should use error reporting based on configuration
     final shouldUseErrorReporting = !isBlockedByEmulator &&
