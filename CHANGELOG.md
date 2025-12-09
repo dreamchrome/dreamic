@@ -1,3 +1,24 @@
+## 0.3.3
+
+### Enhancements
+
+* **Added:** Git build information support for error reporting with `gitBranch`, `gitTag`, and `gitCommit` properties in `AppConfigBase`
+* **Added:** `getAppReleaseFullInfo()` method for comprehensive release strings including git information (useful for Sentry)
+* **Added:** `doDisableErrorReporting` master kill switch for completely disabling error reporting
+* **Added:** `doForceErrorReporting` flag to enable error reporting even in emulator mode (for testing)
+* **Improved:** Remote Config listener recovery logic with transient error handling and prevention of overlapping recovery attempts
+* **Improved:** App version logging now includes full release information
+
+### Fixes
+
+* **Fixed:** Error reporting configuration now properly respects all control flags in various development and testing scenarios
+
+### Documentation
+
+* **Updated:** Error Reporting Guide with git build information setup and new control flags
+
+---
+
 ## 0.3.2
 
 ### Enhancements
