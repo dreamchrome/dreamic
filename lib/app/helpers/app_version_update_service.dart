@@ -46,6 +46,7 @@ class AppVersionUpdateService {
   final StreamController<VersionUpdateInfo> _updateStreamController =
       StreamController<VersionUpdateInfo>.broadcast();
   bool _isInitialized = false;
+  bool _isRecoveryInProgress = false;
 
   Stream<VersionUpdateInfo> get updateStream => _updateStreamController.stream;
   bool get isInitialized => _isInitialized;
@@ -240,7 +241,26 @@ class AppVersionUpdateService {
           }
         },
         onError: (error) {
-          loge('❌ Error in Remote Config listener: $error');
+          // Check if this is the known transient stream error on web platforms
+          // This error commonly occurs when:
+          // - The browser tab is inactive/backgrounded
+          // - Network connectivity changes
+          // - Long-running SSE connections are interrupted by the browser
+          // It's not a fatal error - the SDK will automatically retry
+          final errorStr = error.toString();
+          final isTransientStreamError = kIsWeb &&
+              (errorStr.contains('stream-error') ||
+                  errorStr.contains('Unable to connect to the server') ||
+                  errorStr.contains('HTTP status code: undefined'));
+
+          if (isTransientStreamError) {
+            // Log as warning since this is expected behavior on web
+            logw('⚠️ Remote Config stream connection interrupted (expected on web): $error');
+            logw('🔄 The SDK will automatically attempt to reconnect');
+          } else {
+            loge('❌ Error in Remote Config listener: $error');
+          }
+
           // Attempt to re-establish the listener after a delay
           _attemptListenerRecovery();
         },
@@ -257,13 +277,9 @@ class AppVersionUpdateService {
       // Verify the listener is working by checking the subscription
       if (_remoteConfigSubscription != null) {
         logv('🎯 Listener subscription confirmed: ${_remoteConfigSubscription.hashCode}');
-        logv('🔊 Listener is paused: ${_remoteConfigSubscription!.isPaused}');
       } else {
         loge('❌ Failed to establish listener subscription');
       }
-
-      // Set up a periodic health check for the listener
-      _scheduleListenerHealthCheck();
     } catch (e) {
       loge('❌ Failed to set up Remote Config listener: $e');
       // Attempt recovery
@@ -271,35 +287,25 @@ class AppVersionUpdateService {
     }
   }
 
-  /// Schedule periodic health checks for the Remote Config listener
-  void _scheduleListenerHealthCheck() {
-    Timer.periodic(const Duration(minutes: 5), (timer) {
-      if (!_isInitialized) {
-        timer.cancel();
-        return;
-      }
-
-      final isActive = _remoteConfigSubscription != null && !_remoteConfigSubscription!.isPaused;
-      if (isActive) {
-        logv('💚 Remote Config listener health check: HEALTHY');
-      } else {
-        logw('⚠️ Remote Config listener health check: UNHEALTHY - attempting recovery');
-        _attemptListenerRecovery();
-      }
-    });
-  }
-
   /// Attempt to recover from listener failures
+  /// Uses a flag to prevent overlapping recovery attempts
   void _attemptListenerRecovery() {
+    // Prevent multiple simultaneous recovery attempts
+    if (_isRecoveryInProgress) {
+      logv('🔄 Recovery already in progress, skipping duplicate attempt');
+      return;
+    }
+
+    _isRecoveryInProgress = true;
     logv('🔄 Attempting Remote Config listener recovery...');
 
     // Cancel existing subscription
     _remoteConfigSubscription?.cancel();
     _remoteConfigSubscription = null;
 
-    // Retry after a delay with exponential backoff
-    const initialDelay = Duration(seconds: 5);
-    const maxDelay = Duration(minutes: 2);
+    // Use a longer delay for web platform due to frequent transient errors
+    final initialDelay = kIsWeb ? const Duration(seconds: 15) : const Duration(seconds: 5);
+    final maxDelay = kIsWeb ? const Duration(minutes: 5) : const Duration(minutes: 2);
 
     Timer(initialDelay, () {
       if (_isInitialized) {
@@ -307,6 +313,7 @@ class AppVersionUpdateService {
 
         try {
           _subscribeToRemoteConfigUpdates();
+          _isRecoveryInProgress = false;
         } catch (e) {
           loge('❌ Listener recovery failed: $e');
 
@@ -320,8 +327,11 @@ class AppVersionUpdateService {
                 loge('❌ Final listener recovery failed: $e');
               }
             }
+            _isRecoveryInProgress = false;
           });
         }
+      } else {
+        _isRecoveryInProgress = false;
       }
     });
   }
