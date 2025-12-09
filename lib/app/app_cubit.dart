@@ -316,8 +316,8 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   }
 
   Future<void> _logVersion() async {
-    final version = await AppConfigBase.getAppVersion();
-    debugPrint('App version: ${version.packageName} ${version.version}+${version.buildNumber}');
+    final version = await AppConfigBase.getAppReleaseFullInfo();
+    debugPrint('App version info: ${version}');
   }
 
   Future<void> onNavHappened(String path) async {
