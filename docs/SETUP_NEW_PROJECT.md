@@ -22,6 +22,46 @@ Activate the FlutterFire CLI, which is used to configure Firebase for your Flutt
 dart pub global activate flutterfire_cli
 ```
 
+### FVM (Flutter Version Manager)
+
+FVM is a tool for managing multiple Flutter SDK versions on your machine. This is useful for ensuring consistency across team members and CI/CD environments.
+
+**Install or Upgrade FVM:**
+
+```bash
+dart pub global activate fvm
+```
+
+**Basic FVM Usage:**
+
+```bash
+# Install a specific Flutter version
+fvm install 3.24.0
+
+# Use a specific Flutter version for the current project
+fvm use 3.24.0
+
+# Run Flutter commands through FVM
+fvm flutter pub get
+fvm flutter run
+
+# List installed Flutter versions
+fvm list
+
+# List available Flutter releases
+fvm releases
+```
+
+**Using FVM in this Project:**
+
+If this project has an `.fvm` directory or `.fvmrc` file, FVM is already configured. Simply run:
+
+```bash
+fvm install
+```
+
+This will install the Flutter version specified in the project configuration. Then use `fvm flutter` instead of `flutter` for all commands to ensure you're using the correct version.
+
 ## 2. Firebase Project Setup
 
 ### 2.1. Configure Firebase for your Project

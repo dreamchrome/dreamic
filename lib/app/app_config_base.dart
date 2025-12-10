@@ -285,6 +285,7 @@ class AppConfigBase {
       // For this parameter, empty string might be intentional, so return it
       return remoteValue.isNotEmpty
           ? remoteValue
+          
           : defaultRemoteConfig['connectionCheckerUrlOverride'] as String;
     }
   }
