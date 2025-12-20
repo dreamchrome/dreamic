@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../../app/helpers/notification_service.dart';
+import '../../notifications/notification_service.dart';
 
 /// A badge widget that automatically displays the current notification count.
 ///

@@ -3,7 +3,7 @@ import 'dart:isolate';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dreamic/app/app_config_base.dart';
-import 'package:dreamic/app/helpers/error_reporter_interface.dart';
+import 'package:dreamic/error_reporting/error_reporter_interface.dart';
 import 'package:dreamic/utils/logger.dart';
 
 /// Global error reporting configuration

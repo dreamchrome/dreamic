@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:dreamic/app/helpers/notification_image_loader.dart';
+import 'package:dreamic/notifications/notification_image_loader.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

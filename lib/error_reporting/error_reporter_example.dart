@@ -14,7 +14,7 @@
 /// - Approach 2: Manual Sentry integration without appRunner
 library;
 
-import 'package:dreamic/app/helpers/error_reporter_interface.dart';
+import 'package:dreamic/error_reporting/error_reporter_interface.dart';
 import 'package:dreamic/app/helpers/app_errorhandling_init.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';

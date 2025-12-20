@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../app/helpers/notification_service.dart';
+import '../../notifications/notification_service.dart';
 import '../../data/models/notification_permission_status.dart';
 
 /// A builder widget that provides notification permission state and actions.

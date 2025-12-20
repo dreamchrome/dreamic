@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:firebase_remote_config/firebase_remote_config.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dreamic/app/app_config_base.dart';
-import 'package:dreamic/app/helpers/app_version_check.dart';
+import 'package:dreamic/versioning/app_version_check.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
 import 'package:dreamic/utils/get_it_utils.dart';
 import 'package:dreamic/utils/logger.dart';

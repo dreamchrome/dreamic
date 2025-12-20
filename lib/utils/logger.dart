@@ -2,7 +2,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 
 import '../app/app_config_base.dart';
-import '../app/helpers/error_reporter_interface.dart';
+import '../error_reporting/error_reporter_interface.dart';
 
 enum LogLevel {
   debugVerbose,

@@ -34,22 +34,22 @@ export 'presentation/helpers/widget_helpers.dart';
 export 'presentation/helpers/adaptive_icons.dart';
 
 // App Helpers
-export 'app/helpers/app_version_update_service.dart';
+export 'versioning/app_version_update_service.dart';
 export 'app/helpers/app_lifecycle_service.dart';
 export 'app/helpers/app_remote_config_init.dart';
-export 'app/helpers/debug_remote_config_web.dart';
-export 'app/helpers/error_reporter_interface.dart';
+export 'test_debugging/debug_remote_config_web.dart';
+export 'error_reporting/error_reporter_interface.dart';
 export 'app/helpers/app_errorhandling_init.dart';
 export 'app/helpers/app_configs_init.dart';
 export 'app/helpers/app_firebase_init.dart';
-export 'app/helpers/app_version_handler.dart';
+export 'app/helpers/app_cubit_init.dart';
 
 // Notification Helpers
-export 'app/helpers/notification_service.dart';
-export 'app/helpers/notification_permission_helper.dart';
-export 'app/helpers/notification_background_handler.dart';
-export 'app/helpers/notification_channel_manager.dart';
-export 'app/helpers/notification_image_loader.dart';
+export 'notifications/notification_service.dart';
+export 'notifications/notification_permission_helper.dart';
+export 'notifications/notification_background_handler.dart';
+export 'notifications/notification_channel_manager.dart';
+export 'notifications/notification_image_loader.dart';
 
 // Notification Models
 export 'data/models/notification_payload.dart';

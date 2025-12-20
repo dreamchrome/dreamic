@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:dreamic/app/app_config_base.dart';
-import 'package:dreamic/app/helpers/app_version_check.dart';
+import 'package:dreamic/versioning/app_version_check.dart';
 import 'package:dreamic/presentation/outdated_app_page.dart';
 
 Future<void> appRunIfValidVersion(

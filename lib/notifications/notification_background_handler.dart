@@ -1,8 +1,8 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
-import '../../data/models/notification_payload.dart';
-import '../../utils/logger.dart';
+import '../data/models/notification_payload.dart';
+import '../utils/logger.dart';
 
 /// Top-level background message handler for Firebase Cloud Messaging.
 ///

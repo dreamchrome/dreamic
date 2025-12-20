@@ -1,9 +1,9 @@
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../data/models/notification_permission_status.dart';
+import '../data/models/notification_permission_status.dart';
 import 'notification_service.dart';
-import '../../utils/logger.dart';
+import '../utils/logger.dart';
 
 /// Helper class for managing notification permission state and logic.
 ///

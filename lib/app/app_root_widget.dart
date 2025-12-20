@@ -49,8 +49,9 @@ class AppRootWidget extends StatelessWidget {
         initialEntries: [
           OverlayEntry(
             builder: (context) => BlocProvider<AppCubit>.value(
-              // create: (context) => GetIt.I.get<AppCubit>(),
-              value: GetIt.I.get<AppCubit>()..getInitialData(),
+              // Note: getInitialData() should be called in main.dart, not here.
+              // Widget builds can happen multiple times, but initialization should happen once.
+              value: GetIt.I.get<AppCubit>(),
               // child: child,
               child: Builder(
                 builder: (context) {

@@ -6,7 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 // import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:dreamic/app/app_config_base.dart';
-import 'package:dreamic/app/helpers/app_version_update_service.dart';
+import 'package:dreamic/versioning/app_version_update_service.dart';
 import 'package:dreamic/app/helpers/app_lifecycle_service.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:dreamic/presentation/helpers/cubit_helpers.dart';
@@ -28,6 +28,9 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   StreamSubscription<AppLifecycleState>? lifecycleSubscription;
 
   static const Duration _networkCheckTimeout = Duration(seconds: 10);
+
+  /// Guards against multiple calls to getInitialData()
+  bool _hasInitialized = false;
 
   // InputGroup? _inputGroup;
   // PageController? pageController;
@@ -82,6 +85,13 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   }
 
   Future<void> getInitialData() async {
+    // Guard against multiple calls (e.g., when AppRootWidget rebuilds)
+    if (_hasInitialized) {
+      logv('getInitialData: Already initialized, skipping');
+      return;
+    }
+    _hasInitialized = true;
+
     try {
       emitSafe(state.copyWith(appStatus: AppStatus.loading));
 

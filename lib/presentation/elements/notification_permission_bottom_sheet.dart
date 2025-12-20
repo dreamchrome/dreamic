@@ -1,6 +1,6 @@
 import 'package:adaptive_dialog/adaptive_dialog.dart';
 import 'package:flutter/material.dart';
-import '../../app/helpers/notification_service.dart';
+import '../../notifications/notification_service.dart';
 import '../../data/models/notification_permission_status.dart';
 import '../../utils/logger.dart';
 

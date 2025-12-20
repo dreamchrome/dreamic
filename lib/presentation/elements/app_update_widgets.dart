@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:dreamic/app/helpers/app_version_update_service.dart';
+import 'package:dreamic/versioning/app_version_update_service.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:dreamic/presentation/helpers/app_reloader/appreloader.dart';
 import 'package:url_launcher/url_launcher.dart';

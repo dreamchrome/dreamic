@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:dreamic/app/helpers/app_version_update_service.dart';
+import 'package:dreamic/versioning/app_version_update_service.dart';
 import 'package:dreamic/utils/logger.dart';
 
 /// Service to handle app lifecycle events and trigger appropriate actions

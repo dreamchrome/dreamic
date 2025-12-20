@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:dreamic/app/app_config_base.dart';
-import 'package:dreamic/app/helpers/app_version_update_service.dart';
+import 'package:dreamic/versioning/app_version_update_service.dart';
 import 'package:dreamic/app/helpers/app_lifecycle_service.dart';
 import 'package:dreamic/app/helpers/app_remote_config_init.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
