@@ -76,6 +76,11 @@ Future<void> appInitErrorHandling() async {
       !isBlockedByEmulator &&
       ((config.enableInDebug || !kDebugMode) && (config.enableOnWeb || !kIsWeb));
 
+  // Firebase Crashlytics requires Firebase to be initialized and doesn't support web
+  final canUseFirebaseCrashlytics = config.useFirebaseCrashlytics &&
+      AppConfigBase.isFirebaseInitialized &&
+      !kIsWeb;
+
   debugPrint('Error Reporting Configuration: '
       'useFirebaseCrashlytics=${config.useFirebaseCrashlytics}, '
       'customReporter=${config.customReporter != null}, '
@@ -128,8 +133,7 @@ Future<void> appInitErrorHandling() async {
     if (!config.customReporterManagesErrorHandlers) {
       // Setup Flutter error handler for non-async exceptions
       FlutterError.onError = (FlutterErrorDetails details) {
-        // Firebase Crashlytics does not support web - only call on native platforms
-        if (config.useFirebaseCrashlytics && !kIsWeb) {
+        if (canUseFirebaseCrashlytics) {
           FirebaseCrashlytics.instance.recordFlutterError(details);
         }
         if (shouldUseCustomReporter) {
@@ -139,8 +143,7 @@ Future<void> appInitErrorHandling() async {
 
       // Setup async error handler
       PlatformDispatcher.instance.onError = (error, stack) {
-        // Firebase Crashlytics does not support web - only call on native platforms
-        if (config.useFirebaseCrashlytics && !kIsWeb) {
+        if (canUseFirebaseCrashlytics) {
           FirebaseCrashlytics.instance.recordError(error, stack);
         }
         if (shouldUseCustomReporter) {
@@ -151,8 +154,7 @@ Future<void> appInitErrorHandling() async {
     } else {
       // Custom reporter manages error handlers, but we still need to
       // chain Firebase Crashlytics if enabled
-      // Firebase Crashlytics does not support web - only set up on native platforms
-      if (config.useFirebaseCrashlytics && !kIsWeb) {
+      if (canUseFirebaseCrashlytics) {
         // Save the custom reporter's error handler
         final originalFlutterErrorHandler = FlutterError.onError;
         final originalPlatformErrorHandler = PlatformDispatcher.instance.onError;
@@ -185,7 +187,7 @@ Future<void> appInitErrorHandling() async {
             final error = errorAndStacktrace.first;
             final stackTrace = errorAndStacktrace.last as StackTrace;
 
-            if (config.useFirebaseCrashlytics) {
+            if (canUseFirebaseCrashlytics) {
               await FirebaseCrashlytics.instance.recordError(error, stackTrace);
             }
             if (shouldUseCustomReporter) {
@@ -193,7 +195,7 @@ Future<void> appInitErrorHandling() async {
             }
           }).sendPort,
         );
-      } else if (config.useFirebaseCrashlytics) {
+      } else if (canUseFirebaseCrashlytics) {
         // Custom reporter manages handlers, but we need Firebase to catch isolate errors
         // Chain with any existing listener that the custom reporter may have set
         Isolate.current.addErrorListener(

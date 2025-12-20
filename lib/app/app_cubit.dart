@@ -179,17 +179,35 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
 
   Future<void> _initializeNetworkChecking() async {
     try {
-      final projectId = Firebase.app().options.projectId;
-      var defaultHostingUrl = (AppConfigBase.doUseBackendEmulator)
-          ? 'http://${AppConfigBase.backendEmulatorRemoteAddress}:${AppConfigBase.backendEmulatorHostingPort}'
-          : 'https://$projectId.web.app';
+      String defaultHostingUrl;
 
+      // Determine the URL for network checking
       if (AppConfigBase.connectionCheckerUrlOverride.isNotEmpty) {
+        // Use explicit override URL (works with or without Firebase)
+        defaultHostingUrl = AppConfigBase.connectionCheckerUrlOverride;
         logd(
             'Using connectionCheckerUrlOverride for network checking: ${AppConfigBase.connectionCheckerUrlOverride}');
-        defaultHostingUrl = AppConfigBase.connectionCheckerUrlOverride;
-      } else {
+      } else if (AppConfigBase.isFirebaseInitialized) {
+        // Use Firebase project URL
+        final projectId = Firebase.app().options.projectId;
+        defaultHostingUrl = (AppConfigBase.doUseBackendEmulator)
+            ? 'http://${AppConfigBase.backendEmulatorRemoteAddress}:${AppConfigBase.backendEmulatorHostingPort}'
+            : 'https://$projectId.web.app';
         logd('Using default hosting URL for network checking: $defaultHostingUrl');
+      } else {
+        // Firebase not initialized and no override - cannot determine URL
+        loge(
+          'Network checking requires either Firebase initialization or connectionCheckerUrlOverride',
+          'Firebase is not initialized and no connectionCheckerUrlOverride is set. '
+              'Either call appInitFirebase() before creating AppCubit, or set '
+              'AppConfigBase.connectionCheckerUrlOverride to a valid health check URL.',
+        );
+        emitSafe(state.copyWith(
+          appStatus: AppStatus.error,
+          networkErrorMessage:
+              'Network checking configuration error. Please contact support.',
+        ));
+        return;
       }
 
       connectionChecker = InternetConnectionChecker.createInstance(

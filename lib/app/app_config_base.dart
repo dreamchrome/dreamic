@@ -34,6 +34,22 @@ enum EnvironmentType {
 }
 
 class AppConfigBase {
+  //
+  // Firebase Initialization Status
+  //
+
+  /// Whether Firebase has been initialized.
+  /// This is set automatically by appInitFirebase() and should not be set manually.
+  /// Use this to guard Firebase API calls throughout the package.
+  static bool _isFirebaseInitialized = false;
+
+  /// Check if Firebase is initialized and available for use.
+  // ignore: unnecessary_getters_setters
+  static bool get isFirebaseInitialized => _isFirebaseInitialized;
+
+  /// Set Firebase initialization status (called by appInitFirebase).
+  static set isFirebaseInitialized(bool value) => _isFirebaseInitialized = value;
+
   ///
   /// Do this in main
   ///
@@ -681,6 +697,12 @@ class AppConfigBase {
   }
 
   static HttpsCallable firebaseFunctionCallable(String name) {
+    if (!isFirebaseInitialized) {
+      throw StateError(
+        'Cannot create Firebase function callable "$name" - Firebase is not initialized. '
+        'Call appInitFirebase() first.',
+      );
+    }
     return FirebaseFunctions.instanceFor(
       region: backendRegion,
     ).httpsCallable(
@@ -690,6 +712,12 @@ class AppConfigBase {
   }
 
   static Uri firebaseFunctionUri(String name) {
+    if (!isFirebaseInitialized) {
+      throw StateError(
+        'Cannot create Firebase function URI "$name" - Firebase is not initialized. '
+        'Call appInitFirebase() first.',
+      );
+    }
     if (doUseBackendEmulator) {
       return Uri.parse(
           'http://$backendEmulatorRemoteAddress:$backendEmulatorFunctionsPort/${FirebaseFunctions.instanceFor().app.options.projectId}/$backendRegion/$name');

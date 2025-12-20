@@ -155,6 +155,12 @@ class AppVersionUpdateService {
   /// Subscribe to Firebase Remote Config updates
   /// Note: As of firebase_remote_config 6.1.0, onConfigUpdated is now supported on web!
   void _subscribeToRemoteConfigUpdates() {
+    // Skip if Firebase is not initialized
+    if (!AppConfigBase.isFirebaseInitialized) {
+      logv('🔧 Skipping Remote Config listener setup - Firebase not initialized');
+      return;
+    }
+
     // Only set up listener if we're using the live Firebase implementation
     // When using mock/emulator mode, there's no Firebase listener to set up
     if (AppConfigBase.doUseBackendEmulator && !AppConfigBase.doOverrideUseLiveRemoteConfig) {
@@ -488,7 +494,11 @@ class AppVersionUpdateService {
 
     // Try to fetch latest remote config if possible
     try {
-      if (!AppConfigBase.doUseBackendEmulator || AppConfigBase.doOverrideUseLiveRemoteConfig) {
+      // Skip Firebase fetch if not initialized
+      if (!AppConfigBase.isFirebaseInitialized) {
+        logv('ℹ️ Firebase not initialized - using cached/default values only');
+      } else if (!AppConfigBase.doUseBackendEmulator ||
+          AppConfigBase.doOverrideUseLiveRemoteConfig) {
         logv(
             '⚠️ Attempting to fetch latest Remote Config for force check (counts toward 5/hour limit)...');
 

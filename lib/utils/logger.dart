@@ -103,9 +103,12 @@ class Logger {
         (config.enableInDebug || !kDebugMode) &&
         (config.enableOnWeb || !kIsWeb);
 
-    // Report to Firebase Crashlytics if enabled and conditions are met
+    // Report to Firebase Crashlytics if enabled, initialized, and conditions are met
     // Note: Firebase Crashlytics does not support web - only call on native platforms
-    if (shouldUseErrorReporting && config.useFirebaseCrashlytics && !kIsWeb) {
+    if (shouldUseErrorReporting &&
+        config.useFirebaseCrashlytics &&
+        AppConfigBase.isFirebaseInitialized &&
+        !kIsWeb) {
       FirebaseCrashlytics.instance.recordError(error, stackTrace);
     }
 

@@ -15,6 +15,9 @@ Future<FirebaseApp> appInitFirebase(
     options: options,
   );
 
+  // Mark Firebase as initialized for the rest of the package
+  AppConfigBase.isFirebaseInitialized = true;
+
   // Set up Firebase Emulator
   // if (AppConfigBase.doUseBackendEmulator) {
   //   await _connectToFirebaseEmulator(fbApp);

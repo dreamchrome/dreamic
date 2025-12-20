@@ -35,6 +35,15 @@ import 'package:get_it/get_it.dart';
 Future<void> appInitRemoteConfig({
   Map<String, dynamic>? additionalDefaultConfigs,
 }) async {
+  // If Firebase is not initialized, always use mock implementation
+  if (!AppConfigBase.isFirebaseInitialized) {
+    logd('Firebase not initialized - using mock Remote Config');
+    await _initFakeRemoteConfig(
+      additionalDefaultConfigs: additionalDefaultConfigs,
+    );
+    return;
+  }
+
   // Use fake Remote Config when using backend emulator (unless overridden)
   if (AppConfigBase.doUseBackendEmulator && !AppConfigBase.doOverrideUseLiveRemoteConfig) {
     await _initFakeRemoteConfig(
