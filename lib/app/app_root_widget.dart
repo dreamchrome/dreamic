@@ -42,29 +42,40 @@ class AppRootWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      child: BlocProvider<AppCubit>.value(
-        // create: (context) => GetIt.I.get<AppCubit>(),
-        value: GetIt.I.get<AppCubit>()..getInitialData(),
-        // child: child,
-        child: Builder(
-          builder: (context) {
-            // Wrap with ConnectionToaster inside BlocProvider if enabled
-            // This ensures ConnectionToaster can access AppCubit
-            final Widget innerContent = useConnectionToaster
-                ? ConnectionToaster(
-                    showOnInitialConnection: showConnectionToastOnInitialConnection,
-                    delayBeforeShowing: connectionToastDelay,
-                    child: _buildAppContent(context),
-                  )
-                : _buildAppContent(context);
-            return innerContent;
-          },
-        ),
+      // Wrap with Overlay to provide an overlay for toasts and other overlays
+      // This ensures ConnectionToaster can show toasts regardless of where
+      // the MaterialApp's Navigator/Overlay is in the widget tree
+      child: Overlay(
+        initialEntries: [
+          OverlayEntry(
+            builder: (context) => BlocProvider<AppCubit>.value(
+              // create: (context) => GetIt.I.get<AppCubit>(),
+              value: GetIt.I.get<AppCubit>()..getInitialData(),
+              // child: child,
+              child: Builder(
+                builder: (context) {
+                  return _buildAppContent(
+                    context,
+                    enableConnectionToaster: useConnectionToaster,
+                    showConnectionToastOnInitialConnection:
+                        showConnectionToastOnInitialConnection,
+                    connectionToastDelay: connectionToastDelay,
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildAppContent(BuildContext context) {
+  Widget _buildAppContent(
+    BuildContext context, {
+    required bool enableConnectionToaster,
+    required bool showConnectionToastOnInitialConnection,
+    required Duration connectionToastDelay,
+  }) {
     return BlocBuilder<AppCubit, AppState>(
       buildWhen: (previous, current) =>
           previous.appStatus != current.appStatus ||
@@ -108,7 +119,16 @@ class AppRootWidget extends StatelessWidget {
               },
               child: Stack(
                 children: [
-                  child,
+                  // ConnectionToaster wraps child if enabled
+                  // The Overlay widget above provides the overlay for toasts
+                  if (enableConnectionToaster)
+                    ConnectionToaster(
+                      showOnInitialConnection: showConnectionToastOnInitialConnection,
+                      delayBeforeShowing: connectionToastDelay,
+                      child: child,
+                    )
+                  else
+                    child,
                   // Version update banner overlay
                   if (state.showVersionUpdateBanner && state.versionUpdateInfo != null) ...[
                     Builder(builder: (context) {

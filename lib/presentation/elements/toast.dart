@@ -12,7 +12,14 @@ class ToastManager {
     Duration duration = const Duration(seconds: 2),
     bool replacePrevious = true,
   }) {
-    final overlay = Overlay.of(context);
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) {
+      debugPrint(
+        'ToastManager: No Overlay found. Ensure the widget calling showToast '
+        'is placed inside a MaterialApp, CupertinoApp, or Navigator.',
+      );
+      return;
+    }
 
     // If this is not an auto-dismissing toast and replacePrevious is true,
     // remove any existing persistent toast
