@@ -191,7 +191,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
         // Use Firebase project URL
         final projectId = Firebase.app().options.projectId;
         defaultHostingUrl = (AppConfigBase.doUseBackendEmulator)
-            ? 'http://${AppConfigBase.backendEmulatorRemoteAddress}:${AppConfigBase.backendEmulatorHostingPort}'
+            ? 'http://${AppConfigBase.backendEmulatorRemoteAddress}:${AppConfigBase.backendEmulatorAuthPort}'
             : 'https://$projectId.web.app';
         logd('Using default hosting URL for network checking: $defaultHostingUrl');
       } else {
