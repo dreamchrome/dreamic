@@ -181,7 +181,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
     try {
       final projectId = Firebase.app().options.projectId;
       var defaultHostingUrl = (AppConfigBase.doUseBackendEmulator)
-          ? AppConfigBase.firebaseFunctionUri('sysConnectionCheck').toString()
+          ? 'http://${AppConfigBase.backendEmulatorRemoteAddress}:${AppConfigBase.backendEmulatorHostingPort}'
           : 'https://$projectId.web.app';
 
       if (AppConfigBase.connectionCheckerUrlOverride.isNotEmpty) {
@@ -260,9 +260,6 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   }
 
   Future<void> _finalizeAppStartup() async {
-    // Log version info
-    _logVersion();
-
     logd('Initial data fetched, setting app status to normal');
     emitSafe(state.copyWith(
       appStatus: AppStatus.normal,
@@ -313,11 +310,6 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       emitSafe(state.copyWith(networkStatus: NetworkStatus.connected));
       await _finalizeAppStartup();
     }
-  }
-
-  Future<void> _logVersion() async {
-    final version = await AppConfigBase.getAppReleaseFullInfo();
-    debugPrint('App version info: ${version}');
   }
 
   Future<void> onNavHappened(String path) async {

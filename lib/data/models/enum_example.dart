@@ -11,6 +11,7 @@
 /// 1. Define enum (no "unknown" values needed)
 /// 2. Create top-level _deserialize and _serialize functions for each enum
 /// 3. Use @JsonKey(fromJson: _deserializeFoo, toJson: _serializeFoo) on fields
+library;
 
 import 'package:dreamic/dreamic.dart';
 import 'package:json_annotation/json_annotation.dart';

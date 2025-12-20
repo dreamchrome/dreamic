@@ -4,6 +4,13 @@ import 'package:dreamic/utils/logger.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 Future<void> appInitAppConfigsBase() async {
+  // Log version info as early as possible
+  final version = await AppConfigBase.getAppReleaseInfoWithName();
+  // ignore: avoid_print
+  print('App version info: $version');
+  // ignore: avoid_print
+  print('Environment: ${AppConfigBase.environmentTypeString}, Region: ${AppConfigBase.backendRegion}');
+
   await AppConfigBase.init();
 
   assert(

@@ -1,6 +1,7 @@
 #!/usr/bin/env dart
 // ignore_for_file: avoid_print
 
+// ignore: dangling_library_doc_comments
 /// Migration script for converting old enum converter classes to new helper functions
 ///
 /// This script helps migrate from the old (broken) converter class pattern to the
@@ -61,7 +62,7 @@ void main(List<String> args) {
     }
   }
 
-  print('\n' + '=' * 50);
+  print('\n${'=' * 50}');
   print('📊 Migration Summary');
   print('=' * 50);
   print('Files scanned:        ${dartFiles.length}');
@@ -218,8 +219,8 @@ List<ConverterInfo> _extractConverters(String content) {
 
 String _generateHelperFunctions(ConverterInfo converter) {
   final enumName = converter.enumName;
-  final funcBaseName = '_deserialize${enumName}';
-  final serializeFuncName = '_serialize${enumName}';
+  final funcBaseName = '_deserialize$enumName';
+  final serializeFuncName = '_serialize$enumName';
 
   final buffer = StringBuffer();
 
@@ -285,7 +286,7 @@ String _addHelperFunctions(
 
   // Insert helper functions after the enum
   final enumEnd = enumMatch.end;
-  return content.substring(0, enumEnd) + '\n\n$helperFunctions\n' + content.substring(enumEnd);
+  return '${content.substring(0, enumEnd)}\n\n$helperFunctions\n${content.substring(enumEnd)}';
 }
 
 class UpdateResult {

@@ -285,7 +285,6 @@ class AppConfigBase {
       // For this parameter, empty string might be intentional, so return it
       return remoteValue.isNotEmpty
           ? remoteValue
-          
           : defaultRemoteConfig['connectionCheckerUrlOverride'] as String;
     }
   }
@@ -852,60 +851,118 @@ class AppConfigBase {
   ///
   /// Example: "my-app@1.0.0+42"
   ///
-  /// See also [getAppReleaseFullInfo] which includes git branch/tag/commit info.
+  /// See also:
+  /// - [getAppReleaseInfoWithName] which includes git branch/tag/commit and build date.
+  /// - [getAppReleaseInfo] for a shorter UI-friendly version without app name.
   static Future<String> getAppReleaseBuild() async {
     final info = await getAppVersion();
     return '${info.appName}@${info.version}+${info.buildNumber}';
   }
 
-  /// Get the full app release string including git build information.
+  /// Get the full app release string including git and build date information.
   /// This is useful for error reporting services like Sentry to identify exact builds.
   ///
-  /// Format varies based on available git info (set via --dart-define):
-  /// - Tag build: "my-app@1.0.0+42_tag-v1.0.0"
-  /// - Branch + commit: "my-app@1.0.0+42_feature-login_abc1234"
-  /// - Branch only: "my-app@1.0.0+42_feature-login"
-  /// - Commit only: "my-app@1.0.0+42_abc1234"
-  /// - No git info: "my-app@1.0.0+42" (same as [getAppReleaseBuild])
+  /// Format varies based on available info (set via --dart-define):
+  /// - Tag + date: "my-app@1.0.0+42_tag-v1.0.0_20251225-1420"
+  /// - Branch + commit + date: "my-app@1.0.0+42_feature-login_abc1234_20251225-1420"
+  /// - Branch + date: "my-app@1.0.0+42_feature-login_20251225-1420"
+  /// - Commit + date: "my-app@1.0.0+42_abc1234_20251225-1420"
+  /// - Date only: "my-app@1.0.0+42_20251225-1420"
+  /// - No info: "my-app@1.0.0+42" (same as [getAppReleaseBuild])
   ///
   /// Branch names are sanitized (/ and \ replaced with -) to comply with
   /// Sentry's release name restrictions.
   ///
-  /// Set git info via dart-define:
+  /// Set build info via dart-define:
   /// ```bash
   /// flutter build ios \
   ///   --dart-define=GIT_BRANCH=feature/login \
-  ///   --dart-define=GIT_COMMIT=abc1234
+  ///   --dart-define=GIT_COMMIT=abc1234 \
+  ///   --dart-define=BUILD_DATE=$(date -u +%Y%m%d-%H%M)
   /// ```
   ///
   /// Or for tag builds:
   /// ```bash
-  /// flutter build ios --dart-define=GIT_TAG=v1.0.0
+  /// flutter build ios \
+  ///   --dart-define=GIT_TAG=v1.0.0 \
+  ///   --dart-define=BUILD_DATE=$(date -u +%Y%m%d-%H%M)
   /// ```
-  static Future<String> getAppReleaseFullInfo() async {
+  ///
+  /// See also [getAppReleaseInfo] for a shorter UI-friendly version.
+  static Future<String> getAppReleaseInfoWithName() async {
     final base = await getAppReleaseBuild();
+    final dateSuffix = buildDate.isNotEmpty ? '_$buildDate' : '';
 
     // Tag builds take precedence (no commit needed for tags)
     if (gitTag.isNotEmpty) {
-      return '${base}_tag-${_sanitizeForReleaseName(gitTag)}';
+      return '${base}_tag-${_sanitizeForReleaseName(gitTag)}$dateSuffix';
     }
 
     // Branch + commit
     if (gitBranch.isNotEmpty && gitCommit.isNotEmpty) {
-      return '${base}_${_sanitizeForReleaseName(gitBranch)}_$gitCommit';
+      return '${base}_${_sanitizeForReleaseName(gitBranch)}_$gitCommit$dateSuffix';
     }
 
     // Branch only
     if (gitBranch.isNotEmpty) {
-      return '${base}_${_sanitizeForReleaseName(gitBranch)}';
+      return '${base}_${_sanitizeForReleaseName(gitBranch)}$dateSuffix';
     }
 
     // Commit only
     if (gitCommit.isNotEmpty) {
-      return '${base}_$gitCommit';
+      return '${base}_$gitCommit$dateSuffix';
     }
 
-    // No git info - return base
+    // No git info - return base with optional date
+    if (dateSuffix.isNotEmpty) {
+      return '$base$dateSuffix';
+    }
+
+    return base;
+  }
+
+  /// Get a shorter display-friendly release string for UI (e.g., Profile screen).
+  /// Omits the app name prefix for a more compact format.
+  ///
+  /// Format varies based on available info (set via --dart-define):
+  /// - Tag + date: "1.0.0+42_tag-v1.0.0_20251225-1420"
+  /// - Branch + commit + date: "1.0.0+42_main_abc1234_20251225-1420"
+  /// - Branch + date: "1.0.0+42_main_20251225-1420"
+  /// - Commit + date: "1.0.0+42_abc1234_20251225-1420"
+  /// - Date only: "1.0.0+42_20251225-1420"
+  /// - No info: "1.0.0+42"
+  ///
+  /// See also [getAppReleaseInfoWithName] for the complete version with app name.
+  static Future<String> getAppReleaseInfo() async {
+    final info = await getAppVersion();
+    final base = '${info.version}+${info.buildNumber}';
+    final dateSuffix = buildDate.isNotEmpty ? '_$buildDate' : '';
+
+    // Tag builds take precedence (no commit needed for tags)
+    if (gitTag.isNotEmpty) {
+      return '${base}_tag-${_sanitizeForReleaseName(gitTag)}$dateSuffix';
+    }
+
+    // Branch + commit
+    if (gitBranch.isNotEmpty && gitCommit.isNotEmpty) {
+      return '${base}_${_sanitizeForReleaseName(gitBranch)}_$gitCommit$dateSuffix';
+    }
+
+    // Branch only
+    if (gitBranch.isNotEmpty) {
+      return '${base}_${_sanitizeForReleaseName(gitBranch)}$dateSuffix';
+    }
+
+    // Commit only
+    if (gitCommit.isNotEmpty) {
+      return '${base}_$gitCommit$dateSuffix';
+    }
+
+    // No git info - return base with optional date
+    if (dateSuffix.isNotEmpty) {
+      return '$base$dateSuffix';
+    }
+
     return base;
   }
 
@@ -950,6 +1007,22 @@ class AppConfigBase {
   static String get gitCommit {
     _gitCommit ??= const String.fromEnvironment('GIT_COMMIT', defaultValue: '');
     return _gitCommit!;
+  }
+
+  /// Build date/time from build-time configuration.
+  /// Set via --dart-define=BUILD_DATE=20251225-1420
+  ///
+  /// Format should be YYYYMMDD-HHMM (e.g., 20251225-1420 for Dec 25, 2025 at 14:20).
+  /// In build scripts, generate with: $(date -u +%Y%m%d-%H%M)
+  ///
+  /// In GitHub Actions:
+  /// ```yaml
+  /// - run: flutter build ios --dart-define=BUILD_DATE=$(date -u +%Y%m%d-%H%M)
+  /// ```
+  static String? _buildDate;
+  static String get buildDate {
+    _buildDate ??= const String.fromEnvironment('BUILD_DATE', defaultValue: '');
+    return _buildDate!;
   }
 
   //
