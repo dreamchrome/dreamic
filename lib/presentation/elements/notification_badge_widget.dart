@@ -1,19 +1,19 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-import '../../notifications/notification_service.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../app/app_cubit.dart';
 
 /// A badge widget that automatically displays the current notification count.
 ///
-/// This widget syncs with [NotificationService] to display the app's badge count
-/// (typically unread notifications). It automatically updates when the badge
-/// count changes and uses Material Design 3 Badge for proper theming.
+/// This widget uses [AppCubit] state to display the app's unread notification count.
+/// It automatically updates when the count changes and uses Material Design 3 Badge
+/// for proper theming.
 ///
 /// **Automatic Mode (no count parameter):**
 /// ```dart
 /// NotificationBadgeWidget(
 ///   child: Icon(Icons.notifications),
 /// )
-/// // Automatically shows NotificationService().getBadgeCount()
+/// // Automatically shows AppState.unreadNotificationCount
 /// ```
 ///
 /// **Manual Mode (with count parameter):**
@@ -47,10 +47,10 @@ import '../../notifications/notification_service.dart';
 ///   child: YourWidget(),
 /// )
 /// ```
-class NotificationBadgeWidget extends StatefulWidget {
+class NotificationBadgeWidget extends StatelessWidget {
   /// The count to display in the badge.
   ///
-  /// If null (default), automatically fetches count from NotificationService
+  /// If null (default), automatically fetches count from AppState.unreadNotificationCount
   /// and rebuilds when it changes. If provided, displays the specific count
   /// without automatic updates.
   final int? count;
@@ -111,116 +111,48 @@ class NotificationBadgeWidget extends StatefulWidget {
   });
 
   @override
-  State<NotificationBadgeWidget> createState() => _NotificationBadgeWidgetState();
-}
-
-class _NotificationBadgeWidgetState extends State<NotificationBadgeWidget> {
-  int _currentCount = 0;
-  bool _isAutomaticMode = false;
-  StreamSubscription<int>? _badgeCountSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-    _isAutomaticMode = widget.count == null;
-    if (_isAutomaticMode) {
-      _subscribeToBadgeStream();
-    } else {
-      _currentCount = widget.count!;
-    }
-  }
-
-  @override
-  void didUpdateWidget(NotificationBadgeWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    // Switch between automatic and manual mode if count parameter changes
-    final wasAutomatic = oldWidget.count == null;
-    _isAutomaticMode = widget.count == null;
-
-    if (_isAutomaticMode != wasAutomatic) {
-      if (_isAutomaticMode) {
-        _subscribeToBadgeStream();
-      } else {
-        _unsubscribeFromBadgeStream();
-      }
-    }
-
-    // Update count if in manual mode
-    if (!_isAutomaticMode && widget.count != oldWidget.count) {
-      setState(() {
-        _currentCount = widget.count!;
-      });
-    }
-  }
-
-  void _subscribeToBadgeStream() {
-    try {
-      final service = NotificationService();
-
-      // Get initial count synchronously
-      _currentCount = service.getBadgeCount();
-
-      // Subscribe to stream for updates
-      _badgeCountSubscription = service.badgeCountStream.listen(
-        (count) {
-          if (mounted) {
-            setState(() {
-              _currentCount = count;
-            });
-          }
-        },
-        onError: (error) {
-          // Ignore stream errors - badge count is non-critical
-        },
-      );
-    } catch (e) {
-      // Ignore errors - badge count is non-critical
-    }
-  }
-
-  void _unsubscribeFromBadgeStream() {
-    _badgeCountSubscription?.cancel();
-    _badgeCountSubscription = null;
-  }
-
-  @override
-  void dispose() {
-    _unsubscribeFromBadgeStream();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    // Use manual count if provided, otherwise use automatic count
-    final displayCount = widget.count ?? _currentCount;
+    // If count is provided manually, use it directly without BlocBuilder
+    if (count != null) {
+      return _buildBadge(context, count!);
+    }
 
+    // Otherwise, use BlocBuilder to get count from AppCubit
+    return BlocSelector<AppCubit, AppState, int>(
+      selector: (state) => state.unreadNotificationCount,
+      builder: (context, unreadCount) {
+        return _buildBadge(context, unreadCount);
+      },
+    );
+  }
+
+  Widget _buildBadge(BuildContext context, int displayCount) {
     // Hide badge if count is zero and hideWhenZero is true
-    if (widget.hideWhenZero && displayCount == 0) {
-      return widget.child;
+    if (hideWhenZero && displayCount == 0) {
+      return child;
     }
 
     // Hide badge if explicitly disabled
-    if (!widget.isLabelVisible) {
-      return widget.child;
+    if (!isLabelVisible) {
+      return child;
     }
 
     // Format count with overflow indicator
     final displayText =
-        displayCount > widget.maxCount ? '${widget.maxCount}+' : displayCount.toString();
+        displayCount > maxCount ? '$maxCount+' : displayCount.toString();
 
     final theme = Theme.of(context);
-    final badgeColor = widget.backgroundColor ?? theme.colorScheme.error;
-    final countColor = widget.textColor ?? theme.colorScheme.onError;
+    final badgeColor = backgroundColor ?? theme.colorScheme.error;
+    final countColor = textColor ?? theme.colorScheme.onError;
 
     return Badge(
       label: Text(displayText),
       backgroundColor: badgeColor,
       textColor: countColor,
-      alignment: widget.alignment,
-      offset: widget.offset,
-      textStyle: widget.textStyle,
-      child: widget.child,
+      alignment: alignment,
+      offset: offset,
+      textStyle: textStyle,
+      child: child,
     );
   }
 }

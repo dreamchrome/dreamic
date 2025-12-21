@@ -6,6 +6,8 @@ import 'package:firebase_core/firebase_core.dart';
 // import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:dreamic/app/app_config_base.dart';
+import 'package:dreamic/data/models/notification_permission_status.dart';
+import 'package:dreamic/notifications/notification_service.dart';
 import 'package:dreamic/versioning/app_version_update_service.dart';
 import 'package:dreamic/app/helpers/app_lifecycle_service.dart';
 import 'package:dreamic/utils/logger.dart';
@@ -26,6 +28,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   StreamSubscription? connectionCheckerSubscription;
   StreamSubscription<VersionUpdateInfo>? versionUpdateSubscription;
   StreamSubscription<AppLifecycleState>? lifecycleSubscription;
+  StreamSubscription<int>? notificationBadgeSubscription;
 
   static const Duration _networkCheckTimeout = Duration(seconds: 10);
 
@@ -60,6 +63,12 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       await lifecycleSubscription?.cancel();
     } catch (e) {
       loge(e, 'Error canceling lifecycle subscription');
+    }
+
+    try {
+      await notificationBadgeSubscription?.cancel();
+    } catch (e) {
+      loge(e, 'Error canceling notification badge subscription');
     }
 
     try {
@@ -432,5 +441,135 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       appStatus: AppStatus.normal,
       colorThemeIndex: index,
     ));
+  }
+
+  // ============ Notification State Management ============
+
+  /// Initializes notification state sync with NotificationService.
+  ///
+  /// This subscribes to the NotificationService badge count stream and
+  /// syncs the initial permission status. Call this after NotificationService
+  /// has been initialized.
+  ///
+  /// Safe to call multiple times - subsequent calls are ignored.
+  Future<void> initializeNotificationSync() async {
+    // Already subscribed
+    if (notificationBadgeSubscription != null) {
+      logv('Notification sync already initialized, skipping');
+      return;
+    }
+
+    try {
+      final notificationService = NotificationService();
+
+      // Only proceed if the service is initialized
+      if (!notificationService.isInitialized) {
+        logv('NotificationService not initialized, skipping notification sync');
+        return;
+      }
+
+      logd('Initializing notification state sync');
+
+      // Sync initial badge count
+      final initialCount = notificationService.getBadgeCount();
+      emitSafe(state.copyWith(unreadNotificationCount: initialCount));
+
+      // Subscribe to badge count changes
+      notificationBadgeSubscription = notificationService.badgeCountStream.listen(
+        (count) {
+          logv('Badge count stream update: $count');
+          emitSafe(state.copyWith(unreadNotificationCount: count));
+        },
+        onError: (error) {
+          loge('Error in notification badge stream: $error');
+        },
+      );
+
+      // Sync initial permission status
+      final permissionStatus = await notificationService.getPermissionStatus();
+      emitSafe(state.copyWith(notificationPermissionStatus: permissionStatus));
+
+      logd('Notification state sync initialized');
+    } catch (e) {
+      loge(e, 'Error initializing notification sync');
+    }
+  }
+
+  /// Updates the unread notification count.
+  ///
+  /// This is typically called by the NotificationService or when
+  /// notifications are read/cleared by the user.
+  void updateUnreadNotificationCount(int count) {
+    logv('Updating unread notification count: $count');
+    emitSafe(state.copyWith(unreadNotificationCount: count));
+  }
+
+  /// Increments the unread notification count by 1.
+  void incrementUnreadNotificationCount() {
+    updateUnreadNotificationCount(state.unreadNotificationCount + 1);
+  }
+
+  /// Clears the unread notification count (sets to 0).
+  void clearUnreadNotificationCount() {
+    updateUnreadNotificationCount(0);
+  }
+
+  /// Updates the notification permission status.
+  ///
+  /// This should be called after checking or requesting permissions
+  /// via NotificationService.
+  void updateNotificationPermissionStatus(NotificationPermissionStatus status) {
+    logv('Updating notification permission status: $status');
+    emitSafe(state.copyWith(notificationPermissionStatus: status));
+  }
+
+  /// Requests notification permissions and syncs the result to state.
+  ///
+  /// This is a convenience method that wraps NotificationService.requestPermissions()
+  /// and automatically updates the AppState with the result.
+  ///
+  /// Returns the resulting permission status.
+  Future<NotificationPermissionStatus> requestNotificationPermissions({
+    bool provisional = false,
+  }) async {
+    try {
+      final notificationService = NotificationService();
+
+      if (!notificationService.isInitialized) {
+        logd('NotificationService not initialized, cannot request permissions');
+        return NotificationPermissionStatus.notDetermined;
+      }
+
+      final status = await notificationService.requestPermissions(
+        provisional: provisional,
+      );
+
+      // Sync to state
+      emitSafe(state.copyWith(notificationPermissionStatus: status));
+
+      return status;
+    } catch (e) {
+      loge(e, 'Error requesting notification permissions');
+      return NotificationPermissionStatus.denied;
+    }
+  }
+
+  /// Refreshes the notification permission status from the system.
+  ///
+  /// Call this when returning from app settings or when the app resumes
+  /// to ensure the permission status is up to date.
+  Future<void> refreshNotificationPermissionStatus() async {
+    try {
+      final notificationService = NotificationService();
+
+      if (!notificationService.isInitialized) {
+        return;
+      }
+
+      final status = await notificationService.getPermissionStatus();
+      emitSafe(state.copyWith(notificationPermissionStatus: status));
+    } catch (e) {
+      loge(e, 'Error refreshing notification permission status');
+    }
   }
 }

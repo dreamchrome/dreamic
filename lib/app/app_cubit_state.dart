@@ -44,6 +44,8 @@ class AppState extends Equatable {
     this.showNetworkRetry = false,
     this.versionUpdateInfo,
     this.showVersionUpdateBanner = false,
+    this.unreadNotificationCount = 0,
+    this.notificationPermissionStatus = NotificationPermissionStatus.notDetermined,
   });
 
   final AppAuthStatus appAuthStatus;
@@ -61,6 +63,12 @@ class AppState extends Equatable {
   final VersionUpdateInfo? versionUpdateInfo;
   final bool showVersionUpdateBanner;
 
+  /// The number of unread notifications (used for badge display).
+  final int unreadNotificationCount;
+
+  /// The current notification permission status.
+  final NotificationPermissionStatus notificationPermissionStatus;
+
   AppState copyWith({
     AppAuthStatus? appAuthStatus,
     AppStatus? appStatus,
@@ -75,6 +83,8 @@ class AppState extends Equatable {
     bool? showNetworkRetry,
     VersionUpdateInfo? versionUpdateInfo,
     bool? showVersionUpdateBanner,
+    int? unreadNotificationCount,
+    NotificationPermissionStatus? notificationPermissionStatus,
   }) {
     return AppState(
       appAuthStatus: appAuthStatus ?? this.appAuthStatus,
@@ -91,6 +101,8 @@ class AppState extends Equatable {
       showNetworkRetry: showNetworkRetry ?? this.showNetworkRetry,
       versionUpdateInfo: versionUpdateInfo ?? this.versionUpdateInfo,
       showVersionUpdateBanner: showVersionUpdateBanner ?? this.showVersionUpdateBanner,
+      unreadNotificationCount: unreadNotificationCount ?? this.unreadNotificationCount,
+      notificationPermissionStatus: notificationPermissionStatus ?? this.notificationPermissionStatus,
     );
   }
 
@@ -109,6 +121,8 @@ class AppState extends Equatable {
         showNetworkRetry,
         versionUpdateInfo,
         showVersionUpdateBanner,
+        unreadNotificationCount,
+        notificationPermissionStatus,
       ];
 }
 
