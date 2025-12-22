@@ -1,3 +1,35 @@
+## 0.3.4
+
+### Breaking Changes
+
+* **Renamed:** App version methods in `AppConfigBase` for clarity:
+  * `getAppVersion()` → `getPackageInfo()`
+  * `getAppVersionString()` → `getVersion()`
+  * `getAppBuildNumber()` → `getBuildNumber()`
+  * `getAppRelease()` → `getReleaseId()`
+
+### New Features
+
+* **Added:** `getBuildInfo()` method for detailed build info display (version+build with optional git/date info)
+* **Added:** `getVersionForDisplay()` method that returns simple version in production, full build info otherwise
+* **Added:** `BUILD_DATE` dart-define parameter for including build timestamps in release strings
+* **Added:** Notification state management to `AppCubit` with unread notification count and permission status in `AppState`
+* **Improved:** `NotificationBadgeWidget` now uses `AppCubit` state instead of polling, reducing complexity and improving reactivity
+
+### Enhancements
+
+* **Enhanced:** `AppRootWidget` now uses Overlay for toasts, improving toast display reliability
+* **Improved:** `ToastManager` with null checks and better state management
+* **Improved:** Network checking now uses auth emulator port when running against Firebase emulator
+* **Enhanced:** Firebase initialization checks with better error handling and proper usage validation
+
+### Internal
+
+* **Reorganized:** Files moved from `app/helpers/` into appropriate domain folders
+* **Updated:** Error reporter example to use renamed version methods
+
+---
+
 ## 0.3.3
 
 ### Enhancements
