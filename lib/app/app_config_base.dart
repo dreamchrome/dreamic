@@ -847,126 +847,86 @@ class AppConfigBase {
   static PackageInfo? _cachedPackageInfo;
 
   /// Get the app's PackageInfo (version, build number, etc.)
-  /// This is cached after the first call for better performance
+  /// This is cached after the first call for better performance.
   ///
   /// Example usage:
   /// ```dart
-  /// final info = await AppConfigBase.getAppVersion();
+  /// final info = await AppConfigBase.getPackageInfo();
   /// print('Version: ${info.version}');
   /// print('Build: ${info.buildNumber}');
   /// ```
-  static Future<PackageInfo> getAppVersion() async {
+  static Future<PackageInfo> getPackageInfo() async {
     _cachedPackageInfo ??= await PackageInfo.fromPlatform();
     return _cachedPackageInfo!;
   }
 
-  /// Get the app version as a string (e.g., "1.0.0")
-  /// Convenience method that doesn't require await on PackageInfo
-  static Future<String> getAppVersionString() async {
-    final info = await getAppVersion();
+  /// Get the app version string (e.g., "1.0.0")
+  static Future<String> getVersion() async {
+    final info = await getPackageInfo();
     return info.version;
   }
 
-  /// Get the app build number as a string (e.g., "42")
-  /// Convenience method that doesn't require await on PackageInfo
-  static Future<String> getAppBuildNumber() async {
-    final info = await getAppVersion();
+  /// Get the app build number (e.g., "42")
+  static Future<String> getBuildNumber() async {
+    final info = await getPackageInfo();
     return info.buildNumber;
   }
 
-  /// Get the basic app release string in format: appName@version+buildNumber
-  /// This is useful for error reporting services like Sentry
+  /// Get detailed build info for UI display.
   ///
-  /// Example: "my-app@1.0.0+42"
-  ///
-  /// See also:
-  /// - [getAppReleaseInfoWithName] which includes git branch/tag/commit and build date.
-  /// - [getAppReleaseInfo] for a shorter UI-friendly version without app name.
-  static Future<String> getAppReleaseBuild() async {
-    final info = await getAppVersion();
-    return '${info.appName}@${info.version}+${info.buildNumber}';
-  }
-
-  /// Get the full app release string including git and build date information.
-  /// This is useful for error reporting services like Sentry to identify exact builds.
-  ///
-  /// Format varies based on available info (set via --dart-define):
-  /// - Tag + date: "my-app@1.0.0+42_tag-v1.0.0_20251225-1420"
-  /// - Branch + commit + date: "my-app@1.0.0+42_feature-login_abc1234_20251225-1420"
-  /// - Branch + date: "my-app@1.0.0+42_feature-login_20251225-1420"
-  /// - Commit + date: "my-app@1.0.0+42_abc1234_20251225-1420"
-  /// - Date only: "my-app@1.0.0+42_20251225-1420"
-  /// - No info: "my-app@1.0.0+42" (same as [getAppReleaseBuild])
-  ///
-  /// Branch names are sanitized (/ and \ replaced with -) to comply with
-  /// Sentry's release name restrictions.
+  /// Format: version+build with optional git/date info:
+  /// - `"1.0.0+42"` (no git info)
+  /// - `"1.0.0+42_main_abc1234_20251225-1420"` (branch + commit + date)
+  /// - `"1.0.0+42_tag-v1.0.0_20251225-1420"` (tag build)
   ///
   /// Set build info via dart-define:
   /// ```bash
   /// flutter build ios \
-  ///   --dart-define=GIT_BRANCH=feature/login \
+  ///   --dart-define=GIT_BRANCH=main \
   ///   --dart-define=GIT_COMMIT=abc1234 \
   ///   --dart-define=BUILD_DATE=$(date -u +%Y%m%d-%H%M)
   /// ```
-  ///
-  /// Or for tag builds:
-  /// ```bash
-  /// flutter build ios \
-  ///   --dart-define=GIT_TAG=v1.0.0 \
-  ///   --dart-define=BUILD_DATE=$(date -u +%Y%m%d-%H%M)
-  /// ```
-  ///
-  /// See also [getAppReleaseInfo] for a shorter UI-friendly version.
-  static Future<String> getAppReleaseInfoWithName() async {
-    final base = await getAppReleaseBuild();
-    final dateSuffix = buildDate.isNotEmpty ? '_$buildDate' : '';
-
-    // Tag builds take precedence (no commit needed for tags)
-    if (gitTag.isNotEmpty) {
-      return '${base}_tag-${_sanitizeForReleaseName(gitTag)}$dateSuffix';
-    }
-
-    // Branch + commit
-    if (gitBranch.isNotEmpty && gitCommit.isNotEmpty) {
-      return '${base}_${_sanitizeForReleaseName(gitBranch)}_$gitCommit$dateSuffix';
-    }
-
-    // Branch only
-    if (gitBranch.isNotEmpty) {
-      return '${base}_${_sanitizeForReleaseName(gitBranch)}$dateSuffix';
-    }
-
-    // Commit only
-    if (gitCommit.isNotEmpty) {
-      return '${base}_$gitCommit$dateSuffix';
-    }
-
-    // No git info - return base with optional date
-    if (dateSuffix.isNotEmpty) {
-      return '$base$dateSuffix';
-    }
-
-    return base;
+  static Future<String> getBuildInfo() async {
+    final info = await getPackageInfo();
+    final base = '${info.version}+${info.buildNumber}';
+    return _appendGitInfo(base);
   }
 
-  /// Get a shorter display-friendly release string for UI (e.g., Profile screen).
-  /// Omits the app name prefix for a more compact format.
+  /// Get a unique release identifier including app name.
   ///
-  /// Format varies based on available info (set via --dart-define):
-  /// - Tag + date: "1.0.0+42_tag-v1.0.0_20251225-1420"
-  /// - Branch + commit + date: "1.0.0+42_main_abc1234_20251225-1420"
-  /// - Branch + date: "1.0.0+42_main_20251225-1420"
-  /// - Commit + date: "1.0.0+42_abc1234_20251225-1420"
-  /// - Date only: "1.0.0+42_20251225-1420"
-  /// - No info: "1.0.0+42"
+  /// Format: appName@version+build with optional git/date info:
+  /// - `"my-app@1.0.0+42"` (no git info)
+  /// - `"my-app@1.0.0+42_main_abc1234_20251225-1420"` (branch + commit + date)
+  /// - `"my-app@1.0.0+42_tag-v1.0.0_20251225-1420"` (tag build)
   ///
-  /// See also [getAppReleaseInfoWithName] for the complete version with app name.
-  static Future<String> getAppReleaseInfo() async {
-    final info = await getAppVersion();
-    final base = '${info.version}+${info.buildNumber}';
+  /// Useful for error reporting (Sentry, Crashlytics), logging, and
+  /// anywhere a unique build identifier is needed.
+  static Future<String> getReleaseId() async {
+    final info = await getPackageInfo();
+    final base = '${info.appName}@${info.version}+${info.buildNumber}';
+    return _appendGitInfo(base);
+  }
+
+  /// Get the app version for display purposes.
+  ///
+  /// Returns environment-appropriate version info:
+  /// - Production: simple version (e.g., "1.0.0")
+  /// - Other environments: full build info (e.g., "1.0.0+42_main_abc1234")
+  ///
+  /// Useful for showing version in UI where developers need detailed
+  /// build info during development, but users only need the version.
+  static Future<String> getVersionForDisplay() async {
+    if (environmentType == EnvironmentType.production) {
+      return await getVersion();
+    }
+    return await getBuildInfo();
+  }
+
+  /// Appends git branch/tag/commit and build date info to a base string.
+  static String _appendGitInfo(String base) {
     final dateSuffix = buildDate.isNotEmpty ? '_$buildDate' : '';
 
-    // Tag builds take precedence (no commit needed for tags)
+    // Tag builds take precedence
     if (gitTag.isNotEmpty) {
       return '${base}_tag-${_sanitizeForReleaseName(gitTag)}$dateSuffix';
     }

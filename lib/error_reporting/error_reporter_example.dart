@@ -89,7 +89,7 @@ void exampleMainSentryWrapper() async {
       (options) {
         options.dsn = 'https://your-dsn@sentry.io/project-id';
         options.environment = AppConfigBase.environmentType.value;
-        options.release = await AppConfigBase.getAppRelease();
+        options.release = await AppConfigBase.getReleaseId();
         options.tracesSampleRate = 1.0;
       },
       appRunner: () => appRunIfValidVersion(() => MyApp()),
@@ -146,7 +146,7 @@ class SentryErrorReporter implements ErrorReporter {
   @override
   Future<void> initialize() async {
     // Get the app version for release tracking
-    final appRelease = release ?? await AppConfigBase.getAppRelease();
+    final appRelease = release ?? await AppConfigBase.getReleaseId();
     
     // IMPORTANT: This does NOT use appRunner
     // Error handlers are managed by Dreamic's appInitErrorHandling()
@@ -235,7 +235,7 @@ void exampleMain() async {
     (options) {
       options.dsn = 'https://your-dsn@sentry.io/project-id';
       options.environment = AppConfigBase.environmentType.value;
-      options.release = await AppConfigBase.getAppRelease();
+      options.release = await AppConfigBase.getReleaseId();
       options.tracesSampleRate = 1.0;
     },
     appRunner: () => appRunIfValidVersion(() => MyApp()),
@@ -252,7 +252,7 @@ void exampleMain() async {
   /*
   // Environment and release are automatically configured
   // Environment uses ENVIRONMENT_TYPE dart-define (see AppConfigBase.environmentType)
-  // Release is auto-generated from app version (see AppConfigBase.getAppRelease())
+  // Release is auto-generated from app version (see AppConfigBase.getReleaseId())
   configureErrorReporting(
     ErrorReportingConfig.customOnly(
       reporter: SentryErrorReporter(

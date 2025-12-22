@@ -149,7 +149,7 @@ class AppUpdateDebugWidget extends StatelessWidget {
     }
 
     // Get current values for comparison
-    final currentVersion = await AppConfigBase.getAppVersionString();
+    final currentVersion = await AppConfigBase.getVersion();
 
     logd('📱 Current values before test:');
     logd('   App version: $currentVersion');

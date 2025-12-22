@@ -5,7 +5,7 @@ Future<bool> appIsVersionValid(
   String minimumAppVersion, {
   bool allowToRunIfServerVersionIsEmpty = true,
 }) async {
-  final deviceInfo = await AppConfigBase.getAppVersion();
+  final deviceInfo = await AppConfigBase.getPackageInfo();
 
   int deviceMajor = int.tryParse(deviceInfo.version.split('.')[0]) ?? 0;
   int deviceMinor = int.tryParse(deviceInfo.version.split('.')[1]) ?? 0;

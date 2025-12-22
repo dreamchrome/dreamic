@@ -347,7 +347,7 @@ class AppVersionUpdateService {
     try {
       logv('🔍 Starting version update check...');
 
-      final packageInfo = await AppConfigBase.getAppVersion();
+      final packageInfo = await AppConfigBase.getPackageInfo();
       final currentVersion = packageInfo.version;
 
       final requiredVersion = _getRequiredVersion();
