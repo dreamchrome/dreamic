@@ -62,3 +62,4 @@ app.*.map.json
 
 # Allows packages to be local path dependencies per developer
 pubspec_overrides.yaml
+.claude/settings.local.json
