@@ -37,7 +37,6 @@ class AuthServiceImpl implements AuthServiceInt {
   /// Whether to use Firebase FCM for push notifications
   /// This is the general setting, which can be disabled by the app config setting, but not overridden to enable FCM by the app config.
   bool useFirebaseFCM;
-  HttpsCallable mainCallable = AppConfigBase.firebaseFunctionCallable('mainCallable');
   HttpsCallable authCallable = AppConfigBase.firebaseFunctionCallable('authMainCallable');
   late final fb_auth.FirebaseAuth _fbAuth;
 
@@ -365,6 +364,99 @@ class AuthServiceImpl implements AuthServiceInt {
       }
     } catch (e) {
       loge(e, 'reauthenticateWithPassword failed');
+      return left(AuthServiceSignInFailure.unexpected);
+    }
+  }
+
+  @override
+  Future<Either<AuthServiceLinkFailure, Unit>> linkEmailPassword(
+    String email,
+    String password,
+  ) async {
+    try {
+      final user = _fbAuth.currentUser;
+      if (user == null) {
+        logw('linkEmailPassword: No user logged in');
+        return left(AuthServiceLinkFailure.userNotLoggedIn);
+      }
+
+      // Check if user already has email/password credential linked.
+      // We check for email provider instead of isAnonymous because users
+      // signed in with custom tokens (e.g., server-created anonymous users)
+      // have isAnonymous=false but should still be able to link email/password.
+      final hasEmailProvider = user.providerData.any(
+        (provider) => provider.providerId == 'password',
+      );
+      if (hasEmailProvider) {
+        logw('linkEmailPassword: User already has email/password linked');
+        return left(AuthServiceLinkFailure.credentialAlreadyInUse);
+      }
+
+      logd('linkEmailPassword: Linking account to email: $email');
+
+      // Create email/password credential
+      final credential = fb_auth.EmailAuthProvider.credential(
+        email: email,
+        password: password,
+      );
+
+      // Link the credential to the anonymous account
+      await user.linkWithCredential(credential);
+      logd('linkEmailPassword: Successfully linked account');
+
+      return right(unit);
+    } on fb_auth.FirebaseAuthException catch (e) {
+      loge(e, 'linkEmailPassword failed');
+      switch (e.code) {
+        case 'email-already-in-use':
+          return left(AuthServiceLinkFailure.emailAlreadyInUse);
+        case 'weak-password':
+          return left(AuthServiceLinkFailure.weakPassword);
+        case 'invalid-email':
+          return left(AuthServiceLinkFailure.invalidEmail);
+        case 'invalid-credential':
+          return left(AuthServiceLinkFailure.invalidCredential);
+        case 'credential-already-in-use':
+          return left(AuthServiceLinkFailure.credentialAlreadyInUse);
+        case 'requires-recent-login':
+          return left(AuthServiceLinkFailure.requiresRecentLogin);
+        default:
+          return left(AuthServiceLinkFailure.unexpected);
+      }
+    } catch (e) {
+      loge(e, 'linkEmailPassword failed');
+      return left(AuthServiceLinkFailure.unexpected);
+    }
+  }
+
+  @override
+  Future<Either<AuthServiceSignInFailure, Unit>> updatePassword(
+    String newPassword,
+  ) async {
+    try {
+      final user = _fbAuth.currentUser;
+      if (user == null) {
+        logw('updatePassword: No user logged in');
+        return left(AuthServiceSignInFailure.userNotFound);
+      }
+
+      logd('updatePassword: Updating password');
+      await user.updatePassword(newPassword);
+      logd('updatePassword: Password updated successfully');
+
+      return right(unit);
+    } on fb_auth.FirebaseAuthException catch (e) {
+      loge(e, 'updatePassword failed');
+      switch (e.code) {
+        case 'weak-password':
+          return left(AuthServiceSignInFailure.weakPassword);
+        case 'requires-recent-login':
+          return left(AuthServiceSignInFailure.invalidCredential);
+        default:
+          return left(AuthServiceSignInFailure.unexpected);
+      }
+    } catch (e) {
+      loge(e, 'updatePassword failed');
       return left(AuthServiceSignInFailure.unexpected);
     }
   }
@@ -818,7 +910,7 @@ class AuthServiceImpl implements AuthServiceInt {
   @override
   Future<Either<AuthServiceSignInFailure, LoginCodeResponse>> loginWithCode(String code) async {
     try {
-      var result = await mainCallable.call(LoginCodeRequest(loginCode: code).toJson());
+      var result = await authCallable.call(LoginCodeRequest(loginCode: code).toJson());
 
       return right(LoginCodeResponse.fromJson(result.data));
     } catch (e) {
@@ -1473,7 +1565,7 @@ class AuthServiceImpl implements AuthServiceInt {
             {
               'action': 'accessCodeCheck',
               'accessCode': code,
-              'timezone': await FlutterTimezone.getLocalTimezone()
+              'timezone': (await FlutterTimezone.getLocalTimezone()).identifier,
             },
           ));
 
@@ -1690,7 +1782,7 @@ class AuthServiceImpl implements AuthServiceInt {
         .call(<String, dynamic>{
       'newToken': newToken,
       'oldToken': oldToken,
-      'timezone': await FlutterTimezone.getLocalTimezone(),
+      'timezone': (await FlutterTimezone.getLocalTimezone()).identifier,
     });
   }
 }

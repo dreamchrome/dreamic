@@ -62,6 +62,27 @@ abstract class AuthServiceInt {
     String password,
   );
 
+  // Account linking
+  /// Link anonymous account to email/password credentials
+  ///
+  /// Converts an anonymous user to a permanent account while preserving the UID.
+  /// After linking, the user can sign in with email/password on other devices.
+  ///
+  /// Returns [AuthServiceLinkFailure.emailAlreadyInUse] if email is already registered.
+  /// Returns [AuthServiceLinkFailure.weakPassword] if password is less than 6 characters.
+  Future<Either<AuthServiceLinkFailure, Unit>> linkEmailPassword(
+    String email,
+    String password,
+  );
+
+  // Password management
+  /// Update the current user's password
+  ///
+  /// Requires recent authentication - call [reauthenticateWithPassword] first.
+  Future<Either<AuthServiceSignInFailure, Unit>> updatePassword(
+    String newPassword,
+  );
+
   Future<Either<AuthServiceSignInFailure, Unit>> signInWithDevOnly();
   Future<Either<AuthServiceSignInFailure, Unit>> signInWithCustomToken(String customToken);
 
@@ -129,6 +150,33 @@ enum AuthServiceSignOutFailure {
 enum AuthServiceEmailVerificationFailure {
   userNotLoggedIn,
   tooManyRequests,
+  unexpected,
+}
+
+/// Failure cases for linking anonymous accounts to credentials
+enum AuthServiceLinkFailure {
+  /// User is not logged in or not anonymous
+  userNotLoggedIn,
+
+  /// The email is already in use by another account
+  emailAlreadyInUse,
+
+  /// Password is too weak (less than 6 characters)
+  weakPassword,
+
+  /// The email address is invalid
+  invalidEmail,
+
+  /// The credential is invalid or has expired
+  invalidCredential,
+
+  /// Account requires recent authentication before linking
+  requiresRecentLogin,
+
+  /// The credential is already associated with a different user account
+  credentialAlreadyInUse,
+
+  /// General unexpected error
   unexpected,
 }
 
