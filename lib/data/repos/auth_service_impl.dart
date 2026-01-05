@@ -40,7 +40,6 @@ class AuthServiceImpl implements AuthServiceInt {
   HttpsCallable mainCallable = AppConfigBase.firebaseFunctionCallable('mainCallable');
   HttpsCallable authCallable = AppConfigBase.firebaseFunctionCallable('authMainCallable');
   late final fb_auth.FirebaseAuth _fbAuth;
-  late final FirebaseFunctions _fbFunctions;
 
   // bool _hasGottenUserPrivate = false;
   bool _hasAuthStateChangeListenerRunAtLeastOnce = false;
@@ -98,10 +97,6 @@ class AuthServiceImpl implements AuthServiceInt {
     _fbAuth = fb_auth.FirebaseAuth.instanceFor(app: firebaseApp);
     _fbAuth.authStateChanges().listen(handleAuthStateChanges);
     _fbAuth.idTokenChanges().listen((event) => handleTokenChanges(event));
-    _fbFunctions = FirebaseFunctions.instanceFor(
-      app: firebaseApp,
-      region: AppConfigBase.backendRegion,
-    );
 
     // For debuggin
     if (AppConfigBase.signoutOnReload) {
@@ -970,17 +965,11 @@ class AuthServiceImpl implements AuthServiceInt {
 
         // await _fbAuth.signInAnonymously();
 
-        HttpsCallable callable = _fbFunctions.httpsCallable('authLoginAnonymously');
-        // HttpsCallable callable = _fbFunctions.httpsCallable('authLoginAnonymouslyV1');
-
-        // HttpsCallable callable =
-        //     FirebaseFunctions.instanceFor(region: AppConfigBase.backendRegion)
-        //         .httpsCallable('authLoginAnonymouslyV1');
-
         var result = await retryIt(() async {
-          return await callable.call(
-            <String, dynamic>{'timezone': await FlutterTimezone.getLocalTimezone()},
-          );
+          return await authCallable.call({
+            'action': 'loginAnonymously',
+            'timezone': (await FlutterTimezone.getLocalTimezone()).identifier,
+          });
         }, maxAttempts: 8);
 
         final String token = result.data['token'];
@@ -1569,7 +1558,7 @@ class AuthServiceImpl implements AuthServiceInt {
 
   @override
   Future<Either<AuthServiceSignInFailure, Unit>> signInWithDevOnly() async {
-    FirebaseAuth.instance.signOut();
+    _fbAuth.signOut();
 
     HttpsCallable devOnlyCallable = AppConfigBase.firebaseFunctionCallable('devOnlyDevSignIn');
 

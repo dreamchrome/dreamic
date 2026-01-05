@@ -159,7 +159,7 @@ GetIt.I.registerSingleton<AuthServiceInt>(
 
 ### NotificationService
 
-Location: `lib/app/helpers/notification_service.dart`
+Location: `lib/notifications/notification_service.dart`
 
 **Version:** Added in 0.2.0
 
@@ -171,8 +171,8 @@ Complete notification system that reduces ~300 lines of boilerplate to one `init
 
 ```dart
 // 1. In main.dart (before runApp)
-import 'package:dreamic/app/helpers/notification_background_handler.dart';
-import 'package:dreamic/app/helpers/notification_service.dart';
+import 'package:dreamic/notifications/notification_background_handler.dart';
+import 'package:dreamic/notifications/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -268,7 +268,7 @@ await service.openSystemSettings();
 
 **Permission Helper:**
 ```dart
-import 'package:dreamic/app/helpers/notification_permission_helper.dart';
+import 'package:dreamic/notifications/notification_permission_helper.dart';
 
 final helper = NotificationPermissionHelper();
 

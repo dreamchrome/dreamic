@@ -20,7 +20,9 @@ Future<void> streamFirebaseFunction(
   // Get the current user's ID token
   String? token;
   try {
-    token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    token = await FirebaseAuth.instanceFor(app: AppConfigBase.firebaseApp)
+        .currentUser
+        ?.getIdToken();
   } catch (e) {
     loge('Error getting ID token: $e');
     onStreamError?.call(e);
@@ -63,7 +65,9 @@ Future<void> streamFirebaseFuncionLineByLine(
   // Get the current user's ID token
   String? token;
   try {
-    token = await FirebaseAuth.instance.currentUser?.getIdToken();
+    token = await FirebaseAuth.instanceFor(app: AppConfigBase.firebaseApp)
+        .currentUser
+        ?.getIdToken();
   } catch (e) {
     loge('Error getting ID token: $e');
     onStreamError?.call(e);

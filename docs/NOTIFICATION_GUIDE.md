@@ -155,8 +155,8 @@ Web notifications require a service worker. See the [Web Setup Guide](NOTIFICATI
 In your `main.dart`, **before** calling `runApp()`:
 
 ```dart
-import 'package:dreamic/app/helpers/notification_background_handler.dart';
-import 'package:dreamic/app/helpers/notification_service.dart';
+import 'package:dreamic/notifications/notification_background_handler.dart';
+import 'package:dreamic/notifications/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -196,7 +196,7 @@ void main() async {
 Request notification permissions at the appropriate time in your app flow:
 
 ```dart
-import 'package:dreamic/app/helpers/notification_service.dart';
+import 'package:dreamic/notifications/notification_service.dart';
 
 // Simple request
 final status = await NotificationService().requestPermissions();
@@ -263,7 +263,7 @@ Notifications from FCM are automatically displayed. No code needed!
 ### Manual Local Notification
 
 ```dart
-import 'package:dreamic/app/helpers/notification_service.dart';
+import 'package:dreamic/notifications/notification_service.dart';
 import 'package:dreamic/data/models/notification_payload.dart';
 
 final service = NotificationService();
@@ -581,7 +581,7 @@ await service.showNotification(
 
 **Manual cache management:**
 ```dart
-import 'package:dreamic/app/helpers/notification_image_loader.dart';
+import 'package:dreamic/notifications/notification_image_loader.dart';
 
 // Clear all cached images
 await NotificationImageLoader.clearCache();
@@ -669,7 +669,7 @@ await NotificationService().initialize(
 Android 8.0+ requires notification channels for granular control:
 
 ```dart
-import 'package:dreamic/app/helpers/notification_channel_manager.dart';
+import 'package:dreamic/notifications/notification_channel_manager.dart';
 
 // Access via NotificationService
 final channelManager = NotificationService().channelManager;

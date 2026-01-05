@@ -3,6 +3,7 @@
 import 'dart:io';
 
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
@@ -42,6 +43,23 @@ class AppConfigBase {
   /// This is set automatically by appInitFirebase() and should not be set manually.
   /// Use this to guard Firebase API calls throughout the package.
   static bool _isFirebaseInitialized = false;
+
+  /// The Firebase app instance used throughout the package.
+  /// This is set by appInitFirebase() to ensure all Firebase services use the same app instance.
+  static FirebaseApp? _firebaseApp;
+
+  /// Get the Firebase app instance. Throws if Firebase is not initialized.
+  static FirebaseApp get firebaseApp {
+    if (_firebaseApp == null) {
+      throw StateError(
+        'Firebase app not available. Call appInitFirebase() first.',
+      );
+    }
+    return _firebaseApp!;
+  }
+
+  /// Set the Firebase app instance (called by appInitFirebase).
+  static set firebaseApp(FirebaseApp app) => _firebaseApp = app;
 
   /// Check if Firebase is initialized and available for use.
   // ignore: unnecessary_getters_setters
@@ -704,6 +722,7 @@ class AppConfigBase {
       );
     }
     return FirebaseFunctions.instanceFor(
+      app: firebaseApp,
       region: backendRegion,
     ).httpsCallable(
       name,
@@ -718,11 +737,11 @@ class AppConfigBase {
         'Call appInitFirebase() first.',
       );
     }
+    final projectId = firebaseApp.options.projectId;
     if (doUseBackendEmulator) {
       return Uri.parse(
-          'http://$backendEmulatorRemoteAddress:$backendEmulatorFunctionsPort/${FirebaseFunctions.instanceFor().app.options.projectId}/$backendRegion/$name');
+          'http://$backendEmulatorRemoteAddress:$backendEmulatorFunctionsPort/$projectId/$backendRegion/$name');
     }
-    final projectId = FirebaseFunctions.instanceFor().app.options.projectId;
     return Uri.parse('https://$backendRegion-$projectId.cloudfunctions.net/$name');
   }
 

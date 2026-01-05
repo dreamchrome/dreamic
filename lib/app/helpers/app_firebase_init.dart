@@ -15,13 +15,9 @@ Future<FirebaseApp> appInitFirebase(
     options: options,
   );
 
-  // Mark Firebase as initialized for the rest of the package
+  // Mark Firebase as initialized and store the app reference for the rest of the package
   AppConfigBase.isFirebaseInitialized = true;
-
-  // Set up Firebase Emulator
-  // if (AppConfigBase.doUseBackendEmulator) {
-  //   await _connectToFirebaseEmulator(fbApp);
-  // }
+  AppConfigBase.firebaseApp = fbApp;
 
   return fbApp;
 }
@@ -52,9 +48,8 @@ Future<void> _connectToFirebaseEmulator(FirebaseApp fbApp) async {
   //   }
   // }
 
-  await FirebaseAuth.instanceFor(
-    app: fbApp,
-  ).useAuthEmulator(emulatorAddress, AppConfigBase.backendEmulatorAuthPort);
+  await FirebaseAuth.instanceFor(app: fbApp)
+      .useAuthEmulator(emulatorAddress, AppConfigBase.backendEmulatorAuthPort);
   logd(
       'Set up Firebase Auth emulator with server $emulatorAddress:${AppConfigBase.backendEmulatorAuthPort}');
 
