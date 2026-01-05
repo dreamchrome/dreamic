@@ -1,3 +1,17 @@
+## 0.3.5
+
+### New Features
+
+* **Added:** Account linking support with `linkEmailPassword()` method in `AuthServiceInt`
+  * Converts anonymous users to permanent email/password accounts while preserving UID
+  * Returns typed `AuthServiceLinkFailure` enum for error handling
+* **Added:** Password update support with `updatePassword()` method in `AuthServiceInt`
+  * Allows users to change their password (requires recent authentication)
+* **Added:** `AuthServiceLinkFailure` enum with comprehensive error cases:
+  * `userNotLoggedIn`, `emailAlreadyInUse`, `weakPassword`, `invalidEmail`, `invalidCredential`, `requiresRecentLogin`, `credentialAlreadyInUse`, `unexpected`
+
+---
+
 ## 0.3.4
 
 ### Breaking Changes
