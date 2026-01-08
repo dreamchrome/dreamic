@@ -37,7 +37,8 @@ class AuthServiceImpl implements AuthServiceInt {
   /// Whether to use Firebase FCM for push notifications
   /// This is the general setting, which can be disabled by the app config setting, but not overridden to enable FCM by the app config.
   bool useFirebaseFCM;
-  HttpsCallable authCallable = AppConfigBase.firebaseFunctionCallable('authMainCallable');
+  HttpsCallable authCallable =
+      AppConfigBase.firebaseFunctionCallable(AppConfigBase.authMainCallableFunction);
   late final fb_auth.FirebaseAuth _fbAuth;
 
   // bool _hasGottenUserPrivate = false;
@@ -1652,7 +1653,8 @@ class AuthServiceImpl implements AuthServiceInt {
   Future<Either<AuthServiceSignInFailure, Unit>> signInWithDevOnly() async {
     _fbAuth.signOut();
 
-    HttpsCallable devOnlyCallable = AppConfigBase.firebaseFunctionCallable('devOnlyDevSignIn');
+    HttpsCallable devOnlyCallable =
+        AppConfigBase.firebaseFunctionCallable(AppConfigBase.devOnlyDevSignInFunction);
 
     var result = await devOnlyCallable.call({
       'uid': AppConfigBase.devOnlyUid,
@@ -1778,11 +1780,25 @@ class AuthServiceImpl implements AuthServiceInt {
 
   Future<void> _updateTokenOnServer(String newToken, String oldToken) async {
     // Call a Firebase function to update the token on the server.
-    await AppConfigBase.firebaseFunctionCallable('notificationsUpdateFcmToken')
-        .call(<String, dynamic>{
+    final data = <String, dynamic>{
       'newToken': newToken,
       'oldToken': oldToken,
       'timezone': (await FlutterTimezone.getLocalTimezone()).identifier,
-    });
+    };
+
+    if (AppConfigBase.notificationsUpdateFcmTokenUseGrouped) {
+      // Grouped style: call group function with action parameter
+      await AppConfigBase.firebaseFunctionCallable(
+              AppConfigBase.notificationsUpdateFcmTokenGroupFunction!)
+          .call(<String, dynamic>{
+        'action': AppConfigBase.notificationsUpdateFcmTokenAction,
+        ...data,
+      });
+    } else {
+      // Standalone style: call function directly
+      await AppConfigBase.firebaseFunctionCallable(
+              AppConfigBase.notificationsUpdateFcmTokenFunction)
+          .call(data);
+    }
   }
 }

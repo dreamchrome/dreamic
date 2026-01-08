@@ -660,6 +660,97 @@ class AppConfigBase {
     _editorPreviewMode = value;
   }
 
+  //
+  // Firebase Function Names
+  //
+  // Functions can be configured as either:
+  // - Standalone: Call the function directly
+  // - Grouped: Call a main callable with an 'action' parameter
+  //
+  // To use grouped style, set the GroupFunction. If GroupFunction is set,
+  // the grouped style is used; otherwise standalone style is used.
+  //
+
+  // --- notificationsUpdateFcmToken ---
+  // Standalone function name (used when GroupFunction is not set)
+  static String? _notificationsUpdateFcmTokenFunctionDefault;
+  static set notificationsUpdateFcmTokenFunctionDefault(String value) =>
+      _notificationsUpdateFcmTokenFunctionDefault = value;
+  static String? _notificationsUpdateFcmTokenFunction;
+  static String get notificationsUpdateFcmTokenFunction {
+    _notificationsUpdateFcmTokenFunction ??=
+        const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_FUNCTION', defaultValue: '')
+                .isNotEmpty
+            ? const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_FUNCTION',
+                defaultValue: '')
+            : (_notificationsUpdateFcmTokenFunctionDefault ?? 'notificationsUpdateFcmToken');
+    return _notificationsUpdateFcmTokenFunction!;
+  }
+
+  // Group function name (when set, uses grouped style with action parameter)
+  static String? _notificationsUpdateFcmTokenGroupFunctionDefault;
+  static set notificationsUpdateFcmTokenGroupFunctionDefault(String? value) =>
+      _notificationsUpdateFcmTokenGroupFunctionDefault = value;
+  static String? _notificationsUpdateFcmTokenGroupFunction;
+  static String? get notificationsUpdateFcmTokenGroupFunction {
+    _notificationsUpdateFcmTokenGroupFunction ??=
+        const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_GROUP_FUNCTION',
+                    defaultValue: '')
+                .isNotEmpty
+            ? const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_GROUP_FUNCTION',
+                defaultValue: '')
+            : _notificationsUpdateFcmTokenGroupFunctionDefault;
+    return _notificationsUpdateFcmTokenGroupFunction;
+  }
+
+  // Action name (used with grouped style)
+  static String? _notificationsUpdateFcmTokenActionDefault;
+  static set notificationsUpdateFcmTokenActionDefault(String value) =>
+      _notificationsUpdateFcmTokenActionDefault = value;
+  static String? _notificationsUpdateFcmTokenAction;
+  static String get notificationsUpdateFcmTokenAction {
+    _notificationsUpdateFcmTokenAction ??=
+        const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_ACTION', defaultValue: '')
+                .isNotEmpty
+            ? const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_ACTION', defaultValue: '')
+            : (_notificationsUpdateFcmTokenActionDefault ?? 'updateFcmToken');
+    return _notificationsUpdateFcmTokenAction!;
+  }
+
+  /// Whether to use grouped style for notificationsUpdateFcmToken
+  static bool get notificationsUpdateFcmTokenUseGrouped {
+    final groupFunc = notificationsUpdateFcmTokenGroupFunction;
+    return groupFunc != null && groupFunc.isNotEmpty;
+  }
+
+  // --- authMainCallable ---
+  // Main callable for auth operations (used with action parameter)
+  static String? _authMainCallableFunctionDefault;
+  static set authMainCallableFunctionDefault(String value) =>
+      _authMainCallableFunctionDefault = value;
+  static String? _authMainCallableFunction;
+  static String get authMainCallableFunction {
+    _authMainCallableFunction ??=
+        const String.fromEnvironment('AUTH_MAIN_CALLABLE_FUNCTION', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('AUTH_MAIN_CALLABLE_FUNCTION', defaultValue: '')
+            : (_authMainCallableFunctionDefault ?? 'authMainCallable');
+    return _authMainCallableFunction!;
+  }
+
+  // --- devOnlyDevSignIn ---
+  // Dev-only sign-in function (only used in development)
+  static String? _devOnlyDevSignInFunctionDefault;
+  static set devOnlyDevSignInFunctionDefault(String value) =>
+      _devOnlyDevSignInFunctionDefault = value;
+  static String? _devOnlyDevSignInFunction;
+  static String get devOnlyDevSignInFunction {
+    _devOnlyDevSignInFunction ??=
+        const String.fromEnvironment('DEV_ONLY_DEV_SIGN_IN_FUNCTION', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('DEV_ONLY_DEV_SIGN_IN_FUNCTION', defaultValue: '')
+            : (_devOnlyDevSignInFunctionDefault ?? 'devOnlyDevSignIn');
+    return _devOnlyDevSignInFunction!;
+  }
+
   // static String? _appStoreAndroidUrl;
   // static String get appStoreAndroidUrl {
   //   _appStoreAndroidUrl ??= const String.fromEnvironment('APP_STORE_ANDROID_URL', defaultValue: '');

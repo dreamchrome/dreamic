@@ -574,6 +574,61 @@ final callable = AppConfigBase.firebaseFunctionCallable('myFunction');
 final result = await callable.call({'param': 'value'});
 ```
 
+**Firebase Function Names:**
+
+The package uses configurable Firebase Cloud Function names, allowing consuming apps to customize the function names used for authentication and notifications.
+
+```dart
+// Auth main callable (grouped function with action parameter)
+AppConfigBase.authMainCallableFunction // Default: 'authMainCallable'
+
+// Dev-only sign-in function
+AppConfigBase.devOnlyDevSignInFunction // Default: 'devOnlyDevSignIn'
+
+// FCM token update function (supports both standalone and grouped styles)
+AppConfigBase.notificationsUpdateFcmTokenFunction // Default: 'notificationsUpdateFcmToken'
+AppConfigBase.notificationsUpdateFcmTokenGroupFunction // Default: null (standalone)
+AppConfigBase.notificationsUpdateFcmTokenAction // Default: 'updateFcmToken'
+```
+
+**Configuring Function Names:**
+```dart
+// In your app's main.dart, before Firebase initialization
+
+// Simple rename of auth callable
+AppConfigBase.authMainCallableFunctionDefault = 'myAuthCallable';
+
+// Rename dev-only sign-in
+AppConfigBase.devOnlyDevSignInFunctionDefault = 'myDevSignIn';
+
+// Option 1: Standalone FCM function (default behavior)
+AppConfigBase.notificationsUpdateFcmTokenFunctionDefault = 'myFcmTokenFunction';
+
+// Option 2: Grouped FCM function (call a main callable with action parameter)
+AppConfigBase.notificationsUpdateFcmTokenGroupFunctionDefault = 'notificationsMain';
+AppConfigBase.notificationsUpdateFcmTokenActionDefault = 'updateToken';
+// This will call: notificationsMain({'action': 'updateToken', ...data})
+```
+
+**How Grouped Functions Work:**
+- If `GroupFunction` is **not set** (null/empty) → calls the standalone function directly
+- If `GroupFunction` **is set** → calls the group function with `{'action': actionName, ...data}`
+
+This allows you to either:
+1. Use individual Cloud Functions for each operation (standalone style)
+2. Use a single Cloud Function that handles multiple operations via an `action` parameter (grouped style)
+
+**Environment Variables:**
+You can also configure function names via dart-define:
+```bash
+flutter run \
+  --dart-define=AUTH_MAIN_CALLABLE_FUNCTION=myAuthCallable \
+  --dart-define=DEV_ONLY_DEV_SIGN_IN_FUNCTION=myDevSignIn \
+  --dart-define=NOTIFICATIONS_UPDATE_FCM_TOKEN_FUNCTION=myFcmFunction \
+  --dart-define=NOTIFICATIONS_UPDATE_FCM_TOKEN_GROUP_FUNCTION=notificationsMain \
+  --dart-define=NOTIFICATIONS_UPDATE_FCM_TOKEN_ACTION=updateToken
+```
+
 **Platform Detection:**
 ```dart
 AppConfigBase.isSimulatorDevice // True if running on iOS simulator
