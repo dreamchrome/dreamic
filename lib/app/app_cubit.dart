@@ -12,7 +12,7 @@ import 'package:dreamic/versioning/app_version_update_service.dart';
 import 'package:dreamic/app/helpers/app_lifecycle_service.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:dreamic/presentation/helpers/cubit_helpers.dart';
-import 'package:internet_connection_checker/internet_connection_checker.dart';
+import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
 
 // import '../domain/repos/input_repo_int.dart';
 
@@ -24,7 +24,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   Uri? entranceUri;
   bool networkRequired;
   bool hasProcessedEntrance = false;
-  InternetConnectionChecker? connectionChecker;
+  InternetConnection? connectionChecker;
   StreamSubscription? connectionCheckerSubscription;
   StreamSubscription<VersionUpdateInfo>? versionUpdateSubscription;
   StreamSubscription<AppLifecycleState>? lifecycleSubscription;
@@ -71,11 +71,8 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       loge(e, 'Error canceling notification badge subscription');
     }
 
-    try {
-      connectionChecker?.dispose();
-    } catch (e) {
-      loge(e, 'Error disposing connection checker');
-    }
+    // Note: internet_connection_checker_plus doesn't have a dispose() method.
+    // Cleanup happens automatically when the subscription is cancelled.
 
     try {
       AppVersionUpdateService().dispose();
@@ -229,10 +226,11 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
         return;
       }
 
-      connectionChecker = InternetConnectionChecker.createInstance(
-        addresses: List<AddressCheckOption>.unmodifiable(<AddressCheckOption>[
-          AddressCheckOption(uri: Uri.parse(defaultHostingUrl)),
-        ]),
+      connectionChecker = InternetConnection.createInstance(
+        useDefaultOptions: false,
+        customCheckOptions: [
+          InternetCheckOption(uri: Uri.parse(defaultHostingUrl)),
+        ],
       );
 
       // Check network with timeout
@@ -268,7 +266,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
 
   Future<bool> _checkNetworkWithTimeout() async {
     try {
-      final result = await connectionChecker?.hasConnection.timeout(_networkCheckTimeout);
+      final result = await connectionChecker?.hasInternetAccess.timeout(_networkCheckTimeout);
       return result ?? false;
     } catch (e) {
       logd('Network check timed out or failed: $e');
@@ -279,8 +277,8 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   void _subscribeToNetworkChanges() {
     logd('Subscribing to network connection changes');
     connectionCheckerSubscription = connectionChecker?.onStatusChange.listen(
-      (InternetConnectionStatus status) {
-        if (status == InternetConnectionStatus.connected) {
+      (InternetStatus status) {
+        if (status == InternetStatus.connected) {
           logd('Network connection detected connected');
           emitSafe(state.copyWith(networkStatus: NetworkStatus.connected));
 

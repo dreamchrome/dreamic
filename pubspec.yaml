@@ -40,8 +40,8 @@ dependencies:
   wakelock_plus: ^1.4.0
   percent_indicator: ^4.2.5
   web: ^1.1.1
-  connectivity_plus: ^6.1.5
-  internet_connection_checker: ^3.0.1
+  connectivity_plus: ^7.0.0
+  internet_connection_checker_plus: ^2.9.1
   path_provider: ^2.1.5
   open_file: ^3.5.10
   flutter_local_notifications: ^18.0.1
