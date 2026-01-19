@@ -11,4 +11,12 @@ and the Flutter guide for
 [developing packages and plugins](https://flutter.dev/to/develop-packages).
 -->
 
+# Dreamic
+
+## Status: Work in Progress
+
+**This package is actively under development.** Expect incomplete features, known rough edges, and occasional broken behavior.
+
+**Breaking changes will happen.** APIs, file structure, and conventions may change between releases without full backwards compatibility.
+
 A general-purpose package for Flutter/Firebase apps.
