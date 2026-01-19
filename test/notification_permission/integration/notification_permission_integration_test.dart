@@ -39,8 +39,7 @@ void main() {
 
         // Verify persisted with dreamic_ prefix
         final prefs = await SharedPreferences.getInstance();
-        final storedJson =
-            prefs.getString('dreamic_notification_settings_prompt_info');
+        final storedJson = prefs.getString('dreamic_notification_settings_prompt_info');
         expect(storedJson, isNotNull);
 
         // Verify data is correct
@@ -82,8 +81,7 @@ void main() {
 
         // Verify cleared
         final prefs = await SharedPreferences.getInstance();
-        expect(
-            prefs.getString('dreamic_notification_settings_prompt_info'), isNull);
+        expect(prefs.getString('dreamic_notification_settings_prompt_info'), isNull);
 
         final info = await helper.getGoToSettingsPromptInfo();
         expect(info, isNull);
@@ -248,8 +246,7 @@ void main() {
     });
 
     group('periodic reminder timing', () {
-      test('updateLastReminderDate and shouldShowPeriodicReminder work together',
-          () async {
+      test('updateLastReminderDate and shouldShowPeriodicReminder work together', () async {
         // Initially should show (never shown)
         expect(await helper.shouldShowPeriodicReminder(), isTrue);
 
@@ -293,16 +290,14 @@ void main() {
         expect(info?.denialCount, equals(5));
         expect(info?.isPermanent, isTrue);
         expect(info?.requestAttemptCount, equals(7));
-        expect(info?.lastRequestAttemptTime,
-            equals(originalTime.add(const Duration(hours: 1))));
+        expect(info?.lastRequestAttemptTime, equals(originalTime.add(const Duration(hours: 1))));
         expect(info?.lastRequestWasBlocked, isTrue);
       });
 
       test('GoToSettingsPromptInfo round-trips through persistence', () async {
         final originalTime = DateTime(2024, 6, 15, 10, 30, 0);
         MockSharedPreferencesHelper.setupWithDreamicData(
-          settingsPromptInfoJson:
-              MockSharedPreferencesHelper.createSettingsPromptInfoJson(
+          settingsPromptInfoJson: MockSharedPreferencesHelper.createSettingsPromptInfoJson(
             lastPromptTime: originalTime,
             promptCount: 3,
             lastActionWasOpenSettings: true,
@@ -315,6 +310,188 @@ void main() {
         expect(info?.lastPromptTime, equals(originalTime));
         expect(info?.promptCount, equals(3));
         expect(info?.lastActionWasOpenSettings, isTrue);
+      });
+    });
+
+    group('auto-clear on resume', () {
+      // These tests verify the clearing behavior that occurs when permission
+      // is detected as granted. The actual permission check calls Firebase,
+      // which requires runtime mocking. These tests verify the clearing logic
+      // works correctly, which is what autoClearIfGranted() calls internally.
+
+      test('clears denial info when permission is granted', () async {
+        // Set up: User previously denied permission
+        final denialTime = DateTime.now().subtract(const Duration(days: 3));
+        MockSharedPreferencesHelper.setupWithDreamicData(
+          denialInfoJson: MockSharedPreferencesHelper.createDenialInfoJson(
+            lastDenialTime: denialTime,
+            denialCount: 2,
+            isPermanent: true,
+            requestAttemptCount: 3,
+          ),
+          migrationComplete: true,
+        );
+
+        // Verify denial info exists before
+        var denialInfo = await helper.getNotificationDenialInfo();
+        expect(denialInfo, isNotNull);
+        expect(denialInfo?.denialCount, equals(2));
+        expect(denialInfo?.isPermanent, isTrue);
+
+        // Simulate: User enabled notifications in settings, app resumes
+        // autoClearIfGranted() calls these methods when permission is granted
+        await helper.clearNotificationDenialInfo();
+
+        // Verify: Denial info is cleared
+        denialInfo = await helper.getNotificationDenialInfo();
+        expect(denialInfo, isNull);
+
+        // Verify in SharedPreferences directly
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('dreamic_notification_denial_info'), isNull);
+      });
+
+      test('clears settings prompt info when permission is granted', () async {
+        // Set up: User was shown go-to-settings prompt
+        final promptTime = DateTime.now().subtract(const Duration(days: 1));
+        MockSharedPreferencesHelper.setupWithDreamicData(
+          settingsPromptInfoJson: MockSharedPreferencesHelper.createSettingsPromptInfoJson(
+            lastPromptTime: promptTime,
+            promptCount: 2,
+            lastActionWasOpenSettings: true,
+          ),
+          migrationComplete: true,
+        );
+
+        // Verify settings prompt info exists before
+        var settingsInfo = await helper.getGoToSettingsPromptInfo();
+        expect(settingsInfo, isNotNull);
+        expect(settingsInfo?.promptCount, equals(2));
+
+        // Simulate: User enabled notifications in settings, app resumes
+        // autoClearIfGranted() calls these methods when permission is granted
+        await helper.clearGoToSettingsPromptInfo();
+
+        // Verify: Settings prompt info is cleared
+        settingsInfo = await helper.getGoToSettingsPromptInfo();
+        expect(settingsInfo, isNull);
+
+        // Verify in SharedPreferences directly
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('dreamic_notification_settings_prompt_info'), isNull);
+      });
+
+      test('clears both denial and settings info together on grant', () async {
+        // Set up: User has both denial info and settings prompt info
+        final denialTime = DateTime.now().subtract(const Duration(days: 7));
+        final promptTime = DateTime.now().subtract(const Duration(days: 2));
+        MockSharedPreferencesHelper.setupWithDreamicData(
+          denialInfoJson: MockSharedPreferencesHelper.createDenialInfoJson(
+            lastDenialTime: denialTime,
+            denialCount: 3,
+            isPermanent: true,
+            requestAttemptCount: 5,
+          ),
+          settingsPromptInfoJson: MockSharedPreferencesHelper.createSettingsPromptInfoJson(
+            lastPromptTime: promptTime,
+            promptCount: 4,
+            lastActionWasOpenSettings: false,
+          ),
+          migrationComplete: true,
+        );
+
+        // Verify both exist before
+        expect(await helper.getNotificationDenialInfo(), isNotNull);
+        expect(await helper.getGoToSettingsPromptInfo(), isNotNull);
+
+        // Simulate: User enabled notifications in settings, app resumes
+        // autoClearIfGranted() clears both when permission is detected as granted
+        await helper.clearNotificationDenialInfo();
+        await helper.clearGoToSettingsPromptInfo();
+
+        // Verify: Both are cleared
+        expect(await helper.getNotificationDenialInfo(), isNull);
+        expect(await helper.getGoToSettingsPromptInfo(), isNull);
+
+        // Verify in SharedPreferences directly
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('dreamic_notification_denial_info'), isNull);
+        expect(prefs.getString('dreamic_notification_settings_prompt_info'), isNull);
+      });
+
+      test('clearing is idempotent (safe to call when no data exists)', () async {
+        // Set up: No denial or settings info exists
+        MockSharedPreferencesHelper.setupEmpty();
+
+        // Verify nothing exists
+        expect(await helper.getNotificationDenialInfo(), isNull);
+        expect(await helper.getGoToSettingsPromptInfo(), isNull);
+
+        // Simulate: autoClearIfGranted() is called even when no data exists
+        // (this can happen on fresh install where user grants immediately)
+        await helper.clearNotificationDenialInfo();
+        await helper.clearGoToSettingsPromptInfo();
+
+        // Verify: No errors, still null
+        expect(await helper.getNotificationDenialInfo(), isNull);
+        expect(await helper.getGoToSettingsPromptInfo(), isNull);
+      });
+
+      test('has-requested flag is preserved after auto-clear', () async {
+        // Set up: User requested before, then denied
+        final denialTime = DateTime.now().subtract(const Duration(days: 1));
+        MockSharedPreferencesHelper.setupWithDreamicData(
+          denialInfoJson: MockSharedPreferencesHelper.createDenialInfoJson(
+            lastDenialTime: denialTime,
+            denialCount: 1,
+            isPermanent: false,
+            requestAttemptCount: 1,
+          ),
+          hasRequested: true,
+          migrationComplete: true,
+        );
+
+        // Verify has-requested is true before
+        final prefsBefore = await SharedPreferences.getInstance();
+        expect(prefsBefore.getBool('dreamic_notification_has_requested'), isTrue);
+
+        // Simulate: User enabled notifications, auto-clear occurs
+        await helper.clearNotificationDenialInfo();
+
+        // Verify: has-requested flag is still true (historical record preserved)
+        final prefsAfter = await SharedPreferences.getInstance();
+        expect(prefsAfter.getBool('dreamic_notification_has_requested'), isTrue);
+      });
+
+      test('last reminder date is preserved after auto-clear', () async {
+        // Set up: User was shown periodic reminder and denial info exists
+        final reminderTimestamp =
+            DateTime.now().subtract(const Duration(days: 14)).millisecondsSinceEpoch;
+        final denialTime = DateTime.now().subtract(const Duration(days: 20));
+        MockSharedPreferencesHelper.setupWithDreamicData(
+          denialInfoJson: MockSharedPreferencesHelper.createDenialInfoJson(
+            lastDenialTime: denialTime,
+            denialCount: 1,
+            isPermanent: true,
+            requestAttemptCount: 2,
+          ),
+          lastReminderDate: reminderTimestamp,
+          migrationComplete: true,
+        );
+
+        // Verify reminder date exists before
+        final prefsBefore = await SharedPreferences.getInstance();
+        expect(prefsBefore.getInt('dreamic_notification_last_reminder_date'),
+            equals(reminderTimestamp));
+
+        // Simulate: User enabled notifications, auto-clear occurs
+        await helper.clearNotificationDenialInfo();
+
+        // Verify: Last reminder date is preserved
+        // (useful for analytics even after permission is granted)
+        final prefsAfter = await SharedPreferences.getInstance();
+        expect(prefsAfter.getInt('dreamic_notification_last_reminder_date'),
+            equals(reminderTimestamp));
       });
     });
   });

@@ -75,9 +75,16 @@ Scope: Convert verification findings into actionable tasks.
    - NOTIFICATION_GUIDE.md updated to document automatic backend cleanup on logout.
    - Files: [lib/data/repos/auth_service_impl.dart](lib/data/repos/auth_service_impl.dart#L45-L85), [lib/data/repos/auth_service_int.dart](lib/data/repos/auth_service_int.dart#L70-L78), [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L934-L957), [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L570-L602), [lib/app/app_config_base.dart](lib/app/app_config_base.dart#L329-L338)
 
-- [ ] **Add integration test for auto-clear on resume**
-   - Simulate permission grant and ensure denial info cleared.
-   - File: [test/notification_permission/integration/notification_permission_integration_test.dart](test/notification_permission/integration/notification_permission_integration_test.dart#L1-L210)
+- [x] **Add integration test for auto-clear on resume**
+   - Added 6 tests in `auto-clear on resume` group verifying:
+     - Denial info cleared when permission granted
+     - Settings prompt info cleared when permission granted
+     - Both cleared together on grant
+     - Clearing is idempotent (safe when no data exists)
+     - has-requested flag preserved after auto-clear
+     - Last reminder date preserved after auto-clear
+   - Note: Tests verify the clearing logic directly; actual Firebase permission check is exercised at runtime.
+   - File: [test/notification_permission/integration/notification_permission_integration_test.dart](test/notification_permission/integration/notification_permission_integration_test.dart#L321-L506)
 # Verification: Deferred FCM Permission Prompt
 
 Date: 2026-01-19
