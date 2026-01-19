@@ -262,15 +262,20 @@ Use the built-in permission flow that handles all edge cases automatically:
 
 ```dart
 import 'package:dreamic/notifications/notification_service.dart';
+
+// Simple usage - AppConfigBase values are used automatically
+final result = await NotificationService().runNotificationPermissionFlow(context);
+```
+
+For custom UI strings or behavior, pass a `NotificationFlowConfig`:
+
+```dart
+import 'package:dreamic/notifications/notification_service.dart';
 import 'package:dreamic/notifications/notification_types.dart';
 
 final result = await NotificationService().runNotificationPermissionFlow(
   context,
-  config: NotificationFlowConfig(
-    askAgainAfter: const Duration(days: 7),
-    maxAskCount: 3,
-    showGoToSettingsPrompt: true,
-    goToSettingsAskAgainAfter: const Duration(days: 30),
+  config: NotificationFlowConfig.fromAppConfig().copyWith(
     strings: NotificationFlowStrings(
       valuePropositionTitle: 'Stay in the Loop',
       valuePropositionMessage: 'Get updates on your orders and exclusive offers.',
@@ -347,7 +352,7 @@ flutter run --dart-define FCM_AUTO_INITIALIZE=false
 After onboarding or at an appropriate moment:
 
 ```dart
-// Option 1: High-level flow (handles everything)
+// Option 1: High-level flow (recommended - uses AppConfigBase values automatically)
 final result = await NotificationService().runNotificationPermissionFlow(context);
 
 // Option 2: Low-level manual control
@@ -429,52 +434,58 @@ The built-in flow handles this automatically with `NotificationFlowStrings.webSe
 
 Configure how and when to prompt users to enable notifications via system settings.
 
-### Basic Configuration
+### Default Behavior
 
-```dart
-NotificationFlowConfig(
-  // Whether to ever show "go to settings" prompt
-  showGoToSettingsPrompt: true,
+By default, `runNotificationPermissionFlow()` uses values from `AppConfigBase`:
+- Shows go-to-settings prompt: `true`
+- Re-prompt interval: 30 days
+- Max prompt count: unlimited
 
-  // Wait 30 days before re-prompting
-  goToSettingsAskAgainAfter: const Duration(days: 30),
+### Overriding Defaults
 
-  // Maximum times to show the prompt (null = unlimited)
-  goToSettingsMaxAskCount: 3,
-)
-```
-
-### Configuration Examples
+Pass a `NotificationFlowConfig` to customize go-to-settings behavior:
 
 **Never prompt to go to settings:**
 ```dart
-NotificationFlowConfig(
-  showGoToSettingsPrompt: false,
-)
+final result = await NotificationService().runNotificationPermissionFlow(
+  context,
+  config: NotificationFlowConfig.fromAppConfig().copyWith(
+    showGoToSettingsPrompt: false,
+  ),
+);
 // Result: NotificationFlowResult.skippedGoToSettings
 ```
 
 **Prompt only once:**
 ```dart
-NotificationFlowConfig(
-  goToSettingsMaxAskCount: 1,
-)
+final result = await NotificationService().runNotificationPermissionFlow(
+  context,
+  config: NotificationFlowConfig.fromAppConfig().copyWith(
+    goToSettingsMaxAskCount: 1,
+  ),
+);
 ```
 
 **Prompt periodically (monthly, max 3 times):**
 ```dart
-NotificationFlowConfig(
-  goToSettingsAskAgainAfter: const Duration(days: 30),
-  goToSettingsMaxAskCount: 3,
-)
+final result = await NotificationService().runNotificationPermissionFlow(
+  context,
+  config: NotificationFlowConfig.fromAppConfig().copyWith(
+    goToSettingsAskAgainAfter: const Duration(days: 30),
+    goToSettingsMaxAskCount: 3,
+  ),
+);
 ```
 
 **Prompt indefinitely but infrequently:**
 ```dart
-NotificationFlowConfig(
-  goToSettingsAskAgainAfter: const Duration(days: 60),
-  goToSettingsMaxAskCount: null, // unlimited
-)
+final result = await NotificationService().runNotificationPermissionFlow(
+  context,
+  config: NotificationFlowConfig.fromAppConfig().copyWith(
+    goToSettingsAskAgainAfter: const Duration(days: 60),
+    goToSettingsMaxAskCount: null, // unlimited
+  ),
+);
 ```
 
 ### Tracking Settings Prompts
@@ -1230,18 +1241,17 @@ Verify your notification data includes a `route` field:
 
 ### Go-to-settings prompt not appearing
 
-Check the configuration limits:
+Check the tracking info and configuration:
 
 ```dart
 final promptInfo = await service.getGoToSettingsPromptInfo();
 print('Count: ${promptInfo?.promptCount}');
 print('Last: ${promptInfo?.lastPromptTime}');
 
-// Your config limits
-final config = NotificationFlowConfig(
-  goToSettingsMaxAskCount: 3,  // Already reached?
-  goToSettingsAskAgainAfter: Duration(days: 30),  // Not enough time passed?
-);
+// Default limits from AppConfigBase:
+// - goToSettingsMaxAskCount: unlimited (null)
+// - goToSettingsAskAgainAfter: 30 days
+// If you passed a custom config, check those limits instead.
 ```
 
 ---
