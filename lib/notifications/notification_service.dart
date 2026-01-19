@@ -145,6 +145,12 @@ class NotificationService {
   /// Subscription to auth service login stream
   StreamSubscription<bool>? _authSubscription;
 
+  /// Reference to auth service for cleanup
+  AuthServiceInt? _connectedAuthService;
+
+  /// Callback registered with auth service for logout cleanup
+  Future<void> Function()? _aboutToLogOutCallback;
+
   /// Subscription to app lifecycle events for detecting return from settings
   StreamSubscription<AppLifecycleState>? _lifecycleSubscription;
 
@@ -878,10 +884,10 @@ class NotificationService {
   /// - If [AppConfigBase.fcmAutoInitialize] is false: only initializes if permission is already granted
   ///
   /// When the user logs out:
-  /// - Performs local token cleanup (stops listener, deletes Firebase token, clears cache)
-  /// - Does NOT call backend to unregister token (user is already logged out)
-  /// - Server should prune stale tokens when push sends fail
-  /// - For backend unregister, call [preLogoutCleanup] manually before sign out
+  /// - Backend unregistration happens automatically via `onAboutToLogOut` callback
+  ///   (called before Firebase signOut while still authenticated)
+  /// - Then performs local token cleanup (stops listener, deletes Firebase token, clears cache)
+  /// - Manual [preLogoutCleanup] call is no longer needed for backend cleanup
   ///
   /// [authService] is the auth service to connect to. If null, attempts to
   /// resolve from GetIt (guarded - logs and skips if not registered).
@@ -925,14 +931,38 @@ class NotificationService {
       }
     }
 
+    // Remove any previously registered callback
+    if (_aboutToLogOutCallback != null && _connectedAuthService != null) {
+      _connectedAuthService!.removeOnAboutToLogOutCallback(_aboutToLogOutCallback!);
+    }
+
+    // Store reference to auth service for cleanup
+    _connectedAuthService = auth;
+
+    // Register onAboutToLogOut callback for backend token unregistration
+    // This is called BEFORE Firebase signOut while still authenticated
+    _aboutToLogOutCallback = () async {
+      logd('onAboutToLogOut: Performing backend token unregistration');
+      if (_onTokenChanged != null && _cachedFcmToken != null) {
+        try {
+          await _onTokenChanged!(null, _cachedFcmToken);
+          logd('Successfully unregistered FCM token on backend before logout');
+        } catch (e) {
+          logw('Failed to unregister FCM token on backend: $e');
+          // Continue with logout even if backend call fails
+        }
+      }
+    };
+    auth.addOnAboutToLogOutCallback(_aboutToLogOutCallback!);
+    logd('Added onAboutToLogOut callback for backend token cleanup');
+
     // Subscribe to auth changes
     _authSubscription = auth.isLoggedInStream.listen((isLoggedIn) async {
       if (isLoggedIn) {
         await _handleLogin();
       } else {
-        // Local cleanup only - user is already logged out so backend calls
-        // would fail. Server will prune stale tokens on send failures.
-        // For backend unregister, call preLogoutCleanup() before signOut().
+        // Local cleanup only - backend unregistration already happened in
+        // onAboutToLogOut callback (before Firebase signOut).
         logd('Auth logout detected, performing local token cleanup');
         try {
           // Stop token refresh listener
@@ -1316,8 +1346,7 @@ class NotificationService {
       // Treat denial as permanent if we can't prompt again.
       // On web, most browsers treat first denial as permanent, so we route to
       // the go-to-settings flow which returns shownWebInstructions.
-      final isPermanentDenied =
-          status == NotificationPermissionStatus.denied && !canPromptAgain;
+      final isPermanentDenied = status == NotificationPermissionStatus.denied && !canPromptAgain;
 
       switch (status) {
         case NotificationPermissionStatus.authorized:

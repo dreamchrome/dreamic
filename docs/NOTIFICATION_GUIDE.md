@@ -569,10 +569,10 @@ await NotificationService().connectToAuthService(
 
 **Behavior:**
 - On login: Requests permission (if `fcmAutoInitialize` is true), gets token, syncs to server
-- On logout (automatic): Local cleanup only - deletes FCM token from Firebase, clears cached token. Does NOT call backend (user is already logged out; server prunes stale tokens on send failures)
+- On logout (automatic): Backend unregistration via `onAboutToLogOut` callback (before Firebase signOut), then local cleanup (deletes FCM token, clears cache)
 - On token refresh: Syncs new token to server
 
-> **Note:** To unregister the token from your backend before logout, call `preLogoutCleanup()` before signing out (see below).
+> **Note:** Backend cleanup happens automatically when using `connectToAuthService()`. The `preLogoutCleanup()` method is still available for manual control if needed.
 
 ### Manual Token Management
 
@@ -591,12 +591,12 @@ final token = NotificationService().cachedFcmToken;
 await NotificationService().clearFcmToken();
 ```
 
-### Pre-Logout Cleanup
+### Pre-Logout Cleanup (Optional)
 
-Always unregister tokens before signing out (while still authenticated):
+When using `connectToAuthService()`, backend cleanup happens automatically via the `onAboutToLogOut` callback. Manual cleanup is only needed if you're not using auth integration:
 
 ```dart
-// In your logout flow
+// Only needed if NOT using connectToAuthService()
 await NotificationService().preLogoutCleanup();
 await authService.signOut();
 ```

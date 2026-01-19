@@ -99,6 +99,7 @@ class AppConfigBase {
     'firebaseFunctionTimeoutSecs': kDebugMode ? 540 : 70,
     'firebaseFunctionTimeoutSecsLong': kDebugMode ? 540 : 140,
     'connectionCheckerUrlOverride': '',
+    'timeoutForAboutToLogOutCallbackMill': 5000,
   };
 
   static set minimumAppVersionRequiredAppleDefault(String value) =>
@@ -126,6 +127,8 @@ class AppConfigBase {
       defaultRemoteConfig['firebaseFunctionTimeoutSecsLong'] = value;
   static set connectionCheckerUrlOverrideDefault(String value) =>
       defaultRemoteConfig['connectionCheckerUrlOverride'] = value;
+  static set timeoutForAboutToLogOutCallbackMillDefault(int value) =>
+      defaultRemoteConfig['timeoutForAboutToLogOutCallbackMill'] = value;
 
   static String get minimumAppVersionRequiredApple {
     const envValue = String.fromEnvironment('minimumAppVersionRequiredApple');
@@ -320,6 +323,20 @@ class AppConfigBase {
       return remoteValue.isNotEmpty
           ? remoteValue
           : defaultRemoteConfig['connectionCheckerUrlOverride'] as String;
+    }
+  }
+
+  static int get timeoutForAboutToLogOutCallbackMill {
+    const envValue = int.fromEnvironment('timeoutForAboutToLogOutCallbackMill', defaultValue: -1);
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue = g<RemoteConfigRepoInt>().getInt('timeoutForAboutToLogOutCallbackMill');
+      if (remoteValue > 0) {
+        return remoteValue;
+      } else {
+        return defaultRemoteConfig['timeoutForAboutToLogOutCallbackMill'] as int;
+      }
     }
   }
 
@@ -737,12 +754,12 @@ class AppConfigBase {
       _notificationsUpdateFcmTokenFunctionDefault = value;
   static String? _notificationsUpdateFcmTokenFunction;
   static String get notificationsUpdateFcmTokenFunction {
-    _notificationsUpdateFcmTokenFunction ??=
-        const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_FUNCTION', defaultValue: '')
-                .isNotEmpty
-            ? const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_FUNCTION',
+    _notificationsUpdateFcmTokenFunction ??= const String.fromEnvironment(
+                'NOTIFICATIONS_UPDATE_FCM_TOKEN_FUNCTION',
                 defaultValue: '')
-            : (_notificationsUpdateFcmTokenFunctionDefault ?? 'notificationsUpdateFcmToken');
+            .isNotEmpty
+        ? const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_FUNCTION', defaultValue: '')
+        : (_notificationsUpdateFcmTokenFunctionDefault ?? 'notificationsUpdateFcmToken');
     return _notificationsUpdateFcmTokenFunction!;
   }
 
@@ -752,13 +769,13 @@ class AppConfigBase {
       _notificationsUpdateFcmTokenGroupFunctionDefault = value;
   static String? _notificationsUpdateFcmTokenGroupFunction;
   static String? get notificationsUpdateFcmTokenGroupFunction {
-    _notificationsUpdateFcmTokenGroupFunction ??=
-        const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_GROUP_FUNCTION',
-                    defaultValue: '')
-                .isNotEmpty
-            ? const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_GROUP_FUNCTION',
+    _notificationsUpdateFcmTokenGroupFunction ??= const String.fromEnvironment(
+                'NOTIFICATIONS_UPDATE_FCM_TOKEN_GROUP_FUNCTION',
                 defaultValue: '')
-            : _notificationsUpdateFcmTokenGroupFunctionDefault;
+            .isNotEmpty
+        ? const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_GROUP_FUNCTION',
+            defaultValue: '')
+        : _notificationsUpdateFcmTokenGroupFunctionDefault;
     return _notificationsUpdateFcmTokenGroupFunction;
   }
 
@@ -768,11 +785,12 @@ class AppConfigBase {
       _notificationsUpdateFcmTokenActionDefault = value;
   static String? _notificationsUpdateFcmTokenAction;
   static String get notificationsUpdateFcmTokenAction {
-    _notificationsUpdateFcmTokenAction ??=
-        const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_ACTION', defaultValue: '')
-                .isNotEmpty
-            ? const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_ACTION', defaultValue: '')
-            : (_notificationsUpdateFcmTokenActionDefault ?? 'updateFcmToken');
+    _notificationsUpdateFcmTokenAction ??= const String.fromEnvironment(
+                'NOTIFICATIONS_UPDATE_FCM_TOKEN_ACTION',
+                defaultValue: '')
+            .isNotEmpty
+        ? const String.fromEnvironment('NOTIFICATIONS_UPDATE_FCM_TOKEN_ACTION', defaultValue: '')
+        : (_notificationsUpdateFcmTokenActionDefault ?? 'updateFcmToken');
     return _notificationsUpdateFcmTokenAction!;
   }
 

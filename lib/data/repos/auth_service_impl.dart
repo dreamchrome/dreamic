@@ -28,9 +28,61 @@ const String sharedPrefKeyTimezone = 'commonSharedKeyTimezone';
 //TODO: this doesn't work with both anon auth and federated auth, but it could
 
 class AuthServiceImpl implements AuthServiceInt {
-  Future<void> Function(String? uid)? onAuthenticated;
-  Future<void> Function()? onRefreshed;
-  Future<void> Function()? onLoggedOut;
+  /// List of callbacks invoked when user authenticates.
+  final List<Future<void> Function(String? uid)> _onAuthenticatedCallbacks = [];
+
+  /// List of callbacks invoked when user data is refreshed.
+  final List<Future<void> Function()> _onRefreshedCallbacks = [];
+
+  /// List of callbacks invoked AFTER logout is complete.
+  final List<Future<void> Function()> _onLoggedOutCallbacks = [];
+
+  /// List of callbacks invoked BEFORE signing out, while still authenticated.
+  ///
+  /// Use [addOnAboutToLogOutCallback] to register callbacks for cleanup tasks
+  /// that require authentication (e.g., unregistering FCM tokens from backend).
+  /// Each callback is called with a timeout; failures won't block sign out.
+  final List<Future<void> Function()> _onAboutToLogOutCallbacks = [];
+
+  @override
+  void addOnAuthenticatedCallback(Future<void> Function(String? uid) callback) {
+    _onAuthenticatedCallbacks.add(callback);
+  }
+
+  @override
+  bool removeOnAuthenticatedCallback(Future<void> Function(String? uid) callback) {
+    return _onAuthenticatedCallbacks.remove(callback);
+  }
+
+  @override
+  void addOnRefreshedCallback(Future<void> Function() callback) {
+    _onRefreshedCallbacks.add(callback);
+  }
+
+  @override
+  bool removeOnRefreshedCallback(Future<void> Function() callback) {
+    return _onRefreshedCallbacks.remove(callback);
+  }
+
+  @override
+  void addOnLoggedOutCallback(Future<void> Function() callback) {
+    _onLoggedOutCallbacks.add(callback);
+  }
+
+  @override
+  bool removeOnLoggedOutCallback(Future<void> Function() callback) {
+    return _onLoggedOutCallbacks.remove(callback);
+  }
+
+  @override
+  void addOnAboutToLogOutCallback(Future<void> Function() callback) {
+    _onAboutToLogOutCallbacks.add(callback);
+  }
+
+  @override
+  bool removeOnAboutToLogOutCallback(Future<void> Function() callback) {
+    return _onAboutToLogOutCallbacks.remove(callback);
+  }
 
   HttpsCallable authCallable =
       AppConfigBase.firebaseFunctionCallable(AppConfigBase.authMainCallableFunction);
@@ -81,15 +133,30 @@ class AuthServiceImpl implements AuthServiceInt {
 
   AuthServiceImpl({
     required FirebaseApp firebaseApp,
-    this.onAuthenticated,
-    this.onRefreshed,
-    this.onLoggedOut,
+    Future<void> Function(String? uid)? onAuthenticated,
+    Future<void> Function()? onRefreshed,
+    Future<void> Function()? onLoggedOut,
+    Future<void> Function()? onAboutToLogOut,
   }) {
     // This can be disabled for hardcoding
     logd('Instantiated AuthServiceImpl');
     _fbAuth = fb_auth.FirebaseAuth.instanceFor(app: firebaseApp);
     _fbAuth.authStateChanges().listen(handleAuthStateChanges);
     _fbAuth.idTokenChanges().listen((event) => handleTokenChanges(event));
+
+    // Add constructor-provided callbacks to lists for backward compatibility
+    if (onAuthenticated != null) {
+      _onAuthenticatedCallbacks.add(onAuthenticated);
+    }
+    if (onRefreshed != null) {
+      _onRefreshedCallbacks.add(onRefreshed);
+    }
+    if (onLoggedOut != null) {
+      _onLoggedOutCallbacks.add(onLoggedOut);
+    }
+    if (onAboutToLogOut != null) {
+      _onAboutToLogOutCallbacks.add(onAboutToLogOut);
+    }
 
     // For debuggin
     if (AppConfigBase.signoutOnReload) {
@@ -136,7 +203,14 @@ class AuthServiceImpl implements AuthServiceInt {
         _authStateCompleter!.complete(true);
       }
 
-      await onAuthenticated?.call(fbUser.uid);
+      // Call all onAuthenticated callbacks
+      for (final callback in _onAuthenticatedCallbacks) {
+        try {
+          await callback(fbUser.uid);
+        } catch (e) {
+          logw('onAuthenticated callback failed: $e');
+        }
+      }
     }
   }
 
@@ -212,12 +286,41 @@ class AuthServiceImpl implements AuthServiceInt {
 
     // ...existing signOut code...
     try {
+      // Call all onAboutToLogOut callbacks while still authenticated (before Firebase signOut)
+      // This allows cleanup tasks like FCM token unregistration that require auth
+      if (useFbAuthAlso && _onAboutToLogOutCallbacks.isNotEmpty) {
+        final timeout = Duration(milliseconds: AppConfigBase.timeoutForAboutToLogOutCallbackMill);
+        try {
+          await Future.wait(
+            _onAboutToLogOutCallbacks.map((callback) => callback().catchError((e) {
+              logw('onAboutToLogOut callback failed: $e');
+              // Return null to allow other callbacks to complete
+            })),
+          ).timeout(
+            timeout,
+            onTimeout: () {
+              logw('onAboutToLogOut callbacks timed out after $timeout');
+              return []; // Return empty list on timeout
+            },
+          );
+        } catch (e) {
+          logw('onAboutToLogOut callbacks failed: $e');
+          // Continue with sign out even if callbacks fail
+        }
+      }
+
       if (useFbAuthAlso) {
         await _fbAuth.signOut();
       }
 
-      // Call the optional callback
-      await onLoggedOut?.call();
+      // Call all onLoggedOut callbacks (after sign out is complete)
+      for (final callback in _onLoggedOutCallbacks) {
+        try {
+          await callback();
+        } catch (e) {
+          logw('onLoggedOut callback failed: $e');
+        }
+      }
 
       // Clear the cookie on the server if using federated auth
       if (AppConfigBase.useCookieFederatedAuth) {
@@ -1677,5 +1780,4 @@ class AuthServiceImpl implements AuthServiceInt {
       return left(AuthServiceSignInFailure.unexpected);
     }
   }
-
 }

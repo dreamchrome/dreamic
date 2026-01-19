@@ -44,6 +44,39 @@ abstract class AuthServiceInt {
   Future<Either<AuthServiceSignInFailure, bool>> isEmailUser(String email);
   Future<Either<AuthServiceSignOutFailure, Unit>> signOut();
 
+  // Authentication lifecycle callbacks
+  /// Add a callback to be invoked when user authenticates.
+  /// The callback receives the user's UID (or null if unavailable).
+  void addOnAuthenticatedCallback(Future<void> Function(String? uid) callback);
+
+  /// Remove a previously added authenticated callback.
+  /// Returns true if the callback was found and removed.
+  bool removeOnAuthenticatedCallback(Future<void> Function(String? uid) callback);
+
+  /// Add a callback to be invoked when user data is refreshed.
+  void addOnRefreshedCallback(Future<void> Function() callback);
+
+  /// Remove a previously added refreshed callback.
+  /// Returns true if the callback was found and removed.
+  bool removeOnRefreshedCallback(Future<void> Function() callback);
+
+  /// Add a callback to be invoked AFTER logout is complete.
+  void addOnLoggedOutCallback(Future<void> Function() callback);
+
+  /// Remove a previously added logged out callback.
+  /// Returns true if the callback was found and removed.
+  bool removeOnLoggedOutCallback(Future<void> Function() callback);
+
+  // Pre-logout callbacks
+  /// Add a callback to be invoked BEFORE logout while still authenticated.
+  /// Use this for cleanup tasks that require auth (e.g., backend FCM unregistration).
+  /// Callbacks are called with a timeout; failures won't block sign out.
+  void addOnAboutToLogOutCallback(Future<void> Function() callback);
+
+  /// Remove a previously added logout callback.
+  /// Returns true if the callback was found and removed.
+  bool removeOnAboutToLogOutCallback(Future<void> Function() callback);
+
   // Email verification
   /// Check if current user's email is verified
   bool get isEmailVerified;
