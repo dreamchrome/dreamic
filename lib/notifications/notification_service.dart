@@ -1357,10 +1357,15 @@ class NotificationService {
           return NotificationFlowResult.alreadyGranted;
 
         case NotificationPermissionStatus.notDetermined:
+          if (!context.mounted) {
+            logd('runNotificationPermissionFlow: Context unmounted before value proposition');
+            return NotificationFlowResult.error;
+          }
           // Show value proposition first
-          final shouldProceed = config.valuePropositionBuilder != null
-              ? await config.valuePropositionBuilder!(context)
-              : await _showValuePropositionDialog(context, config.strings);
+          final shouldProceedFuture = config.valuePropositionBuilder != null
+              ? config.valuePropositionBuilder!(context)
+              : _showValuePropositionDialog(context, config.strings);
+          final shouldProceed = await shouldProceedFuture;
 
           if (!shouldProceed) {
             logd('runNotificationPermissionFlow: User declined value proposition');
@@ -1373,21 +1378,30 @@ class NotificationService {
 
         case NotificationPermissionStatus.denied:
           // If effectively permanent, route to go-to-settings path
+          if (!context.mounted) {
+            logd('runNotificationPermissionFlow: Context unmounted before denied flow');
+            return NotificationFlowResult.error;
+          }
           if (isPermanentDenied) {
             return await _handlePermanentlyDeniedFlow(context, config);
           }
 
           // Check if we should ask again
           final denialInfo = await getNotificationDenialInfo();
+          if (!context.mounted) {
+            logd('runNotificationPermissionFlow: Context unmounted before ask-again');
+            return NotificationFlowResult.error;
+          }
           if (!_shouldAskAgain(denialInfo, config)) {
             logd('runNotificationPermissionFlow: Skipping ask-again (config limits)');
             return NotificationFlowResult.skippedAskAgain;
           }
 
           // Show ask-again dialog
-          final shouldAsk = config.askAgainBuilder != null
-              ? await config.askAgainBuilder!(context, denialInfo!)
-              : await _showAskAgainDialog(context, config.strings, denialInfo);
+          final shouldAskFuture = config.askAgainBuilder != null
+              ? config.askAgainBuilder!(context, denialInfo!)
+              : _showAskAgainDialog(context, config.strings, denialInfo);
+          final shouldAsk = await shouldAskFuture;
 
           if (!shouldAsk) {
             logd('runNotificationPermissionFlow: User declined ask-again');
@@ -1416,6 +1430,10 @@ class NotificationService {
 
     // Check timing/count limits for go-to-settings prompt
     final settingsPromptInfo = await getGoToSettingsPromptInfo();
+    if (!context.mounted) {
+      logd('runNotificationPermissionFlow: Context unmounted before go-to-settings prompt');
+      return NotificationFlowResult.error;
+    }
     if (!_shouldShowGoToSettingsPrompt(settingsPromptInfo, config)) {
       logd('runNotificationPermissionFlow: Skipping go-to-settings (timing/count limits)');
       return NotificationFlowResult.skippedGoToSettings;
