@@ -67,13 +67,13 @@ Scope: Convert verification findings into actionable tasks.
    - Included migration guide with old/new code patterns.
    - File: [CHANGELOG.md](CHANGELOG.md#L1-L62)
 
-- [ ] **Add `onAboutToLogOut` callback to AuthServiceImpl**
-   - Add `Future<void> Function()? onAboutToLogOut` to constructor (alongside existing `onAuthenticated`, `onRefreshed`, `onLoggedOut`).
-   - Call in `signOut()` BEFORE `_fbAuth.signOut()` with 5-second timeout.
-   - Update `NotificationService.connectToAuthService()` to register this callback for backend token unregistration.
-   - This makes backend cleanup automatic (no manual `preLogoutCleanup()` needed).
-   - Update NOTIFICATION_GUIDE.md to reflect automatic backend cleanup on logout.
-   - Files: [lib/data/repos/auth_service_impl.dart](lib/data/repos/auth_service_impl.dart#L82-L99), [lib/data/repos/auth_service_int.dart](lib/data/repos/auth_service_int.dart), [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L928-L958), [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L570-L605)
+- [x] **Add `onAboutToLogOut` callback to AuthServiceImpl**
+   - Added `Future<void> Function()? onAboutToLogOut` to constructor and list-based callback system (`_onAboutToLogOutCallbacks`).
+   - Called in `signOut()` BEFORE `_fbAuth.signOut()` with configurable timeout (`AppConfigBase.timeoutForAboutToLogOutCallbackMill`, default 5s).
+   - `NotificationService.connectToAuthService()` registers callback for automatic backend token unregistration.
+   - Interface updated with `addOnAboutToLogOutCallback`/`removeOnAboutToLogOutCallback` methods.
+   - NOTIFICATION_GUIDE.md updated to document automatic backend cleanup on logout.
+   - Files: [lib/data/repos/auth_service_impl.dart](lib/data/repos/auth_service_impl.dart#L45-L85), [lib/data/repos/auth_service_int.dart](lib/data/repos/auth_service_int.dart#L70-L78), [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L934-L957), [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L570-L602), [lib/app/app_config_base.dart](lib/app/app_config_base.dart#L329-L338)
 
 - [ ] **Add integration test for auto-clear on resume**
    - Simulate permission grant and ensure denial info cleared.
