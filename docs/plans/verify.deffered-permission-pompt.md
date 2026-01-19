@@ -50,9 +50,10 @@ Scope: Convert verification findings into actionable tasks.
 - [x] **Export helper dialogs if part of public API**
    - N/A: Decided not to export dialog helpers; removed the file in "Reduce dialog helper duplication" task above.
 
-- [ ] **Correct logout behavior in NOTIFICATION_GUIDE**
-   - Reflect actual behavior (manual pre-logout cleanup required) or implement auto cleanup then update docs.
-   - File: [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L560-L590)
+- [x] **Correct logout behavior in NOTIFICATION_GUIDE**
+   - Updated "Behavior" section to clarify: auto-logout does local cleanup only (no backend call).
+   - Added note pointing to `preLogoutCleanup()` for backend unregistration before signOut.
+   - File: [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L570-L575)
 
 - [ ] **Remove `useFirebaseFCM` references in docs**
    - Replace outdated constructor snippets in DREAMIC_FEATURES_GUIDE.
@@ -70,6 +71,14 @@ Scope: Convert verification findings into actionable tasks.
       - `useFCMWeb` default false (web FCM opt-in)
    - Ensure version section aligns with actual release (likely 0.3.0+).
    - File: [CHANGELOG.md](CHANGELOG.md#L110-L310)
+
+- [ ] **Add `onAboutToLogOut` callback to AuthServiceImpl**
+   - Add `Future<void> Function()? onAboutToLogOut` to constructor (alongside existing `onAuthenticated`, `onRefreshed`, `onLoggedOut`).
+   - Call in `signOut()` BEFORE `_fbAuth.signOut()` with 5-second timeout.
+   - Update `NotificationService.connectToAuthService()` to register this callback for backend token unregistration.
+   - This makes backend cleanup automatic (no manual `preLogoutCleanup()` needed).
+   - Update NOTIFICATION_GUIDE.md to reflect automatic backend cleanup on logout.
+   - Files: [lib/data/repos/auth_service_impl.dart](lib/data/repos/auth_service_impl.dart#L82-L99), [lib/data/repos/auth_service_int.dart](lib/data/repos/auth_service_int.dart), [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L928-L958), [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L570-L605)
 
 - [ ] **Add integration test for auto-clear on resume**
    - Simulate permission grant and ensure denial info cleared.
