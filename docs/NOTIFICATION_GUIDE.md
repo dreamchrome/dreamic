@@ -292,6 +292,11 @@ switch (result) {
   case NotificationFlowResult.openedSettings:
     print('User directed to settings');
     break;
+  case NotificationFlowResult.shownWebInstructions:
+    // Web: browser settings can't be opened programmatically
+    // App should show manual instructions to the user
+    print('Show web browser notification instructions');
+    break;
   default:
     print('Flow ended: $result');
 }
@@ -416,7 +421,7 @@ if (!opened) {
 }
 ```
 
-The built-in flow handles this automatically with `NotificationFlowStrings.webSettingsInstructionsMessage`.
+The built-in flow handles this automatically with `NotificationFlowStrings.webSettingsInstructionsMessage` and returns `NotificationFlowResult.shownWebInstructions` (as opposed to `openedSettings` on mobile platforms).
 
 ---
 

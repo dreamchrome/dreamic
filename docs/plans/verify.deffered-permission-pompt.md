@@ -17,11 +17,13 @@ Scope: Convert verification findings into actionable tasks.
    - Updated doc comments to explain automatic vs manual cleanup behavior.
    - Files: [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L928-L958)
 
-- [ ] **Align web settings result semantics**
-   - Decide whether `openedSettings` should be returned when web shows instructions.
-   - If not, map to a new or existing flow result (e.g., `declinedGoToSettings` or new `shownWebInstructions`).
-   - Update flow logic + docs accordingly.
-   - Files: [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L1288-L1328), [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L300-L360)
+- [x] **Align web settings result semantics**
+   - Added new `NotificationFlowResult.shownWebInstructions` enum value.
+   - Removed `&& !kIsWeb` from `isPermanentDenied` calculation so web denial routes through go-to-settings flow.
+   - Added explicit `kIsWeb` check in `_handlePermanentlyDeniedFlow` to return `shownWebInstructions`.
+   - Returns `openedSettings` only when settings were actually opened (mobile platforms).
+   - Updated NOTIFICATION_GUIDE.md with example handling and web-specific documentation.
+   - Files: [lib/notifications/notification_types.dart](lib/notifications/notification_types.dart#L69-L72), [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L1316-L1320), [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L1404-L1417), [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L295-L299)
 
 - [ ] **Web settings instructions behavior**
    - Add tests for `openNotificationSettings()` returning false on web.

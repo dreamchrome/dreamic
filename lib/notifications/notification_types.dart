@@ -62,8 +62,14 @@ enum NotificationFlowResult {
   /// User declined to go to settings when prompted.
   declinedGoToSettings,
 
-  /// User was directed to settings (may or may not enable there).
+  /// User was directed to system settings (mobile platforms).
+  /// The app cannot know if the user actually enabled notifications there.
   openedSettings,
+
+  /// Web: User accepted the go-to-settings prompt but browser settings cannot
+  /// be opened programmatically. The app should show manual instructions.
+  /// This is distinct from [openedSettings] which is used on mobile platforms.
+  shownWebInstructions,
 
   /// FCM is disabled in configuration.
   fcmDisabled,
@@ -148,10 +154,8 @@ class NotificationDenialInfo {
       denialCount: denialCount ?? this.denialCount,
       isPermanent: isPermanent ?? this.isPermanent,
       requestAttemptCount: requestAttemptCount ?? this.requestAttemptCount,
-      lastRequestAttemptTime:
-          lastRequestAttemptTime ?? this.lastRequestAttemptTime,
-      lastRequestWasBlocked:
-          lastRequestWasBlocked ?? this.lastRequestWasBlocked,
+      lastRequestAttemptTime: lastRequestAttemptTime ?? this.lastRequestAttemptTime,
+      lastRequestWasBlocked: lastRequestWasBlocked ?? this.lastRequestWasBlocked,
     );
   }
 
@@ -216,8 +220,7 @@ class GoToSettingsPromptInfo {
     return GoToSettingsPromptInfo(
       lastPromptTime: lastPromptTime ?? this.lastPromptTime,
       promptCount: promptCount ?? this.promptCount,
-      lastActionWasOpenSettings:
-          lastActionWasOpenSettings ?? this.lastActionWasOpenSettings,
+      lastActionWasOpenSettings: lastActionWasOpenSettings ?? this.lastActionWasOpenSettings,
     );
   }
 
@@ -259,8 +262,7 @@ class NotificationFlowStrings {
 
   const NotificationFlowStrings({
     this.valuePropositionTitle = 'Enable Notifications',
-    this.valuePropositionMessage =
-        'Stay updated with important alerts and messages.',
+    this.valuePropositionMessage = 'Stay updated with important alerts and messages.',
     this.valuePropositionAcceptButton = 'Enable',
     this.valuePropositionDeclineButton = 'Not Now',
     this.goToSettingsTitle = 'Notifications Disabled',
@@ -274,8 +276,7 @@ class NotificationFlowStrings {
     this.askAgainAcceptButton = 'Yes, Enable',
     this.askAgainDeclineButton = 'No Thanks',
     this.webSettingsInstructionsTitle = 'Enable Notifications',
-    this.webSettingsInstructionsMessage =
-        'To enable notifications:\n\n'
+    this.webSettingsInstructionsMessage = 'To enable notifications:\n\n'
         "1. Click the lock/info icon in your browser's address bar\n"
         '2. Find "Notifications" in the permissions list\n'
         '3. Change it from "Block" to "Allow"\n'
@@ -302,10 +303,8 @@ class NotificationFlowStrings {
     String? webSettingsInstructionsButton,
   }) {
     return NotificationFlowStrings(
-      valuePropositionTitle:
-          valuePropositionTitle ?? this.valuePropositionTitle,
-      valuePropositionMessage:
-          valuePropositionMessage ?? this.valuePropositionMessage,
+      valuePropositionTitle: valuePropositionTitle ?? this.valuePropositionTitle,
+      valuePropositionMessage: valuePropositionMessage ?? this.valuePropositionMessage,
       valuePropositionAcceptButton:
           valuePropositionAcceptButton ?? this.valuePropositionAcceptButton,
       valuePropositionDeclineButton:
@@ -313,13 +312,11 @@ class NotificationFlowStrings {
       goToSettingsTitle: goToSettingsTitle ?? this.goToSettingsTitle,
       goToSettingsMessage: goToSettingsMessage ?? this.goToSettingsMessage,
       goToSettingsButton: goToSettingsButton ?? this.goToSettingsButton,
-      goToSettingsCancelButton:
-          goToSettingsCancelButton ?? this.goToSettingsCancelButton,
+      goToSettingsCancelButton: goToSettingsCancelButton ?? this.goToSettingsCancelButton,
       askAgainTitle: askAgainTitle ?? this.askAgainTitle,
       askAgainMessage: askAgainMessage ?? this.askAgainMessage,
       askAgainAcceptButton: askAgainAcceptButton ?? this.askAgainAcceptButton,
-      askAgainDeclineButton:
-          askAgainDeclineButton ?? this.askAgainDeclineButton,
+      askAgainDeclineButton: askAgainDeclineButton ?? this.askAgainDeclineButton,
       webSettingsInstructionsTitle:
           webSettingsInstructionsTitle ?? this.webSettingsInstructionsTitle,
       webSettingsInstructionsMessage:
@@ -384,8 +381,7 @@ class NotificationFlowConfig {
   /// Custom builder for ask-again dialog.
   /// Return true to ask again, false to skip.
   /// If null, uses built-in dialog with [strings].
-  final Future<bool> Function(BuildContext context, NotificationDenialInfo info)?
-      askAgainBuilder;
+  final Future<bool> Function(BuildContext context, NotificationDenialInfo info)? askAgainBuilder;
 
   const NotificationFlowConfig({
     // Re-ask defaults
@@ -412,21 +408,16 @@ class NotificationFlowConfig {
     NotificationFlowStrings? strings,
     Future<bool> Function(BuildContext context)? valuePropositionBuilder,
     Future<bool> Function(BuildContext context)? goToSettingsBuilder,
-    Future<bool> Function(BuildContext context, NotificationDenialInfo info)?
-        askAgainBuilder,
+    Future<bool> Function(BuildContext context, NotificationDenialInfo info)? askAgainBuilder,
   }) {
     return NotificationFlowConfig(
       askAgainAfter: askAgainAfter ?? this.askAgainAfter,
       maxAskCount: maxAskCount ?? this.maxAskCount,
-      showGoToSettingsPrompt:
-          showGoToSettingsPrompt ?? this.showGoToSettingsPrompt,
-      goToSettingsAskAgainAfter:
-          goToSettingsAskAgainAfter ?? this.goToSettingsAskAgainAfter,
-      goToSettingsMaxAskCount:
-          goToSettingsMaxAskCount ?? this.goToSettingsMaxAskCount,
+      showGoToSettingsPrompt: showGoToSettingsPrompt ?? this.showGoToSettingsPrompt,
+      goToSettingsAskAgainAfter: goToSettingsAskAgainAfter ?? this.goToSettingsAskAgainAfter,
+      goToSettingsMaxAskCount: goToSettingsMaxAskCount ?? this.goToSettingsMaxAskCount,
       strings: strings ?? this.strings,
-      valuePropositionBuilder:
-          valuePropositionBuilder ?? this.valuePropositionBuilder,
+      valuePropositionBuilder: valuePropositionBuilder ?? this.valuePropositionBuilder,
       goToSettingsBuilder: goToSettingsBuilder ?? this.goToSettingsBuilder,
       askAgainBuilder: askAgainBuilder ?? this.askAgainBuilder,
     );

@@ -1313,8 +1313,11 @@ class NotificationService {
     try {
       final status = await getPermissionStatus();
       final canPromptAgain = await _permissionHelper.canPromptForPermission();
+      // Treat denial as permanent if we can't prompt again.
+      // On web, most browsers treat first denial as permanent, so we route to
+      // the go-to-settings flow which returns shownWebInstructions.
       final isPermanentDenied =
-          status == NotificationPermissionStatus.denied && !canPromptAgain && !kIsWeb;
+          status == NotificationPermissionStatus.denied && !canPromptAgain;
 
       switch (status) {
         case NotificationPermissionStatus.authorized:
@@ -1401,14 +1404,19 @@ class NotificationService {
       return NotificationFlowResult.declinedGoToSettings;
     }
 
-    // Open settings
+    // On web, we can't open browser settings programmatically
+    if (kIsWeb) {
+      logd('runNotificationPermissionFlow: Web platform, showing instructions');
+      return NotificationFlowResult.shownWebInstructions;
+    }
+
+    // On mobile, attempt to open system settings
     final opened = await openNotificationSettings();
     if (opened) {
       _setupLifecycleListener();
       _waitingForSettingsReturn = true;
     }
-
-    logd('runNotificationPermissionFlow: Opened settings');
+    logd('runNotificationPermissionFlow: Opened settings (success=$opened)');
     return NotificationFlowResult.openedSettings;
   }
 
