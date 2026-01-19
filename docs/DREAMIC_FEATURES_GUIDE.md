@@ -116,17 +116,16 @@ await authService.accessCodeRegisterWithEmailAndPassword(
 GetIt.I.registerSingleton<AuthServiceInt>(
   AuthServiceImpl(
     firebaseApp: fbApp,
-    useFirebaseFCM: !kIsWeb, // Enable FCM on mobile platforms
     onAuthenticated: (uid) async {
       // Called when user signs in or on app start if already logged in
       // uid is the Firebase user ID
-      
+
       // Example: Initialize RevenueCat with user ID
       if (uid != null) {
         final email = g<AuthServiceInt>().currentFbUser?.email;
         await initRevenueCat(uid, email);
       }
-      
+
       // Clear caches or refresh data as needed
     },
     onLoggedOut: () async {
@@ -139,6 +138,10 @@ GetIt.I.registerSingleton<AuthServiceInt>(
   ),
 );
 ```
+
+> **Note:** FCM token management is handled by `NotificationService`, not `AuthServiceImpl`.
+> Configure FCM via `AppConfigBase.useFCM` (defaults true on mobile, false on iOS simulator)
+> and `AppConfigBase.useFCMWeb` (defaults false, requires VAPID setup).
 
 **Important Notes:**
 - `onAuthenticated` is called with `uid` parameter (nullable String)
@@ -2304,7 +2307,6 @@ The dreamic package provides helper functions to streamline app initialization. 
      GetIt.I.registerSingleton<AuthServiceInt>(
        AuthServiceImpl(
          firebaseApp: fbApp,
-         useFirebaseFCM: !kIsWeb, // Enable FCM on mobile
          onAuthenticated: (uid) async {
            // Called when user signs in
            // Clear caches, initialize services, etc.
@@ -2652,7 +2654,7 @@ BlocBuilder<AppCubit, AppState>(
 - **Solution:** Wait for auth state to initialize: `await authService.waitForCanCheckLoginState()`
 
 **Problem:** FCM not working on iOS simulator
-- **Solution:** FCM doesn't work on iOS simulator. Test on real device or disable FCM for simulators with `useFirebaseFCM: !kIsWeb && !Platform.isIOS` (or check for simulator)
+- **Solution:** FCM doesn't work on iOS simulator. By default, `AppConfigBase.useFCM` automatically returns `false` on iOS simulators. For manual control, set `AppConfigBase.useFCMDefault = false` before initializing `NotificationService`. Test push notifications on a real device.
 
 ### Network Issues
 
@@ -2741,7 +2743,6 @@ void setupGetIt(FirebaseApp fbApp) {
   GetIt.I.registerSingleton<AuthServiceInt>(
     AuthServiceImpl(
       firebaseApp: fbApp,
-      useFirebaseFCM: !kIsWeb,
       onAuthenticated: (uid) async {
         // Initialize user-specific services
       },

@@ -55,22 +55,17 @@ Scope: Convert verification findings into actionable tasks.
    - Added note pointing to `preLogoutCleanup()` for backend unregistration before signOut.
    - File: [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L570-L575)
 
-- [ ] **Remove `useFirebaseFCM` references in docs**
-   - Replace outdated constructor snippets in DREAMIC_FEATURES_GUIDE.
-   - Update simulator guidance to use `useFCM` + platform checks instead.
-   - Files:
-      - [docs/DREAMIC_FEATURES_GUIDE.md](docs/DREAMIC_FEATURES_GUIDE.md#L114-L150)
-      - [docs/DREAMIC_FEATURES_GUIDE.md](docs/DREAMIC_FEATURES_GUIDE.md#L2290-L2315)
-      - [docs/DREAMIC_FEATURES_GUIDE.md](docs/DREAMIC_FEATURES_GUIDE.md#L2648-L2660)
-      - [docs/DREAMIC_FEATURES_GUIDE.md](docs/DREAMIC_FEATURES_GUIDE.md#L2738-L2750)
+- [x] **Remove `useFirebaseFCM` references in docs**
+   - Replaced outdated constructor snippets in DREAMIC_FEATURES_GUIDE (removed `useFirebaseFCM: !kIsWeb`).
+   - Updated simulator guidance to reference `AppConfigBase.useFCM` (auto-false on iOS simulator) and `NotificationService`.
+   - Added note explaining FCM is now handled by `NotificationService`, not `AuthServiceImpl`.
+   - Files: [docs/DREAMIC_FEATURES_GUIDE.md](docs/DREAMIC_FEATURES_GUIDE.md#L114-L144)
 
-- [ ] **Update CHANGELOG for breaking changes**
-   - Add entries for:
-      - FCM token management moved to `NotificationService`
-      - `useFirebaseFCM` removed
-      - `useFCMWeb` default false (web FCM opt-in)
-   - Ensure version section aligns with actual release (likely 0.3.0+).
-   - File: [CHANGELOG.md](CHANGELOG.md#L110-L310)
+- [x] **Update CHANGELOG for breaking changes**
+   - Added new version 0.4.0 section with breaking changes documentation.
+   - Documented: `useFirebaseFCM` removed, FCM moved to `NotificationService`, `useFCMWeb` defaults false.
+   - Included migration guide with old/new code patterns.
+   - File: [CHANGELOG.md](CHANGELOG.md#L1-L62)
 
 - [ ] **Add `onAboutToLogOut` callback to AuthServiceImpl**
    - Add `Future<void> Function()? onAboutToLogOut` to constructor (alongside existing `onAuthenticated`, `onRefreshed`, `onLoggedOut`).

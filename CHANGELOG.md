@@ -1,3 +1,66 @@
+## 0.4.0
+
+### ⚠️ Breaking Changes: FCM Token Management
+
+#### Overview
+FCM (Firebase Cloud Messaging) token management has been moved from `AuthServiceImpl` to `NotificationService`. This provides better separation of concerns and enables the deferred permission prompt feature.
+
+#### Breaking Changes
+* **REMOVED:** `useFirebaseFCM` parameter from `AuthServiceImpl` constructor
+* **MOVED:** FCM token management (registration, refresh, cleanup) to `NotificationService`
+* **CHANGED:** `AppConfigBase.useFCMWeb` now defaults to `false` (web FCM is opt-in, requires VAPID setup)
+
+#### Migration Required
+
+**Old Pattern (REMOVED):**
+```dart
+GetIt.I.registerSingleton<AuthServiceInt>(
+  AuthServiceImpl(
+    firebaseApp: fbApp,
+    useFirebaseFCM: !kIsWeb,  // This parameter no longer exists
+    onAuthenticated: (uid) async { ... },
+    onLoggedOut: () async { ... },
+  ),
+);
+```
+
+**New Pattern:**
+```dart
+// 1. AuthServiceImpl - no FCM parameters
+GetIt.I.registerSingleton<AuthServiceInt>(
+  AuthServiceImpl(
+    firebaseApp: fbApp,
+    onAuthenticated: (uid) async { ... },
+    onLoggedOut: () async { ... },
+  ),
+);
+
+// 2. FCM is configured via AppConfigBase (optional)
+AppConfigBase.useFCMDefault = true;      // Mobile: defaults true (false on iOS simulator)
+AppConfigBase.useFCMWebDefault = true;   // Web: defaults false (requires VAPID setup)
+
+// 3. NotificationService handles FCM tokens
+await NotificationService().initialize(
+  onNotificationTapped: (route, data) async { ... },
+);
+await NotificationService().connectToAuthService();  // Auto-syncs tokens on auth changes
+```
+
+#### New FCM Configuration Flags
+* `AppConfigBase.useFCM` - Master FCM toggle (auto-false on iOS simulator)
+* `AppConfigBase.useFCMWeb` - Web-specific FCM toggle (defaults false)
+* Can be set via code or build flags: `--dart-define USE_FCM=true`
+
+#### Benefits
+* **Deferred Permissions**: Request notification permission at optimal moments, not app launch
+* **Better UX**: Full control over permission prompts with customizable UI
+* **Cleaner Auth**: `AuthServiceImpl` focuses on authentication only
+* **Automatic Cleanup**: `connectToAuthService()` handles token sync on login/logout
+
+See `NOTIFICATION_GUIDE.md` for complete setup and migration instructions.
+
+---
+
 ## 0.3.5
 
 ### New Features
