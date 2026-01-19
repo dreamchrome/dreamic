@@ -464,18 +464,142 @@ Automatically included in Dreamic 0.2.0+:
 - `http: ^1.5.0` - Image downloading
 - `path_provider: ^2.1.5` - Cache directory access
 
+#### Deferred Permission Flow
+
+**Version:** Added in 0.3.0
+
+Control when the notification permission prompt appears instead of asking immediately on login.
+
+**Configuration:**
+```dart
+// In your app initialization
+AppConfigBase.fcmAutoInitializeDefault = false;  // Disable auto-prompt on login
+AppConfigBase.useFCMWebDefault = true;           // Enable FCM on web (opt-in)
+```
+
+**High-Level Flow (Recommended):**
+```dart
+// Trigger permission flow at the right moment (e.g., after onboarding)
+final result = await NotificationService().runNotificationPermissionFlow(
+  context,
+  config: NotificationFlowConfig(
+    askAgainAfter: const Duration(days: 7),  // Wait 7 days before re-asking
+    maxAskCount: 3,                           // Max 3 attempts
+    showGoToSettingsPrompt: true,             // Show settings prompt if denied
+    strings: NotificationFlowStrings(
+      valuePropositionTitle: l10n.notificationTitle,
+      valuePropositionMessage: l10n.notificationDescription,
+      // ... localized strings
+    ),
+  ),
+);
+
+// Handle result
+switch (result) {
+  case NotificationFlowResult.granted:
+  case NotificationFlowResult.alreadyGranted:
+    showSnackbar('Notifications enabled!');
+    break;
+  case NotificationFlowResult.deniedPermanently:
+    // User must enable in settings
+    break;
+  // ... handle other cases
+}
+```
+
+**Flow Handles Automatically:**
+- Value proposition dialog before system prompt
+- "Ask again" dialog with timing/count limits
+- "Go to settings" dialog when permanently denied
+- Web-specific instructions (can't open browser settings)
+- Auto-detection when user returns from settings
+
+**Low-Level Manual Control:**
+```dart
+// Check current status
+final status = await NotificationService().getPermissionStatus();
+
+// Manual initialization
+final result = await NotificationService().initializeNotifications();
+
+// Get denial tracking info
+final denialInfo = await NotificationService().getNotificationDenialInfo();
+if (denialInfo != null && denialInfo.denialCount >= 3) {
+  // Maybe show settings prompt
+}
+```
+
+#### FCM Token Management
+
+**Version:** Added in 0.3.0
+
+FCM token management is now consolidated in `NotificationService` (moved from `AuthServiceImpl`).
+
+**Automatic Auth Integration:**
+```dart
+// NotificationService auto-wires to AuthService if registered in GetIt
+await NotificationService().connectToAuthService(
+  onTokenChanged: (newToken, oldToken) async {
+    // Custom backend sync (optional - default uses Firebase callable)
+    await myBackendService.updateFcmToken(newToken, oldToken);
+  },
+);
+```
+
+**Manual Token Management:**
+```dart
+// Initialize FCM token manually
+await NotificationService().initializeFcmToken(
+  onTokenChanged: (newToken, oldToken) async {
+    await myBackendService.updateFcmToken(newToken, oldToken);
+  },
+);
+
+// Get cached token
+final token = NotificationService().cachedFcmToken;
+
+// Clear token on logout
+await NotificationService().clearFcmToken();
+```
+
+**Pre-Logout Cleanup:**
+```dart
+// Before signing out, unregister token while still authenticated
+await NotificationService().preLogoutCleanup();
+await authService.signOut();
+```
+
+#### App-Level Notification Toggle
+
+**Version:** Added in 0.3.0
+
+Allow users to enable/disable notifications at the app level (separate from OS permission).
+
+```dart
+// Check if enabled
+final enabled = await NotificationService().isNotificationsEnabled();
+
+// Disable (stops token sync, deletes local token)
+await NotificationService().disableNotifications();
+
+// Re-enable (requests permission if needed, syncs new token)
+final result = await NotificationService().enableNotifications();
+```
+
 #### Best Practices
 
 1. **Initialize early** - Call `initialize()` in `main()` before `runApp()`
 2. **Request permissions contextually** - Show permission request at meaningful moments, not immediately on app start
-3. **Customize all text** - Use localized strings for all UI text parameters
-4. **Handle denied state** - Use `NotificationPermissionHelper` to check if you can prompt again
-5. **Test badge support** - Badge functionality varies by Android manufacturer
-6. **Use the background handler** - Always register `dreamicNotificationBackgroundHandler` for proper background message handling
-7. **Optimize images** - Use reasonably sized images (< 2MB) to avoid slow downloads
-8. **Limit action buttons** - Use 2-3 actions max for best UX
-9. **Test on devices** - Rich notifications behave differently on various Android manufacturers
-10. **Use appropriate channels** - Choose the right channel for notification importance
+3. **Use the high-level flow** - `runNotificationPermissionFlow()` handles edge cases automatically
+4. **Customize all text** - Use localized strings for all UI text parameters
+5. **Handle denied state** - Use `NotificationPermissionHelper` to check if you can prompt again
+6. **Test badge support** - Badge functionality varies by Android manufacturer
+7. **Use the background handler** - Always register `dreamicNotificationBackgroundHandler` for proper background message handling
+8. **Optimize images** - Use reasonably sized images (< 2MB) to avoid slow downloads
+9. **Limit action buttons** - Use 2-3 actions max for best UX
+10. **Test on devices** - Rich notifications behave differently on various Android manufacturers
+11. **Use appropriate channels** - Choose the right channel for notification importance
+12. **Pre-logout cleanup** - Call `preLogoutCleanup()` before signing out to unregister tokens properly
 
 #### Complete Documentation
 
@@ -521,8 +645,39 @@ AppConfigBase.doUseBackendEmulator // Use Firebase emulator
 AppConfigBase.backendEmulatorRemoteAddress // Emulator address
 
 // FCM settings
-AppConfigBase.useFCM // Enable/disable FCM
+AppConfigBase.useFCM              // Enable/disable FCM (auto-detects iOS simulator)
+AppConfigBase.useFCMWeb           // Enable FCM on web (default: false, requires VAPID)
+AppConfigBase.fcmAutoInitialize   // Auto-request permission on login (default: true)
 ```
+
+**FCM Configuration (Deferred Permission):**
+
+```dart
+// Disable auto-permission prompt on login (wait for manual trigger)
+AppConfigBase.fcmAutoInitializeDefault = false;
+
+// Enable web FCM (requires VAPID key and service worker setup)
+AppConfigBase.useFCMWebDefault = true;
+
+// Or via build flags
+// flutter run --dart-define FCM_AUTO_INITIALIZE=false --dart-define USE_FCM_WEB=true
+```
+
+| Config | Default | Description |
+|--------|---------|-------------|
+| `useFCM` | `true` (except iOS simulator) | Master FCM toggle |
+| `useFCMWeb` | `false` | Web FCM toggle (requires VAPID setup) |
+| `fcmAutoInitialize` | `true` | Auto-request permission on login |
+
+**When to disable `fcmAutoInitialize`:**
+- You want to show a value proposition before requesting permission
+- You want to delay the prompt until after onboarding
+- You need fine-grained control over the permission flow
+
+**When to enable `useFCMWeb`:**
+- You've configured a VAPID key in Firebase Console
+- You've set up the service worker (`web/firebase-messaging-sw.js`)
+- You want push notifications in browsers
 
 **App Version Management:**
 ```dart

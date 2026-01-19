@@ -254,6 +254,390 @@ if (await helper.isPermissionDenied() && await helper.shouldShowPeriodicReminder
 }
 ```
 
+### Strategy 4: High-Level Permission Flow (Recommended)
+
+**Version:** Added in 0.3.0
+
+Use the built-in permission flow that handles all edge cases automatically:
+
+```dart
+import 'package:dreamic/notifications/notification_service.dart';
+import 'package:dreamic/notifications/notification_types.dart';
+
+final result = await NotificationService().runNotificationPermissionFlow(
+  context,
+  config: NotificationFlowConfig(
+    askAgainAfter: const Duration(days: 7),
+    maxAskCount: 3,
+    showGoToSettingsPrompt: true,
+    goToSettingsAskAgainAfter: const Duration(days: 30),
+    strings: NotificationFlowStrings(
+      valuePropositionTitle: 'Stay in the Loop',
+      valuePropositionMessage: 'Get updates on your orders and exclusive offers.',
+      valuePropositionAcceptButton: 'Enable',
+      valuePropositionDeclineButton: 'Not Now',
+    ),
+  ),
+);
+
+switch (result) {
+  case NotificationFlowResult.granted:
+  case NotificationFlowResult.alreadyGranted:
+    print('Notifications enabled!');
+    break;
+  case NotificationFlowResult.declinedValueProposition:
+    print('User said "Not Now" - maybe ask later');
+    break;
+  case NotificationFlowResult.deniedPermanently:
+  case NotificationFlowResult.openedSettings:
+    print('User directed to settings');
+    break;
+  default:
+    print('Flow ended: $result');
+}
+```
+
+---
+
+## Deferred Permission Prompt
+
+**Version:** Added in 0.3.0
+
+By default, Dreamic asks for notification permission immediately when a user logs in. This feature allows you to control when and how the permission prompt appears.
+
+### Why Defer the Permission Prompt?
+
+- **Better UX**: Show the prompt after the user understands your app's value
+- **Higher acceptance**: Users who see context are more likely to accept
+- **App Store compliance**: Apple recommends explaining why you need permissions
+- **Flexibility**: Choose the optimal moment in your user journey
+
+### Configuration
+
+```dart
+// In your app initialization (before Firebase.initializeApp())
+import 'package:dreamic/app/app_config_base.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Disable auto-prompt on login
+  AppConfigBase.fcmAutoInitializeDefault = false;
+
+  // Enable web FCM if configured
+  AppConfigBase.useFCMWebDefault = true;
+
+  await Firebase.initializeApp();
+  // ... rest of initialization
+}
+```
+
+Or via build flags:
+```bash
+flutter run --dart-define FCM_AUTO_INITIALIZE=false
+```
+
+### Triggering the Permission Flow
+
+After onboarding or at an appropriate moment:
+
+```dart
+// Option 1: High-level flow (handles everything)
+final result = await NotificationService().runNotificationPermissionFlow(context);
+
+// Option 2: Low-level manual control
+final initResult = await NotificationService().initializeNotifications();
+```
+
+### Platform-Specific Behavior
+
+| Platform | First Denial | Second Denial | Can Re-Request |
+|----------|--------------|---------------|----------------|
+| **iOS** | Permanent | N/A | ❌ Never (must use Settings) |
+| **Android 13+** | Can retry | Permanent | ❌ After second denial |
+| **Android 12-** | N/A | N/A | ✅ Always (notifications on by default) |
+| **Web** | Permanent* | N/A | ❌ Browser-dependent |
+
+*Web behavior varies by browser. Most browsers treat first denial as permanent.
+
+### iOS Permission Flow
+
+iOS treats the first denial as permanent - the system will **never** show the permission dialog again.
+
+```dart
+// After denial on iOS
+final status = await service.getPermissionStatus();
+// status == NotificationPermissionStatus.denied
+
+final canPrompt = await helper.canPromptForPermission();
+// canPrompt == false (can never prompt again)
+
+// Only option: direct to Settings
+await service.openNotificationSettings();
+```
+
+### Android 13+ Permission Flow
+
+Android 13+ requires runtime permission. After two denials, it becomes permanent.
+
+```dart
+// First denial - can retry
+final canPrompt = await helper.canPromptForPermission();
+// canPrompt == true
+
+// Second denial - permanent
+final canPrompt = await helper.canPromptForPermission();
+// canPrompt == false
+```
+
+**Detection:** The service tracks whether permission was previously requested to distinguish "never asked" from "permanently denied".
+
+### Web-Specific Handling
+
+Web browsers cannot programmatically open settings. The flow shows instructions instead:
+
+```dart
+// On web, openNotificationSettings() returns false
+final opened = await service.openNotificationSettings();
+if (!opened) {
+  // Show instructions dialog
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('Enable Notifications'),
+      content: Text(
+        '1. Click the lock icon in your browser\'s address bar\n'
+        '2. Find "Notifications" in the permissions\n'
+        '3. Change it to "Allow"\n'
+        '4. Refresh this page'
+      ),
+    ),
+  );
+}
+```
+
+The built-in flow handles this automatically with `NotificationFlowStrings.webSettingsInstructionsMessage`.
+
+---
+
+## Go-to-Settings Configuration
+
+Configure how and when to prompt users to enable notifications via system settings.
+
+### Basic Configuration
+
+```dart
+NotificationFlowConfig(
+  // Whether to ever show "go to settings" prompt
+  showGoToSettingsPrompt: true,
+
+  // Wait 30 days before re-prompting
+  goToSettingsAskAgainAfter: const Duration(days: 30),
+
+  // Maximum times to show the prompt (null = unlimited)
+  goToSettingsMaxAskCount: 3,
+)
+```
+
+### Configuration Examples
+
+**Never prompt to go to settings:**
+```dart
+NotificationFlowConfig(
+  showGoToSettingsPrompt: false,
+)
+// Result: NotificationFlowResult.skippedGoToSettings
+```
+
+**Prompt only once:**
+```dart
+NotificationFlowConfig(
+  goToSettingsMaxAskCount: 1,
+)
+```
+
+**Prompt periodically (monthly, max 3 times):**
+```dart
+NotificationFlowConfig(
+  goToSettingsAskAgainAfter: const Duration(days: 30),
+  goToSettingsMaxAskCount: 3,
+)
+```
+
+**Prompt indefinitely but infrequently:**
+```dart
+NotificationFlowConfig(
+  goToSettingsAskAgainAfter: const Duration(days: 60),
+  goToSettingsMaxAskCount: null, // unlimited
+)
+```
+
+### Tracking Settings Prompts
+
+```dart
+final promptInfo = await service.getGoToSettingsPromptInfo();
+if (promptInfo != null) {
+  print('Times prompted: ${promptInfo.promptCount}');
+  print('Last prompt: ${promptInfo.lastPromptTime}');
+  print('Opened settings: ${promptInfo.lastActionWasOpenSettings}');
+}
+
+// Clear tracking (e.g., after permission granted)
+await service.clearGoToSettingsPromptInfo();
+```
+
+---
+
+## Defensive Error Handling
+
+Platform behavior varies due to OEM modifications, Android version differences, and regional variations.
+
+### Core Principles
+
+1. **Trust the system, not assumptions**: Always verify with the system before showing UI
+2. **Handle blocked requests**: Some OEMs silently block permission requests
+3. **Fresh status on each call**: Don't cache permission status
+4. **Graceful degradation**: Fall back to settings when re-request fails
+
+### Detecting Blocked Requests
+
+Some Android OEMs block permission dialogs without user interaction:
+
+```dart
+final result = await service.initializeNotifications();
+
+if (result == NotificationInitResult.permissionRequestBlocked) {
+  // System blocked the dialog - user never saw it
+  // Don't count as denial, maybe try again later
+  logd('Permission request blocked by system');
+}
+```
+
+### Status vs Request Tracking
+
+The service tracks both:
+- **denialCount**: Times user explicitly denied
+- **requestAttemptCount**: Times we tried to request (may be higher)
+
+```dart
+final denialInfo = await service.getNotificationDenialInfo();
+if (denialInfo != null) {
+  // User denied 2 times, but we tried 3 times (1 was blocked)
+  print('Denials: ${denialInfo.denialCount}');
+  print('Attempts: ${denialInfo.requestAttemptCount}');
+  print('Last was blocked: ${denialInfo.lastRequestWasBlocked}');
+}
+```
+
+### Auto-Clear on Permission Granted
+
+When permission is granted via settings, tracking data is automatically cleared:
+
+```dart
+// User enabled in settings, app resumes
+final status = await service.getPermissionStatus();
+// status == NotificationPermissionStatus.authorized
+
+// Denial info is auto-cleared
+final denialInfo = await service.getNotificationDenialInfo();
+// denialInfo == null
+```
+
+---
+
+## FCM Token Management
+
+**Version:** Added in 0.3.0
+
+FCM token management has been consolidated into `NotificationService` (previously in `AuthServiceImpl`).
+
+### Automatic Auth Integration
+
+```dart
+// Auto-wires to AuthService if registered in GetIt
+await NotificationService().connectToAuthService(
+  onTokenChanged: (newToken, oldToken) async {
+    await myBackendService.updateFcmToken(newToken, oldToken);
+  },
+);
+```
+
+**Behavior:**
+- On login: Requests permission (if `fcmAutoInitialize` is true), gets token, syncs to server
+- On logout: Unregisters token from server, clears local token
+- On token refresh: Syncs new token to server
+
+### Manual Token Management
+
+```dart
+// Initialize FCM token manually
+await NotificationService().initializeFcmToken(
+  onTokenChanged: (newToken, oldToken) async {
+    await myBackendService.updateFcmToken(newToken, oldToken);
+  },
+);
+
+// Get cached token
+final token = NotificationService().cachedFcmToken;
+
+// Clear token
+await NotificationService().clearFcmToken();
+```
+
+### Pre-Logout Cleanup
+
+Always unregister tokens before signing out (while still authenticated):
+
+```dart
+// In your logout flow
+await NotificationService().preLogoutCleanup();
+await authService.signOut();
+```
+
+### Default Token Sync
+
+If you don't provide `onTokenChanged`, the service uses Firebase callable functions:
+
+```dart
+// Configure the function name in AppConfigBase
+AppConfigBase.notificationsUpdateFcmTokenFunctionDefault = 'myTokenFunction';
+
+// Or use grouped function style
+AppConfigBase.notificationsUpdateFcmTokenGroupFunctionDefault = 'notificationsMain';
+AppConfigBase.notificationsUpdateFcmTokenActionDefault = 'updateToken';
+```
+
+---
+
+## App-Level Notification Toggle
+
+**Version:** Added in 0.3.0
+
+Allow users to disable notifications at the app level (separate from OS permission).
+
+```dart
+// Check if enabled
+final enabled = await NotificationService().isNotificationsEnabled();
+
+// Disable notifications
+await NotificationService().disableNotifications();
+// - Unregisters token from server
+// - Stops token refresh listener
+// - Deletes local token
+// - Sets app-level flag to false
+
+// Re-enable notifications
+final result = await NotificationService().enableNotifications();
+// - Sets app-level flag to true
+// - Requests permission if needed
+// - Gets new token and syncs to server
+// - Restarts token refresh listener
+```
+
+**Use Case:** Settings screen toggle for users who want to stop notifications without revoking OS permission.
+
+---
+
 ## Displaying Notifications
 
 ### From Remote FCM Message
@@ -784,7 +1168,38 @@ FirebaseMessaging.onBackgroundMessage(dreamicNotificationBackgroundHandler);
 
 ### Permission prompt not showing (iOS)
 
-On iOS, once permissions are denied, you cannot show the prompt again. Users must enable notifications in Settings. Use `NotificationService().openSystemSettings()` to help them.
+On iOS, once permissions are denied, you cannot show the prompt again. Users must enable notifications in Settings. Use `NotificationService().openNotificationSettings()` to help them.
+
+### Permission prompt not showing (Android)
+
+On Android 13+, after two denials, the permission becomes permanent. Check:
+
+```dart
+final canPrompt = await helper.canPromptForPermission();
+if (!canPrompt) {
+  // Must use settings
+  await service.openNotificationSettings();
+}
+```
+
+### Permission request silently blocked (Android OEM)
+
+Some Android manufacturers block permission dialogs. Detect this:
+
+```dart
+final result = await service.initializeNotifications();
+if (result == NotificationInitResult.permissionRequestBlocked) {
+  // System blocked the dialog - try again later
+}
+```
+
+### FCM token not syncing after migration
+
+If you migrated from `AuthServiceImpl` to `NotificationService`, ensure:
+
+1. Remove `useFirebaseFCM: true` from `AuthServiceImpl` constructor
+2. Call `NotificationService().connectToAuthService()` or `initializeFcmToken()`
+3. The new token key is `dreamic_fcm_token` (migrated automatically)
 
 ### Routing not working
 
@@ -797,6 +1212,81 @@ Verify your notification data includes a `route` field:
     "additionalData": "..."
   }
 }
+```
+
+### Web notifications not working
+
+1. Ensure `useFCMWeb` is enabled: `AppConfigBase.useFCMWebDefault = true`
+2. Set up VAPID key in Firebase Console
+3. Create `web/firebase-messaging-sw.js` service worker
+4. Test on HTTPS (not localhost for push)
+
+### Go-to-settings prompt not appearing
+
+Check the configuration limits:
+
+```dart
+final promptInfo = await service.getGoToSettingsPromptInfo();
+print('Count: ${promptInfo?.promptCount}');
+print('Last: ${promptInfo?.lastPromptTime}');
+
+// Your config limits
+final config = NotificationFlowConfig(
+  goToSettingsMaxAskCount: 3,  // Already reached?
+  goToSettingsAskAgainAfter: Duration(days: 30),  // Not enough time passed?
+);
+```
+
+---
+
+## Migration from AuthServiceImpl FCM
+
+**Version:** 0.3.0 introduces a **breaking change** - FCM token management moved from `AuthServiceImpl` to `NotificationService`.
+
+### Breaking Changes
+
+| Change | Action Required |
+|--------|-----------------|
+| `useFirebaseFCM` parameter removed from `AuthServiceImpl` | Remove from constructor call |
+| `useFCMWeb` defaults to `false` | Enable if using web push: `AppConfigBase.useFCMWebDefault = true` |
+| FCM token key changed | Automatic migration, no action needed |
+
+### Migration Checklist
+
+- [ ] Remove `useFirebaseFCM: true` from `AuthServiceImpl` constructor
+- [ ] Call `NotificationService().initialize(...)` during app startup
+- [ ] Add `NotificationService().connectToAuthService()` after auth initialization
+- [ ] If using web push, set `AppConfigBase.useFCMWebDefault = true`
+- [ ] Update tests that mock `AuthServiceImpl` with `useFirebaseFCM` parameter
+
+### Before (Old API)
+
+```dart
+// OLD - AuthServiceImpl handled FCM
+final authService = AuthServiceImpl(
+  firebaseApp: app,
+  useFirebaseFCM: true,  // ❌ REMOVED
+);
+```
+
+### After (New API)
+
+```dart
+// NEW - NotificationService handles FCM
+final authService = AuthServiceImpl(firebaseApp: app);
+
+await NotificationService().initialize(
+  onNotificationTapped: (route, data) {
+    if (route != null) Navigator.of(context).pushNamed(route);
+  },
+);
+
+// Auto-wire to auth service
+await NotificationService().connectToAuthService(
+  onTokenChanged: (newToken, oldToken) async {
+    await myBackendService.updateFcmToken(newToken, oldToken);
+  },
+);
 ```
 
 ## Migration from Custom Implementation

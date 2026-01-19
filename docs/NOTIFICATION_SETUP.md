@@ -121,6 +121,56 @@ Future<void> initialize() async {
 
 ---
 
+## Configuration Options
+
+**Version:** Added in 0.3.0
+
+### Deferred Permission Prompt
+
+By default, Dreamic requests notification permission immediately on login. You can defer this:
+
+```dart
+// In your app initialization (before Firebase.initializeApp())
+AppConfigBase.fcmAutoInitializeDefault = false;
+
+// Or via build flag
+// flutter run --dart-define FCM_AUTO_INITIALIZE=false
+```
+
+When disabled, trigger the permission flow manually:
+
+```dart
+// Option 1: High-level flow (recommended)
+final result = await NotificationService().runNotificationPermissionFlow(context);
+
+// Option 2: Low-level control
+final result = await NotificationService().initializeNotifications();
+```
+
+### Web FCM Toggle
+
+Web FCM requires VAPID key and service worker setup. It's opt-in:
+
+```dart
+// Enable web FCM (only if you've configured VAPID + service worker)
+AppConfigBase.useFCMWebDefault = true;
+
+// Or via build flag
+// flutter run --dart-define USE_FCM_WEB=true
+```
+
+### Configuration Summary
+
+| Config | Default | Build Flag | Description |
+|--------|---------|------------|-------------|
+| `useFCM` | `true`* | `USE_FCM` | Master FCM toggle |
+| `useFCMWeb` | `false` | `USE_FCM_WEB` | Web FCM (requires VAPID) |
+| `fcmAutoInitialize` | `true` | `FCM_AUTO_INITIALIZE` | Auto-prompt on login |
+
+*`useFCM` defaults to `false` on iOS Simulator (no APNs token available).
+
+---
+
 ## iOS Configuration
 
 ### 1. Update Info.plist
@@ -206,6 +256,22 @@ The entitlements are automatically configured when you add the Push Notification
 - **Physical device**: Required for testing
 - **Debug builds**: Use `development` APNs environment
 - **Release builds**: Automatically use `production` APNs environment
+
+### 6. iOS Permission Behavior
+
+**First denial is permanent on iOS.** The system will never show the permission dialog again after the user denies once.
+
+```dart
+// Check if can prompt (always false after denial on iOS)
+final canPrompt = await helper.canPromptForPermission();
+
+// Only option after denial: direct to Settings
+if (!canPrompt) {
+  await service.openNotificationSettings();
+}
+```
+
+**Best Practice:** Show a value proposition dialog explaining the benefits before calling `requestPermissions()` to maximize acceptance rate.
 
 ---
 
@@ -344,6 +410,27 @@ await NotificationService.instance.showNotification(
 - **Physical device**: Required for testing FCM push notifications
 - **Android 13+**: Must grant runtime permission
 - **Android 12 and below**: Permission granted automatically at install
+
+### 7. Android 13+ Permission Flow
+
+Android 13+ (API 33+) requires runtime permission for notifications. The permission becomes **permanent after two denials**.
+
+| Denial Count | Status | Can Request Again |
+|--------------|--------|-------------------|
+| 0 (never asked) | `notDetermined` | ✅ Yes |
+| 1 | `denied` | ✅ Yes (can retry once) |
+| 2+ | `permanentlyDenied` | ❌ No (must use Settings) |
+
+```dart
+// Detect permanent denial
+final canPrompt = await helper.canPromptForPermission();
+if (!canPrompt) {
+  // After 2 denials - must use Settings
+  await service.openNotificationSettings();
+}
+```
+
+**Note:** Some Android OEMs may block permission dialogs. The service detects this and returns `NotificationInitResult.permissionRequestBlocked`.
 
 ---
 
@@ -509,6 +596,32 @@ await FirebaseMessaging.instance.getToken(
 - **Service worker**: Must be at root path (`/firebase-messaging-sw.js`)
 - **CORS**: Ensure Firebase storage allows your domain for image notifications
 
+### 7. Web Permission Behavior
+
+Web browsers cannot programmatically open settings. After denial, users must manually enable notifications.
+
+```dart
+// On web, openNotificationSettings() returns false
+final opened = await service.openNotificationSettings();
+if (!opened) {
+  // Show instructions to user
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('Enable Notifications'),
+      content: Text(
+        '1. Click the lock icon in your browser address bar\n'
+        '2. Find "Notifications" in permissions\n'
+        '3. Change to "Allow"\n'
+        '4. Refresh this page'
+      ),
+    ),
+  );
+}
+```
+
+**The built-in `runNotificationPermissionFlow()` handles this automatically** with configurable instruction text via `NotificationFlowStrings.webSettingsInstructionsMessage`.
+
 ---
 
 ## Testing
@@ -518,6 +631,8 @@ await FirebaseMessaging.instance.getToken(
 #### iOS
 - [ ] Build runs without notification entitlement errors
 - [ ] Permission dialog appears when requested
+- [ ] First denial is permanent (dialog never shows again)
+- [ ] `openNotificationSettings()` opens iOS Settings app
 - [ ] Foreground notifications display correctly
 - [ ] Background notifications wake the app
 - [ ] Notification tap opens correct route
@@ -529,6 +644,10 @@ await FirebaseMessaging.instance.getToken(
 #### Android
 - [ ] Build runs without permission errors
 - [ ] Permission dialog appears on Android 13+ when requested
+- [ ] First denial allows retry (can request again)
+- [ ] Second denial is permanent (must use Settings)
+- [ ] `openNotificationSettings()` opens Android Settings
+- [ ] OEM blocked requests detected (if applicable)
 - [ ] Notification channels created correctly
 - [ ] Foreground notifications display correctly
 - [ ] Background notifications work when app is closed
@@ -541,11 +660,25 @@ await FirebaseMessaging.instance.getToken(
 #### Web
 - [ ] Service worker registers successfully
 - [ ] Permission dialog appears when requested
+- [ ] Default `useFCMWeb = false` means no FCM initialization
+- [ ] With `useFCMWebDefault = true`, FCM initializes
+- [ ] `openNotificationSettings()` returns false
+- [ ] Web instructions dialog shows when denied
 - [ ] Foreground notifications display as browser notifications
 - [ ] Background notifications work when tab is closed
 - [ ] Notification click focuses/opens correct tab
 - [ ] Images load in notifications
 - [ ] HTTPS works correctly (not just localhost)
+
+#### Deferred Permission Flow (0.3.0+)
+- [ ] With `fcmAutoInitialize = true` (default), prompt on login
+- [ ] With `fcmAutoInitialize = false`, no prompt on login
+- [ ] `runNotificationPermissionFlow()` shows value proposition
+- [ ] Subsequent launch with permission granted initializes silently
+- [ ] Denial tracking persists (denialCount, lastDenialTime)
+- [ ] Auto-clear tracking when permission granted via Settings
+- [ ] `goToSettingsMaxAskCount` limit respected
+- [ ] `goToSettingsAskAgainAfter` timing respected
 
 ### Manual Testing
 

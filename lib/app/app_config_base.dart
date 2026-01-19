@@ -616,11 +616,70 @@ class AppConfigBase {
   }
 
   static bool _getDefaultFCMValue() {
+    // Web uses separate config flag (defaults false - requires VAPID setup)
+    if (kIsWeb) {
+      return useFCMWeb;
+    }
     // Default to false if running on iOS simulator, true otherwise
     if (isIOSSimulator == true) {
       return false;
     }
     return true;
+  }
+
+  //
+  // FCM Web Configuration
+  //
+  // Web FCM requires VAPID key and service worker setup.
+  // Default is false to avoid errors for apps that haven't configured web push.
+  // Set to true only if you've configured web push notifications.
+  //
+
+  /// Default value for useFCMWeb. Set this in your app's main() before any FCM calls.
+  static bool? _useFCMWebDefault;
+  static set useFCMWebDefault(bool value) => _useFCMWebDefault = value;
+  static bool? _useFCMWeb;
+
+  /// Whether to enable FCM on web platforms.
+  /// Default is false - web FCM requires VAPID key and service worker setup.
+  /// Set to true only if you've configured web push notifications.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.useFCMWebDefault = true`
+  /// - Build flag: `--dart-define USE_FCM_WEB=true`
+  static bool get useFCMWeb {
+    _useFCMWeb ??= const String.fromEnvironment('USE_FCM_WEB', defaultValue: '').isNotEmpty
+        ? const String.fromEnvironment('USE_FCM_WEB', defaultValue: 'false') == 'true'
+        : (_useFCMWebDefault ?? false);
+    return _useFCMWeb!;
+  }
+
+  //
+  // FCM Auto-Initialization Configuration
+  //
+  // Controls whether FCM/notifications are automatically initialized on login.
+  // Default is true for backward compatibility.
+  // Set to false to defer the permission prompt until a more appropriate time.
+  //
+
+  /// Default value for fcmAutoInitialize. Set this in your app's main() to defer permission prompts.
+  static bool? _fcmAutoInitializeDefault;
+  static set fcmAutoInitializeDefault(bool value) => _fcmAutoInitializeDefault = value;
+  static bool? _fcmAutoInitialize;
+
+  /// Whether to automatically initialize FCM and request notification permissions on login.
+  /// Default is true for backward compatibility.
+  /// Set to false to defer the permission prompt until you call initializeNotifications().
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.fcmAutoInitializeDefault = false`
+  /// - Build flag: `--dart-define FCM_AUTO_INITIALIZE=false`
+  static bool get fcmAutoInitialize {
+    _fcmAutoInitialize ??=
+        const String.fromEnvironment('FCM_AUTO_INITIALIZE', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('FCM_AUTO_INITIALIZE', defaultValue: 'true') == 'true'
+            : (_fcmAutoInitializeDefault ?? true);
+    return _fcmAutoInitialize!;
   }
 
   static String? _networkRequiredOverride;

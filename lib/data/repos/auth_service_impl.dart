@@ -6,7 +6,6 @@ import 'package:dartz/dartz.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dreamic/data/helpers/repository_failure.dart';
 import 'package:dreamic/utils/retry_it.dart';
@@ -23,7 +22,6 @@ import '../../app/app_config_base.dart';
 import '../../utils/logger.dart';
 import 'auth_service_int.dart';
 
-const String sharedPrefKeyFcmToken = 'commonSharedKeyFcmToken';
 //TODO: use this to update the server when it changes
 const String sharedPrefKeyTimezone = 'commonSharedKeyTimezone';
 
@@ -34,16 +32,12 @@ class AuthServiceImpl implements AuthServiceInt {
   Future<void> Function()? onRefreshed;
   Future<void> Function()? onLoggedOut;
 
-  /// Whether to use Firebase FCM for push notifications
-  /// This is the general setting, which can be disabled by the app config setting, but not overridden to enable FCM by the app config.
-  bool useFirebaseFCM;
   HttpsCallable authCallable =
       AppConfigBase.firebaseFunctionCallable(AppConfigBase.authMainCallableFunction);
   late final fb_auth.FirebaseAuth _fbAuth;
 
   // bool _hasGottenUserPrivate = false;
   bool _hasAuthStateChangeListenerRunAtLeastOnce = false;
-  bool _hasInitializedFCM = false;
   String? _accessCodeCached;
   final StreamController<bool> _isLoggedInStreamController = StreamController<bool>.broadcast();
 
@@ -87,7 +81,6 @@ class AuthServiceImpl implements AuthServiceInt {
 
   AuthServiceImpl({
     required FirebaseApp firebaseApp,
-    required this.useFirebaseFCM,
     this.onAuthenticated,
     this.onRefreshed,
     this.onLoggedOut,
@@ -160,14 +153,9 @@ class AuthServiceImpl implements AuthServiceInt {
       //TODO: added this here but not sure it needs to do this again...
       // await refreshCurrentUser();
 
-      if (useFirebaseFCM) {
-        // Initialize FCM if app config allows it
-        if (AppConfigBase.useFCM) {
-          await initFCM();
-        } else {
-          logd('FCM is disabled in AppConfigBase, not initializing FCM');
-        }
-      }
+      // Note: FCM token management has been moved to NotificationService.
+      // Apps should subscribe to isLoggedInStream and call
+      // NotificationService.initializeFcmToken() when user logs in.
     }
 
     //
@@ -249,10 +237,11 @@ class AuthServiceImpl implements AuthServiceInt {
       // Clear the stored user info
       SharedPreferences prefs = await SharedPreferences.getInstance();
 
-      await prefs.remove(sharedPrefKeyFcmToken);
       await prefs.remove(sharedPrefKeyTimezone);
 
-      _hasInitializedFCM = false;
+      // Note: FCM token cleanup has been moved to NotificationService.clearFcmToken()
+      // Apps should call NotificationService.clearFcmToken() before signing out.
+
       _accessCodeCached = null;
     } on fb_auth.FirebaseAuthException catch (e) {
       loge(e);
@@ -1689,116 +1678,4 @@ class AuthServiceImpl implements AuthServiceInt {
     }
   }
 
-  //
-  //
-  // FCM
-  //
-  //
-
-  Future<void> initFCM() async {
-    logd('Initializing FCM with _hasInitializedFCM = $_hasInitializedFCM');
-
-    try {
-      FirebaseMessaging messaging = FirebaseMessaging.instance;
-
-      // Request permission for iOS devices
-      await messaging.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-      //TODO: do we need to do something with the settings?
-      // NotificationSettings settings = await messaging.requestPermission(
-      //   alert: true,
-      //   badge: true,
-      //   sound: true,
-      // );
-
-      // For apple platforms, ensure the APNS token is available before making any FCM plugin API calls
-      String? apnsToken;
-      if (defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.macOS) {
-        // Wait for APNS token to be available
-        int retries = 0;
-        while (apnsToken == null && retries < 30) {
-          apnsToken = await messaging.getAPNSToken();
-          if (apnsToken == null) {
-            logd('APNS token not available yet, waiting...');
-            await Future.delayed(const Duration(milliseconds: 250));
-            retries++;
-          }
-        }
-        if (apnsToken == null) {
-          loge('APNS token was not set after waiting.');
-          // Optionally: return or throw here
-        }
-      }
-
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-
-      String? oldToken = prefs.getString(sharedPrefKeyFcmToken);
-      String? newToken;
-
-      try {
-        newToken = await messaging.getToken();
-      } catch (e) {
-        loge('Failed to get FCM token (Firebase Installations Service may be unavailable): $e');
-        // Don't propagate the error - FCM is not critical for app functionality
-        return;
-      }
-
-      if (newToken != null && (newToken != oldToken || !_hasInitializedFCM)) {
-        try {
-          logd('Updating FCM token on server: $newToken');
-          await _updateTokenOnServer(newToken, oldToken ?? "");
-          await prefs.setString(sharedPrefKeyFcmToken, newToken);
-        } catch (e) {
-          loge('Error updating FCM token on server: $e');
-        }
-      }
-
-      if (!_hasInitializedFCM) {
-        messaging.onTokenRefresh.listen((newToken) async {
-          SharedPreferences prefs = await SharedPreferences.getInstance();
-          String? oldToken = prefs.getString(sharedPrefKeyFcmToken);
-          try {
-            await _updateTokenOnServer(newToken, oldToken ?? "");
-            await prefs.setString(sharedPrefKeyFcmToken, newToken);
-          } catch (e) {
-            loge('Error updating FCM token on server: $e');
-          }
-        });
-      }
-
-      _hasInitializedFCM = true;
-    } catch (e) {
-      loge('FCM initialization failed: $e');
-      // Don't set _hasInitializedFCM to true if initialization failed
-      // This allows retry on next auth state change
-    }
-  }
-
-  Future<void> _updateTokenOnServer(String newToken, String oldToken) async {
-    // Call a Firebase function to update the token on the server.
-    final data = <String, dynamic>{
-      'newToken': newToken,
-      'oldToken': oldToken,
-      'timezone': (await FlutterTimezone.getLocalTimezone()).identifier,
-    };
-
-    if (AppConfigBase.notificationsUpdateFcmTokenUseGrouped) {
-      // Grouped style: call group function with action parameter
-      await AppConfigBase.firebaseFunctionCallable(
-              AppConfigBase.notificationsUpdateFcmTokenGroupFunction!)
-          .call(<String, dynamic>{
-        'action': AppConfigBase.notificationsUpdateFcmTokenAction,
-        ...data,
-      });
-    } else {
-      // Standalone style: call function directly
-      await AppConfigBase.firebaseFunctionCallable(
-              AppConfigBase.notificationsUpdateFcmTokenFunction)
-          .call(data);
-    }
-  }
 }
