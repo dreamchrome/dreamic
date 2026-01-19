@@ -8,22 +8,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 class MockSharedPreferencesHelper {
   /// Keys used by the notification permission system.
   static const String keyDenialInfo = 'dreamic_notification_denial_info';
-  static const String keySettingsPromptInfo =
-      'dreamic_notification_settings_prompt_info';
+  static const String keySettingsPromptInfo = 'dreamic_notification_settings_prompt_info';
   static const String keyHasRequested = 'dreamic_notification_has_requested';
-  static const String keyLastReminderDate =
-      'dreamic_notification_last_reminder_date';
-  static const String keyMigrationComplete =
-      'dreamic_notification_keys_migrated';
+  static const String keyLastReminderDate = 'dreamic_notification_last_reminder_date';
+  static const String keyMigrationComplete = 'dreamic_notification_keys_migrated';
   static const String keyFcmToken = 'dreamic_fcm_token';
+  static const String keyNotificationsEnabled = 'dreamic_notifications_enabled';
 
   /// Legacy keys (for migration testing).
-  static const String legacyKeyRequestCount =
-      'notification_permission_request_count';
-  static const String legacyKeyDenialCount =
-      'notification_permission_denial_count';
-  static const String legacyKeyLastRequest =
-      'notification_last_permission_request';
+  static const String legacyKeyRequestCount = 'notification_permission_request_count';
+  static const String legacyKeyDenialCount = 'notification_permission_denial_count';
+  static const String legacyKeyLastRequest = 'notification_last_permission_request';
   static const String legacyKeyLastReminder = 'notification_last_reminder_date';
   static const String legacyKeyFcmToken = 'commonSharedKeyFcmToken';
 
@@ -116,8 +111,7 @@ class MockSharedPreferencesHelper {
     buffer.write(',"isPermanent":$isPermanent');
     buffer.write(',"requestAttemptCount":$requestAttemptCount');
     if (lastRequestAttemptTime != null) {
-      buffer.write(
-          ',"lastRequestAttemptTime":${lastRequestAttemptTime.millisecondsSinceEpoch}');
+      buffer.write(',"lastRequestAttemptTime":${lastRequestAttemptTime.millisecondsSinceEpoch}');
     } else {
       buffer.write(',"lastRequestAttemptTime":null');
     }
