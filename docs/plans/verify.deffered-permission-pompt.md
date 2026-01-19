@@ -11,10 +11,11 @@ Scope: Convert verification findings into actionable tasks.
    - Connect auth stream or call `connectToAuthService()` internally.
    - Files: [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L227-L318)
 
-- [ ] **Logout flow triggers `preLogoutCleanup()` automatically**
-   - In `connectToAuthService()`, call `preLogoutCleanup()` when `isLoggedIn` becomes false (best-effort with timeout).
-   - Ensure it doesn’t block auth sign-out completion.
-   - Files: [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L888-L900)
+- [x] **Logout flow triggers local cleanup automatically**
+   - In `connectToAuthService()`, perform local token cleanup when `isLoggedIn` becomes false.
+   - Local cleanup only (no backend call since user is already logged out; server prunes stale tokens on send failures).
+   - Updated doc comments to explain automatic vs manual cleanup behavior.
+   - Files: [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L928-L958)
 
 - [ ] **Align web settings result semantics**
    - Decide whether `openedSettings` should be returned when web shows instructions.

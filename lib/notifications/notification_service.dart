@@ -878,7 +878,10 @@ class NotificationService {
   /// - If [AppConfigBase.fcmAutoInitialize] is false: only initializes if permission is already granted
   ///
   /// When the user logs out:
-  /// - Calls [preLogoutCleanup] to unregister the token before auth is torn down
+  /// - Performs local token cleanup (stops listener, deletes Firebase token, clears cache)
+  /// - Does NOT call backend to unregister token (user is already logged out)
+  /// - Server should prune stale tokens when push sends fail
+  /// - For backend unregister, call [preLogoutCleanup] manually before sign out
   ///
   /// [authService] is the auth service to connect to. If null, attempts to
   /// resolve from GetIt (guarded - logs and skips if not registered).
@@ -927,9 +930,30 @@ class NotificationService {
       if (isLoggedIn) {
         await _handleLogin();
       } else {
-        // Note: preLogoutCleanup should be called before logout completes
-        // This listener fires after logout, so token may already be cleared
-        logd('Auth logout detected');
+        // Local cleanup only - user is already logged out so backend calls
+        // would fail. Server will prune stale tokens on send failures.
+        // For backend unregister, call preLogoutCleanup() before signOut().
+        logd('Auth logout detected, performing local token cleanup');
+        try {
+          // Stop token refresh listener
+          await _tokenRefreshSubscription?.cancel();
+          _tokenRefreshSubscription = null;
+
+          // Delete FCM token from Firebase
+          try {
+            await FirebaseMessaging.instance.deleteToken();
+            logd('Deleted FCM token from Firebase');
+          } catch (e) {
+            logw('Failed to delete FCM token from Firebase: $e');
+          }
+
+          // Clear cached tokens
+          await clearFcmToken();
+          logd('Local token cleanup completed');
+        } catch (e) {
+          // Swallow any unexpected errors - cleanup is best-effort
+          logw('Unexpected error during auto logout cleanup: $e');
+        }
       }
     });
 
@@ -1007,13 +1031,23 @@ class NotificationService {
   /// If backend unregister fails (offline/server error), the method still proceeds
   /// with local cleanup. The server should handle stale tokens on send failures.
   ///
+  /// **Note on automatic cleanup:** If you use [connectToAuthService], local cleanup
+  /// (steps 2-4) happens automatically when logout is detected. However, the backend
+  /// unregister (step 1) cannot run automatically because the user is already logged
+  /// out when the auth stream fires. If you need backend unregister, call this method
+  /// manually before [AuthServiceInt.signOut]. The server should prune stale tokens
+  /// when push sends fail, so manual pre-logout cleanup is optional but recommended.
+  ///
   /// [timeout] is the maximum time to wait for backend unregister (default: 5 seconds).
   ///
   /// Example:
   /// ```dart
-  /// // In your logout flow:
+  /// // In your logout flow (recommended for backend token cleanup):
   /// await notificationService.preLogoutCleanup();
   /// await authService.signOut();
+  ///
+  /// // Or rely on automatic local cleanup (server prunes stale tokens):
+  /// await authService.signOut(); // Local cleanup happens via connectToAuthService
   /// ```
   Future<void> preLogoutCleanup({Duration timeout = const Duration(seconds: 5)}) async {
     logd('Starting pre-logout cleanup');
