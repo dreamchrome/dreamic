@@ -32,23 +32,23 @@ Scope: Convert verification findings into actionable tasks.
    - Updated enum completeness test to include `shownWebInstructions`.
    - Files: [test/notification_permission/notification_permission_flow_test.dart](test/notification_permission/notification_permission_flow_test.dart#L147-L161), [test/notification_permission/notification_permission_flow_test.dart](test/notification_permission/notification_permission_flow_test.dart#L463-L602)
 
-- [ ] **App-level notification toggles**
-   - Add tests for `enableNotifications()`, `disableNotifications()`, and `isNotificationsEnabled()`.
-   - Verify SharedPreferences flag and token cleanup behavior.
-   - Files: [test/notification_permission/](test/notification_permission/)
+- [x] **App-level notification toggles**
+   - Added tests for `enableNotifications()`, `disableNotifications()`, and `isNotificationsEnabled()`.
+   - Verified SharedPreferences flag behavior (18 tests covering default values, persistence, toggling, independence from other prefs).
+   - Note: Full Firebase token cleanup testing requires Firebase mocking; tests focus on SharedPreferences layer.
+   - Files: [test/notification_permission/notification_toggle_test.dart](test/notification_permission/notification_toggle_test.dart), [test/notification_permission/mocks/mock_shared_preferences.dart](test/notification_permission/mocks/mock_shared_preferences.dart)
 
-- [ ] **Reduce dialog helper duplication**
-   - Choose one location for dialog helpers (service or presentation helper).
-   - If presentation helper is the intended API, wire service to call it and export from `dreamic.dart`.
-   - Files: [lib/presentation/helpers/notification_permission_dialogs.dart](lib/presentation/helpers/notification_permission_dialogs.dart), [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L1340-L1470), [lib/dreamic.dart](lib/dreamic.dart#L1-L80)
+- [x] **Reduce dialog helper duplication**
+   - Chose Option 2: Remove presentation helper file, keep service's private methods.
+   - Rationale: `NotificationFlowConfig` already provides localization via `NotificationFlowStrings` and full customization via `*Builder` callbacks. Exporting separate dialog helpers would add redundant API surface.
+   - Deleted `lib/presentation/helpers/notification_permission_dialogs.dart`.
+   - Files: [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L1476-L1538)
 
-- [ ] **Expose helper wrappers (optional parity)**
-   - Add convenience wrappers for `shouldShowSettingsPrompt()` and `shouldRequestPermissions()` if desired.
-   - Confirm intended public API surface vs direct `permissionHelper` use.
-   - Files: [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L1160-L1230)
+- [x] **Expose helper wrappers (optional parity)**
+   - Skipped: `NotificationPermissionHelper` is already exported, so consumers who need advanced methods can use `permissionHelper` directly. Keeps service API surface lean.
 
-- [ ] **Export helper dialogs if part of public API**
-   - Add export to [lib/dreamic.dart](lib/dreamic.dart#L1-L80).
+- [x] **Export helper dialogs if part of public API**
+   - N/A: Decided not to export dialog helpers; removed the file in "Reduce dialog helper duplication" task above.
 
 - [ ] **Correct logout behavior in NOTIFICATION_GUIDE**
    - Reflect actual behavior (manual pre-logout cleanup required) or implement auto cleanup then update docs.

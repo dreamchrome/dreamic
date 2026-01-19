@@ -569,8 +569,10 @@ await NotificationService().connectToAuthService(
 
 **Behavior:**
 - On login: Requests permission (if `fcmAutoInitialize` is true), gets token, syncs to server
-- On logout: Unregisters token from server, clears local token
+- On logout (automatic): Local cleanup only - deletes FCM token from Firebase, clears cached token. Does NOT call backend (user is already logged out; server prunes stale tokens on send failures)
 - On token refresh: Syncs new token to server
+
+> **Note:** To unregister the token from your backend before logout, call `preLogoutCleanup()` before signing out (see below).
 
 ### Manual Token Management
 
