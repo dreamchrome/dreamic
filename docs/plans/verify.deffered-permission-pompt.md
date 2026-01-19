@@ -5,9 +5,9 @@ Scope: Convert verification findings into actionable tasks.
 
 ## A) Implementation Order (Dependency-Optimized)
 
-- [ ] **Auto-wire auth in `NotificationService.initialize()`**
+- [x] **Auto-wire auth in `NotificationService.initialize()`**
    - Add guarded GetIt resolution for `AuthServiceInt`.
-   - Set `_onTokenChanged` to default callable when caller didn’t pass one.
+   - Set `_onTokenChanged` to default callable when caller didn't pass one.
    - Connect auth stream or call `connectToAuthService()` internally.
    - Files: [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L227-L318)
 

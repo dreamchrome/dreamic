@@ -202,6 +202,7 @@ class NotificationService {
   /// - FCM message listeners (foreground, background, terminated)
   /// - Notification action handlers
   /// - Platform-specific configuration
+  /// - Auto-wiring to auth service (if registered in GetIt)
   ///
   /// **This is the only method consuming apps need to call to set up notifications.**
   ///
@@ -212,6 +213,11 @@ class NotificationService {
   /// - [onError]: Callback for handling errors
   /// - [showNotificationsInForeground]: Whether to display notifications in foreground (default: true)
   /// - [reminderIntervalDays]: Days between permission reminders (default: 30)
+  /// - [onTokenChanged]: Callback for FCM token changes. If not provided and auth service
+  ///   is available, uses the default Firebase callable function implementation.
+  /// - [autoConnectAuth]: Whether to automatically connect to auth service if available
+  ///   in GetIt (default: true). Set to false if you want to call [connectToAuthService]
+  ///   manually with custom configuration.
   ///
   /// Example:
   /// ```dart
@@ -231,6 +237,8 @@ class NotificationService {
     NotificationErrorCallback? onError,
     bool showNotificationsInForeground = true,
     int reminderIntervalDays = 30,
+    Future<void> Function(String? newToken, String? oldToken)? onTokenChanged,
+    bool autoConnectAuth = true,
   }) async {
     if (_initialized) {
       logi('NotificationService already initialized');
@@ -256,6 +264,33 @@ class NotificationService {
 
       _initialized = true;
       logi('NotificationService initialized successfully');
+
+      // Auto-wire to auth service if available and enabled
+      if (autoConnectAuth) {
+        // Check if auth service is available before attempting to connect
+        bool authAvailable = false;
+        try {
+          authAvailable = GetIt.I.isRegistered<AuthServiceInt>();
+        } catch (e) {
+          // GetIt not initialized or other error
+          logd('GetIt check failed: $e');
+        }
+
+        if (authAvailable) {
+          await connectToAuthService(onTokenChanged: onTokenChanged);
+        } else {
+          // This is a configuration error - report it but don't crash
+          const errorMsg = 'autoConnectAuth is enabled but AuthServiceInt is not '
+              'registered in GetIt. FCM token management will not work automatically. '
+              'Either register AuthServiceInt before initializing NotificationService, '
+              'or set autoConnectAuth: false and call connectToAuthService() manually later.';
+          loge(errorMsg);
+          _onError?.call(errorMsg, null);
+        }
+      } else if (onTokenChanged != null) {
+        // Even without auto-connect, store the callback for later use
+        _onTokenChanged = onTokenChanged;
+      }
     } catch (e, stackTrace) {
       loge(e, 'Failed to initialize NotificationService', stackTrace);
       _onError?.call('Failed to initialize NotificationService: $e', stackTrace);
@@ -950,7 +985,8 @@ class NotificationService {
       }
 
       await callable.call(data);
-      logd('FCM token synced via default callable: ${newToken != null ? 'registered' : 'unregistered'}');
+      logd(
+          'FCM token synced via default callable: ${newToken != null ? 'registered' : 'unregistered'}');
     } catch (e) {
       loge(e, 'Failed to sync FCM token via default callable');
       // Don't rethrow - token sync failure shouldn't block other operations
@@ -1163,14 +1199,12 @@ class NotificationService {
   /// Gets the number of times permissions have been requested.
   ///
   /// Delegates to [NotificationPermissionHelper.getPermissionRequestCount].
-  Future<int> getPermissionRequestCount() =>
-      _permissionHelper.getPermissionRequestCount();
+  Future<int> getPermissionRequestCount() => _permissionHelper.getPermissionRequestCount();
 
   /// Gets the number of times permissions have been denied.
   ///
   /// Delegates to [NotificationPermissionHelper.getPermissionDenialCount].
-  Future<int> getPermissionDenialCount() =>
-      _permissionHelper.getPermissionDenialCount();
+  Future<int> getPermissionDenialCount() => _permissionHelper.getPermissionDenialCount();
 
   /// Checks if enough time has passed to show a permission reminder.
   ///
@@ -1181,8 +1215,7 @@ class NotificationService {
   /// Updates the last reminder date to now.
   ///
   /// Delegates to [NotificationPermissionHelper.updateLastReminderDate].
-  Future<void> updateLastReminderDate() =>
-      _permissionHelper.updateLastReminderDate();
+  Future<void> updateLastReminderDate() => _permissionHelper.updateLastReminderDate();
 
   /// Gets metadata about previous notification permission denials.
   ///
@@ -1194,8 +1227,7 @@ class NotificationService {
   /// Clears stored denial info (e.g., after user grants permission via settings).
   ///
   /// Delegates to [NotificationPermissionHelper.clearNotificationDenialInfo].
-  Future<void> clearNotificationDenialInfo() =>
-      _permissionHelper.clearNotificationDenialInfo();
+  Future<void> clearNotificationDenialInfo() => _permissionHelper.clearNotificationDenialInfo();
 
   /// Gets metadata about previous "go to settings" prompts.
   ///
@@ -1207,8 +1239,7 @@ class NotificationService {
   /// Clears stored "go to settings" prompt info.
   ///
   /// Delegates to [NotificationPermissionHelper.clearGoToSettingsPromptInfo].
-  Future<void> clearGoToSettingsPromptInfo() =>
-      _permissionHelper.clearGoToSettingsPromptInfo();
+  Future<void> clearGoToSettingsPromptInfo() => _permissionHelper.clearGoToSettingsPromptInfo();
 
   //
   // High-Level Permission Flow
