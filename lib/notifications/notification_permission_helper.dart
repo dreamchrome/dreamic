@@ -1,11 +1,33 @@
 import 'dart:convert';
 import 'dart:io' show Platform;
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/notification_permission_status.dart';
 import 'notification_service.dart';
 import 'notification_types.dart';
 import '../utils/logger.dart';
+
+/// Calculates the duration to wait before asking again, based on denial count.
+///
+/// Uses the formula: askAgainAfter * (askAgainMultiplier ^ (denialCount - 1))
+///
+/// Examples with askAgainAfter=7 days:
+/// - denialCount=1, multiplier=1.5: 7 days
+/// - denialCount=2, multiplier=1.5: 10.5 days
+/// - denialCount=3, multiplier=1.5: 15.75 days
+/// - denialCount=1, multiplier=1.0: 7 days (constant)
+/// - denialCount=2, multiplier=1.0: 7 days (constant)
+Duration _getAskAgainDuration(NotificationFlowConfig config, int denialCount) {
+  if (denialCount <= 1) {
+    return config.askAgainAfter;
+  }
+
+  // multiplier ^ (denialCount - 1)
+  final multiplierFactor = math.pow(config.askAgainMultiplier, denialCount - 1);
+  final milliseconds = (config.askAgainAfter.inMilliseconds * multiplierFactor).round();
+  return Duration(milliseconds: milliseconds);
+}
 
 /// Helper class for managing notification permission state and logic.
 ///
@@ -537,10 +559,12 @@ class NotificationPermissionHelper {
           return false;
         }
 
-        // Check timing
+        // Check timing with multiplier based on denial count
+        // The delay increases with each denial when multiplier > 1
+        final requiredDelay = _getAskAgainDuration(config, denialInfo.denialCount);
         final timeSinceDenial =
             DateTime.now().difference(denialInfo.lastDenialTime);
-        if (timeSinceDenial < config.askAgainAfter) {
+        if (timeSinceDenial < requiredDelay) {
           return false;
         }
 

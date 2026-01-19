@@ -9,6 +9,7 @@ FCM (Firebase Cloud Messaging) token management has been moved from `AuthService
 * **REMOVED:** `useFirebaseFCM` parameter from `AuthServiceImpl` constructor
 * **MOVED:** FCM token management (registration, refresh, cleanup) to `NotificationService`
 * **CHANGED:** `AppConfigBase.useFCMWeb` now defaults to `false` (web FCM is opt-in, requires VAPID setup)
+* **CHANGED:** `AppConfigBase.fcmAutoInitialize` now defaults to `false` (see below)
 
 #### Migration Required
 
@@ -49,7 +50,38 @@ await NotificationService().connectToAuthService();  // Auto-syncs tokens on aut
 #### New FCM Configuration Flags
 * `AppConfigBase.useFCM` - Master FCM toggle (auto-false on iOS simulator)
 * `AppConfigBase.useFCMWeb` - Web-specific FCM toggle (defaults false)
+* `AppConfigBase.fcmAutoInitialize` - Auto-request permission on login (now defaults false)
 * Can be set via code or build flags: `--dart-define USE_FCM=true`
+
+#### Deferred Notification Permissions (New Default)
+
+**`fcmAutoInitialize` now defaults to `false`** - consuming apps must explicitly request notification permissions at an appropriate time in their UX flow.
+
+**Old Behavior (auto-prompt on login):**
+```dart
+// Permissions were automatically requested when user logged in
+// No code needed - but poor UX (users hadn't seen value yet)
+```
+
+**New Behavior (explicit permission request):**
+```dart
+// After NotificationService().initialize(), call one of:
+
+// Option 1: Full flow with value proposition dialog (recommended)
+final result = await NotificationService().runNotificationPermissionFlow(context);
+
+// Option 2: Direct permission request
+final result = await NotificationService().initializeNotifications();
+```
+
+**To restore old behavior:**
+```dart
+// Before Firebase.initializeApp()
+AppConfigBase.fcmAutoInitializeDefault = true;
+
+// Or via build flag
+// flutter run --dart-define FCM_AUTO_INITIALIZE=true
+```
 
 #### Benefits
 * **Deferred Permissions**: Request notification permission at optimal moments, not app launch

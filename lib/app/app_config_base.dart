@@ -100,6 +100,10 @@ class AppConfigBase {
     'firebaseFunctionTimeoutSecsLong': kDebugMode ? 540 : 140,
     'connectionCheckerUrlOverride': '',
     'timeoutForAboutToLogOutCallbackMill': 5000,
+    // Notification permission re-request configuration
+    'notificationAskAgainDays': 7,
+    'notificationAskAgainMultiplier': 3.0,
+    'notificationMaxAskCount': 3,
   };
 
   static set minimumAppVersionRequiredAppleDefault(String value) =>
@@ -129,6 +133,12 @@ class AppConfigBase {
       defaultRemoteConfig['connectionCheckerUrlOverride'] = value;
   static set timeoutForAboutToLogOutCallbackMillDefault(int value) =>
       defaultRemoteConfig['timeoutForAboutToLogOutCallbackMill'] = value;
+  static set notificationAskAgainDaysDefault(int value) =>
+      defaultRemoteConfig['notificationAskAgainDays'] = value;
+  static set notificationAskAgainMultiplierDefault(double value) =>
+      defaultRemoteConfig['notificationAskAgainMultiplier'] = value;
+  static set notificationMaxAskCountDefault(int value) =>
+      defaultRemoteConfig['notificationMaxAskCount'] = value;
 
   static String get minimumAppVersionRequiredApple {
     const envValue = String.fromEnvironment('minimumAppVersionRequiredApple');
@@ -336,6 +346,89 @@ class AppConfigBase {
         return remoteValue;
       } else {
         return defaultRemoteConfig['timeoutForAboutToLogOutCallbackMill'] as int;
+      }
+    }
+  }
+
+  //
+  // Notification Permission Re-Request Configuration
+  //
+
+  /// Number of days to wait before asking for notification permission again after denial.
+  /// This is the base delay; if [notificationAskAgainMultiplier] > 1, subsequent delays will increase.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.notificationAskAgainDaysDefault = 14`
+  /// - Build flag: `--dart-define notificationAskAgainDays=14`
+  /// - Firebase Remote Config: `notificationAskAgainDays`
+  ///
+  /// Default: 7 days
+  static int get notificationAskAgainDays {
+    const envValue = int.fromEnvironment('notificationAskAgainDays', defaultValue: -1);
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue = g<RemoteConfigRepoInt>().getInt('notificationAskAgainDays');
+      if (remoteValue > 0) {
+        return remoteValue;
+      } else {
+        return defaultRemoteConfig['notificationAskAgainDays'] as int;
+      }
+    }
+  }
+
+  /// Multiplier applied to the delay between each subsequent permission request.
+  ///
+  /// Example with multiplier=1.5 and base=7 days:
+  /// - After 1st denial: wait 7 days
+  /// - After 2nd denial: wait 10.5 days (7 × 1.5)
+  /// - After 3rd denial: wait 15.75 days (7 × 1.5 × 1.5)
+  ///
+  /// Set to 1.0 for constant intervals between requests.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.notificationAskAgainMultiplierDefault = 2.0`
+  /// - Build flag: `--dart-define notificationAskAgainMultiplier=2.0`
+  /// - Firebase Remote Config: `notificationAskAgainMultiplier`
+  ///
+  /// Default: 1.5
+  static double get notificationAskAgainMultiplier {
+    const envString = String.fromEnvironment('notificationAskAgainMultiplier');
+    if (envString.isNotEmpty) {
+      final envValue = double.tryParse(envString);
+      if (envValue != null && envValue > 0) {
+        return envValue;
+      }
+    }
+    final remoteValue = g<RemoteConfigRepoInt>().getDouble('notificationAskAgainMultiplier');
+    if (remoteValue > 0) {
+      return remoteValue;
+    } else {
+      return defaultRemoteConfig['notificationAskAgainMultiplier'] as double;
+    }
+  }
+
+  /// Maximum number of times to ask for notification permission after denials.
+  /// After this many denials, the app will stop asking (until tracking is cleared).
+  ///
+  /// Set to 0 to never ask again after any denial.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.notificationMaxAskCountDefault = 5`
+  /// - Build flag: `--dart-define notificationMaxAskCount=5`
+  /// - Firebase Remote Config: `notificationMaxAskCount`
+  ///
+  /// Default: 3
+  static int get notificationMaxAskCount {
+    const envValue = int.fromEnvironment('notificationMaxAskCount', defaultValue: -1);
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue = g<RemoteConfigRepoInt>().getInt('notificationMaxAskCount');
+      if (remoteValue > 0) {
+        return remoteValue;
+      } else {
+        return defaultRemoteConfig['notificationMaxAskCount'] as int;
       }
     }
   }
@@ -685,17 +778,21 @@ class AppConfigBase {
   static bool? _fcmAutoInitialize;
 
   /// Whether to automatically initialize FCM and request notification permissions on login.
-  /// Default is true for backward compatibility.
-  /// Set to false to defer the permission prompt until you call initializeNotifications().
+  /// Default is false - consuming apps must explicitly request notification permissions.
+  /// Set to true for automatic permission prompt on login (legacy behavior).
+  ///
+  /// When false (default), call one of these methods to trigger the permission flow:
+  /// - `NotificationService().runNotificationPermissionFlow(context)` - shows value proposition dialog first
+  /// - `NotificationService().initializeNotifications()` - directly requests permission
   ///
   /// Can be set via:
-  /// - Code: `AppConfigBase.fcmAutoInitializeDefault = false`
-  /// - Build flag: `--dart-define FCM_AUTO_INITIALIZE=false`
+  /// - Code: `AppConfigBase.fcmAutoInitializeDefault = true`
+  /// - Build flag: `--dart-define FCM_AUTO_INITIALIZE=true`
   static bool get fcmAutoInitialize {
     _fcmAutoInitialize ??=
         const String.fromEnvironment('FCM_AUTO_INITIALIZE', defaultValue: '').isNotEmpty
-            ? const String.fromEnvironment('FCM_AUTO_INITIALIZE', defaultValue: 'true') == 'true'
-            : (_fcmAutoInitializeDefault ?? true);
+            ? const String.fromEnvironment('FCM_AUTO_INITIALIZE', defaultValue: 'false') == 'true'
+            : (_fcmAutoInitializeDefault ?? false);
     return _fcmAutoInitialize!;
   }
 

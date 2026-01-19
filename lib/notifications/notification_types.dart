@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:dreamic/app/app_config_base.dart';
 
 /// Result of initializing notifications.
 ///
@@ -335,8 +336,22 @@ class NotificationFlowConfig {
   // Re-ask configuration (when permission denied but can still show system dialog)
   //
 
-  /// How long to wait before asking again after denial.
+  /// How long to wait before asking again after the first denial.
+  /// For subsequent denials, this is multiplied by [askAgainMultiplier].
+  ///
+  /// Example with askAgainAfter=7 days and askAgainMultiplier=1.5:
+  /// - After 1st denial: wait 7 days
+  /// - After 2nd denial: wait 10.5 days
+  /// - After 3rd denial: wait 15.75 days
   final Duration askAgainAfter;
+
+  /// Multiplier applied to [askAgainAfter] for each subsequent denial.
+  ///
+  /// Set to 1.0 for constant intervals between requests.
+  /// Set to values > 1.0 for exponentially increasing intervals.
+  ///
+  /// Default: 1.0 (constant interval)
+  final double askAgainMultiplier;
 
   /// Maximum number of times to ask after denials (0 = never ask again).
   final int maxAskCount;
@@ -386,6 +401,7 @@ class NotificationFlowConfig {
   const NotificationFlowConfig({
     // Re-ask defaults
     this.askAgainAfter = const Duration(days: 7),
+    this.askAgainMultiplier = 3.0,
     this.maxAskCount = 3,
     // Go-to-settings defaults
     this.showGoToSettingsPrompt = true,
@@ -398,9 +414,42 @@ class NotificationFlowConfig {
     this.askAgainBuilder,
   });
 
+  /// Creates a [NotificationFlowConfig] using values from [AppConfigBase].
+  ///
+  /// This factory reads the notification re-request configuration from
+  /// AppConfigBase, which supports environment variables, Firebase Remote Config,
+  /// and programmatic defaults.
+  ///
+  /// Use this to create a config that can be dynamically controlled via Remote Config.
+  factory NotificationFlowConfig.fromAppConfig({
+    // Go-to-settings defaults (not yet in AppConfigBase)
+    bool showGoToSettingsPrompt = true,
+    Duration goToSettingsAskAgainAfter = const Duration(days: 30),
+    int? goToSettingsMaxAskCount,
+    // Strings and builders
+    NotificationFlowStrings strings = const NotificationFlowStrings(),
+    Future<bool> Function(BuildContext context)? valuePropositionBuilder,
+    Future<bool> Function(BuildContext context)? goToSettingsBuilder,
+    Future<bool> Function(BuildContext context, NotificationDenialInfo info)? askAgainBuilder,
+  }) {
+    return NotificationFlowConfig(
+      askAgainAfter: Duration(days: AppConfigBase.notificationAskAgainDays),
+      askAgainMultiplier: AppConfigBase.notificationAskAgainMultiplier,
+      maxAskCount: AppConfigBase.notificationMaxAskCount,
+      showGoToSettingsPrompt: showGoToSettingsPrompt,
+      goToSettingsAskAgainAfter: goToSettingsAskAgainAfter,
+      goToSettingsMaxAskCount: goToSettingsMaxAskCount,
+      strings: strings,
+      valuePropositionBuilder: valuePropositionBuilder,
+      goToSettingsBuilder: goToSettingsBuilder,
+      askAgainBuilder: askAgainBuilder,
+    );
+  }
+
   /// Creates a copy of this [NotificationFlowConfig] with the given fields replaced.
   NotificationFlowConfig copyWith({
     Duration? askAgainAfter,
+    double? askAgainMultiplier,
     int? maxAskCount,
     bool? showGoToSettingsPrompt,
     Duration? goToSettingsAskAgainAfter,
@@ -412,6 +461,7 @@ class NotificationFlowConfig {
   }) {
     return NotificationFlowConfig(
       askAgainAfter: askAgainAfter ?? this.askAgainAfter,
+      askAgainMultiplier: askAgainMultiplier ?? this.askAgainMultiplier,
       maxAskCount: maxAskCount ?? this.maxAskCount,
       showGoToSettingsPrompt: showGoToSettingsPrompt ?? this.showGoToSettingsPrompt,
       goToSettingsAskAgainAfter: goToSettingsAskAgainAfter ?? this.goToSettingsAskAgainAfter,

@@ -1332,8 +1332,9 @@ class NotificationService {
   /// ```
   Future<NotificationFlowResult> runNotificationPermissionFlow(
     BuildContext context, {
-    NotificationFlowConfig config = const NotificationFlowConfig(),
+    NotificationFlowConfig? config,
   }) async {
+    final effectiveConfig = config ?? NotificationFlowConfig.fromAppConfig();
     // Check FCM enabled
     if (!AppConfigBase.useFCM) {
       logd('runNotificationPermissionFlow: FCM is disabled');
@@ -1362,9 +1363,9 @@ class NotificationService {
             return NotificationFlowResult.error;
           }
           // Show value proposition first
-          final shouldProceedFuture = config.valuePropositionBuilder != null
-              ? config.valuePropositionBuilder!(context)
-              : _showValuePropositionDialog(context, config.strings);
+          final shouldProceedFuture = effectiveConfig.valuePropositionBuilder != null
+              ? effectiveConfig.valuePropositionBuilder!(context)
+              : _showValuePropositionDialog(context, effectiveConfig.strings);
           final shouldProceed = await shouldProceedFuture;
 
           if (!shouldProceed) {
@@ -1383,7 +1384,7 @@ class NotificationService {
             return NotificationFlowResult.error;
           }
           if (isPermanentDenied) {
-            return await _handlePermanentlyDeniedFlow(context, config);
+            return await _handlePermanentlyDeniedFlow(context, effectiveConfig);
           }
 
           // Check if we should ask again
@@ -1392,15 +1393,15 @@ class NotificationService {
             logd('runNotificationPermissionFlow: Context unmounted before ask-again');
             return NotificationFlowResult.error;
           }
-          if (!_shouldAskAgain(denialInfo, config)) {
+          if (!_shouldAskAgain(denialInfo, effectiveConfig)) {
             logd('runNotificationPermissionFlow: Skipping ask-again (config limits)');
             return NotificationFlowResult.skippedAskAgain;
           }
 
           // Show ask-again dialog
-          final shouldAskFuture = config.askAgainBuilder != null
-              ? config.askAgainBuilder!(context, denialInfo!)
-              : _showAskAgainDialog(context, config.strings, denialInfo);
+          final shouldAskFuture = effectiveConfig.askAgainBuilder != null
+              ? effectiveConfig.askAgainBuilder!(context, denialInfo!)
+              : _showAskAgainDialog(context, effectiveConfig.strings, denialInfo);
           final shouldAsk = await shouldAskFuture;
 
           if (!shouldAsk) {
