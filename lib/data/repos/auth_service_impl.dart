@@ -23,7 +23,7 @@ import '../../utils/logger.dart';
 import 'auth_service_int.dart';
 
 //TODO: use this to update the server when it changes
-const String sharedPrefKeyTimezone = 'commonSharedKeyTimezone';
+const String sharedPrefKeyTimezone = 'dreamic_timezone';
 
 //TODO: this doesn't work with both anon auth and federated auth, but it could
 
