@@ -25,10 +25,12 @@ Scope: Convert verification findings into actionable tasks.
    - Updated NOTIFICATION_GUIDE.md with example handling and web-specific documentation.
    - Files: [lib/notifications/notification_types.dart](lib/notifications/notification_types.dart#L69-L72), [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L1316-L1320), [lib/notifications/notification_service.dart](lib/notifications/notification_service.dart#L1404-L1417), [docs/NOTIFICATION_GUIDE.md](docs/NOTIFICATION_GUIDE.md#L295-L299)
 
-- [ ] **Web settings instructions behavior**
-   - Add tests for `openNotificationSettings()` returning false on web.
-   - Add flow tests for the web instructions path.
-   - Files: [test/notification_permission/notification_permission_flow_test.dart](test/notification_permission/notification_permission_flow_test.dart#L1-L200)
+- [x] **Web settings instructions behavior**
+   - Added `simulateOpenNotificationSettings()` helper function with tests verifying false on web, true on mobile.
+   - Updated `simulateFlowDecision()` with `isWeb` parameter to test web-specific flow.
+   - Added 8 tests covering: web instructions result, mobile vs web behavior, config limits on web, user decline on web.
+   - Updated enum completeness test to include `shownWebInstructions`.
+   - Files: [test/notification_permission/notification_permission_flow_test.dart](test/notification_permission/notification_permission_flow_test.dart#L147-L161), [test/notification_permission/notification_permission_flow_test.dart](test/notification_permission/notification_permission_flow_test.dart#L463-L602)
 
 - [ ] **App-level notification toggles**
    - Add tests for `enableNotifications()`, `disableNotifications()`, and `isNotificationsEnabled()`.

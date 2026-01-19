@@ -73,6 +73,11 @@ bool isPermissionGranted(NotificationPermissionStatus status) {
 ///
 /// This is a simplified version of the flow logic for testing purposes.
 /// Returns what the flow result would be given the inputs.
+///
+/// [isWeb] simulates the `kIsWeb` constant behavior - when true, the
+/// permanently denied flow returns [NotificationFlowResult.shownWebInstructions]
+/// instead of [NotificationFlowResult.openedSettings] since browser settings
+/// cannot be opened programmatically.
 NotificationFlowResult simulateFlowDecision({
   required NotificationPermissionStatus status,
   required bool canPromptAgain,
@@ -84,6 +89,7 @@ NotificationFlowResult simulateFlowDecision({
   required NotificationDenialInfo? denialInfo,
   required GoToSettingsPromptInfo? settingsPromptInfo,
   NotificationInitResult initResult = NotificationInitResult.success,
+  bool isWeb = false,
 }) {
   // Already granted
   if (isPermissionGranted(status)) {
@@ -115,6 +121,11 @@ NotificationFlowResult simulateFlowDecision({
         return NotificationFlowResult.declinedGoToSettings;
       }
 
+      // Web cannot open browser settings programmatically
+      if (isWeb) {
+        return NotificationFlowResult.shownWebInstructions;
+      }
+
       return NotificationFlowResult.openedSettings;
     }
 
@@ -131,6 +142,22 @@ NotificationFlowResult simulateFlowDecision({
   }
 
   return NotificationFlowResult.error;
+}
+
+/// Simulates `openNotificationSettings()` behavior.
+///
+/// On web, this always returns false since browser settings cannot be
+/// opened programmatically. On mobile platforms, it returns true when
+/// the app settings are successfully opened.
+///
+/// This mirrors the behavior of [NotificationService.openNotificationSettings].
+bool simulateOpenNotificationSettings({required bool isWeb}) {
+  if (isWeb) {
+    // Cannot open browser settings programmatically
+    return false;
+  }
+  // On mobile platforms, assume settings open successfully
+  return true;
 }
 
 void main() {
@@ -158,8 +185,7 @@ void main() {
 
     test('maps permissionPermanentlyDenied to deniedPermanently', () {
       expect(
-        mapInitResultToFlowResult(
-            NotificationInitResult.permissionPermanentlyDenied),
+        mapInitResultToFlowResult(NotificationInitResult.permissionPermanentlyDenied),
         NotificationFlowResult.deniedPermanently,
       );
     });
@@ -167,8 +193,7 @@ void main() {
     test('maps permissionRequestBlocked to deniedPermission', () {
       // Blocked requests are treated as denials from the flow perspective
       expect(
-        mapInitResultToFlowResult(
-            NotificationInitResult.permissionRequestBlocked),
+        mapInitResultToFlowResult(NotificationInitResult.permissionRequestBlocked),
         NotificationFlowResult.deniedPermission,
       );
     });
@@ -433,20 +458,159 @@ void main() {
     });
   });
 
+  group('Web settings instructions behavior', () {
+    test('openNotificationSettings returns false on web', () {
+      // Web browsers cannot open settings programmatically
+      final result = simulateOpenNotificationSettings(isWeb: true);
+      expect(result, isFalse);
+    });
+
+    test('openNotificationSettings returns true on mobile', () {
+      // Mobile platforms can open app settings
+      final result = simulateOpenNotificationSettings(isWeb: false);
+      expect(result, isTrue);
+    });
+
+    test('permanently denied on web returns shownWebInstructions', () {
+      final result = simulateFlowDecision(
+        status: NotificationPermissionStatus.denied,
+        canPromptAgain: false,
+        isPermanentlyDenied: true,
+        config: const NotificationFlowConfig(),
+        userAcceptsValueProposition: false,
+        userAcceptsAskAgain: false,
+        userAcceptsGoToSettings: true,
+        denialInfo: null,
+        settingsPromptInfo: null,
+        isWeb: true, // Web platform
+      );
+      expect(result, NotificationFlowResult.shownWebInstructions);
+    });
+
+    test('permanently denied on mobile returns openedSettings', () {
+      final result = simulateFlowDecision(
+        status: NotificationPermissionStatus.denied,
+        canPromptAgain: false,
+        isPermanentlyDenied: true,
+        config: const NotificationFlowConfig(),
+        userAcceptsValueProposition: false,
+        userAcceptsAskAgain: false,
+        userAcceptsGoToSettings: true,
+        denialInfo: null,
+        settingsPromptInfo: null,
+        isWeb: false, // Mobile platform
+      );
+      expect(result, NotificationFlowResult.openedSettings);
+    });
+
+    test('web flow respects showGoToSettingsPrompt config', () {
+      final result = simulateFlowDecision(
+        status: NotificationPermissionStatus.denied,
+        canPromptAgain: false,
+        isPermanentlyDenied: true,
+        config: const NotificationFlowConfig(showGoToSettingsPrompt: false),
+        userAcceptsValueProposition: false,
+        userAcceptsAskAgain: false,
+        userAcceptsGoToSettings: true,
+        denialInfo: null,
+        settingsPromptInfo: null,
+        isWeb: true,
+      );
+      // Even on web, if go-to-settings is disabled, it should skip
+      expect(result, NotificationFlowResult.skippedGoToSettings);
+    });
+
+    test('web flow respects goToSettingsMaxAskCount limit', () {
+      final settingsInfo = GoToSettingsPromptInfo(
+        lastPromptTime: DateTime.now().subtract(const Duration(days: 60)),
+        promptCount: 2,
+        lastActionWasOpenSettings: false,
+      );
+
+      final result = simulateFlowDecision(
+        status: NotificationPermissionStatus.denied,
+        canPromptAgain: false,
+        isPermanentlyDenied: true,
+        config: const NotificationFlowConfig(goToSettingsMaxAskCount: 2),
+        userAcceptsValueProposition: false,
+        userAcceptsAskAgain: false,
+        userAcceptsGoToSettings: true,
+        denialInfo: null,
+        settingsPromptInfo: settingsInfo,
+        isWeb: true,
+      );
+      expect(result, NotificationFlowResult.skippedGoToSettings);
+    });
+
+    test('web flow respects timing limits', () {
+      final settingsInfo = GoToSettingsPromptInfo(
+        lastPromptTime: DateTime.now().subtract(const Duration(days: 5)),
+        promptCount: 1,
+        lastActionWasOpenSettings: false,
+      );
+
+      final result = simulateFlowDecision(
+        status: NotificationPermissionStatus.denied,
+        canPromptAgain: false,
+        isPermanentlyDenied: true,
+        config: const NotificationFlowConfig(
+          goToSettingsAskAgainAfter: Duration(days: 30),
+        ),
+        userAcceptsValueProposition: false,
+        userAcceptsAskAgain: false,
+        userAcceptsGoToSettings: true,
+        denialInfo: null,
+        settingsPromptInfo: settingsInfo,
+        isWeb: true,
+      );
+      expect(result, NotificationFlowResult.skippedGoToSettings);
+    });
+
+    test('web flow returns declinedGoToSettings when user declines', () {
+      final result = simulateFlowDecision(
+        status: NotificationPermissionStatus.denied,
+        canPromptAgain: false,
+        isPermanentlyDenied: true,
+        config: const NotificationFlowConfig(),
+        userAcceptsValueProposition: false,
+        userAcceptsAskAgain: false,
+        userAcceptsGoToSettings: false, // User declines
+        denialInfo: null,
+        settingsPromptInfo: null,
+        isWeb: true,
+      );
+      expect(result, NotificationFlowResult.declinedGoToSettings);
+    });
+
+    test('first-time web user with permanent denial shows instructions', () {
+      // Simulates a web browser where first denial is permanent
+      final result = simulateFlowDecision(
+        status: NotificationPermissionStatus.denied,
+        canPromptAgain: false,
+        isPermanentlyDenied: true,
+        config: const NotificationFlowConfig(),
+        userAcceptsValueProposition: false,
+        userAcceptsAskAgain: false,
+        userAcceptsGoToSettings: true,
+        denialInfo: null, // First time
+        settingsPromptInfo: null, // First settings prompt
+        isWeb: true,
+      );
+      expect(result, NotificationFlowResult.shownWebInstructions);
+    });
+  });
+
   group('Blocked request detection', () {
     test('maps blocked request to denied permission', () {
       // This tests the mapping behavior - a blocked request should
       // be treated as a denial from the flow perspective
       expect(
-        mapInitResultToFlowResult(
-            NotificationInitResult.permissionRequestBlocked),
+        mapInitResultToFlowResult(NotificationInitResult.permissionRequestBlocked),
         NotificationFlowResult.deniedPermission,
       );
     });
 
-    test(
-        'blocked request should not increment denial count (tracked separately)',
-        () {
+    test('blocked request should not increment denial count (tracked separately)', () {
       // NotificationDenialInfo tracks requestAttemptCount separately from denialCount
       // A blocked request increments requestAttemptCount but not denialCount
       final infoAfterBlockedRequest = NotificationDenialInfo(
@@ -522,6 +686,7 @@ void main() {
       expect(allResults, contains(NotificationFlowResult.skippedGoToSettings));
       expect(allResults, contains(NotificationFlowResult.declinedGoToSettings));
       expect(allResults, contains(NotificationFlowResult.openedSettings));
+      expect(allResults, contains(NotificationFlowResult.shownWebInstructions));
       expect(allResults, contains(NotificationFlowResult.fcmDisabled));
       expect(allResults, contains(NotificationFlowResult.error));
     });
@@ -610,7 +775,8 @@ void main() {
     test('goToSettingsMaxAskCount of 1 allows exactly one prompt', () {
       // First prompt - should show
       expect(
-        shouldShowGoToSettingsPrompt(null, const NotificationFlowConfig(goToSettingsMaxAskCount: 1)),
+        shouldShowGoToSettingsPrompt(
+            null, const NotificationFlowConfig(goToSettingsMaxAskCount: 1)),
         isTrue,
       );
 
