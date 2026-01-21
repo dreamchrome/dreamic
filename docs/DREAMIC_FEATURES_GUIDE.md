@@ -16,6 +16,7 @@ A comprehensive guide to all features available in the Dreamic package for Flutt
 - [Utilities](#utilities)
 - [Presentation Components](#presentation-components)
 - [Repository Patterns](#repository-patterns)
+- [Tap Handling & Timing Primitives](#tap-handling--timing-primitives)
 
 ---
 
@@ -116,17 +117,16 @@ await authService.accessCodeRegisterWithEmailAndPassword(
 GetIt.I.registerSingleton<AuthServiceInt>(
   AuthServiceImpl(
     firebaseApp: fbApp,
-    useFirebaseFCM: !kIsWeb, // Enable FCM on mobile platforms
     onAuthenticated: (uid) async {
       // Called when user signs in or on app start if already logged in
       // uid is the Firebase user ID
-      
+
       // Example: Initialize RevenueCat with user ID
       if (uid != null) {
         final email = g<AuthServiceInt>().currentFbUser?.email;
         await initRevenueCat(uid, email);
       }
-      
+
       // Clear caches or refresh data as needed
     },
     onLoggedOut: () async {
@@ -139,6 +139,10 @@ GetIt.I.registerSingleton<AuthServiceInt>(
   ),
 );
 ```
+
+> **Note:** FCM token management is handled by `NotificationService`, not `AuthServiceImpl`.
+> Configure FCM via `AppConfigBase.useFCM` (defaults true on mobile, false on iOS simulator)
+> and `AppConfigBase.useFCMWeb` (defaults false, requires VAPID setup).
 
 **Important Notes:**
 - `onAuthenticated` is called with `uid` parameter (nullable String)
@@ -464,18 +468,142 @@ Automatically included in Dreamic 0.2.0+:
 - `http: ^1.5.0` - Image downloading
 - `path_provider: ^2.1.5` - Cache directory access
 
+#### Deferred Permission Flow
+
+**Version:** Added in 0.3.0
+
+Control when the notification permission prompt appears instead of asking immediately on login.
+
+**Configuration:**
+```dart
+// In your app initialization
+AppConfigBase.fcmAutoInitializeDefault = false;  // Disable auto-prompt on login
+AppConfigBase.useFCMWebDefault = true;           // Enable FCM on web (opt-in)
+```
+
+**High-Level Flow (Recommended):**
+```dart
+// Trigger permission flow at the right moment (e.g., after onboarding)
+final result = await NotificationService().runNotificationPermissionFlow(
+  context,
+  config: NotificationFlowConfig(
+    askAgainAfter: const Duration(days: 7),  // Wait 7 days before re-asking
+    maxAskCount: 3,                           // Max 3 attempts
+    showGoToSettingsPrompt: true,             // Show settings prompt if denied
+    strings: NotificationFlowStrings(
+      valuePropositionTitle: l10n.notificationTitle,
+      valuePropositionMessage: l10n.notificationDescription,
+      // ... localized strings
+    ),
+  ),
+);
+
+// Handle result
+switch (result) {
+  case NotificationFlowResult.granted:
+  case NotificationFlowResult.alreadyGranted:
+    showSnackbar('Notifications enabled!');
+    break;
+  case NotificationFlowResult.deniedPermanently:
+    // User must enable in settings
+    break;
+  // ... handle other cases
+}
+```
+
+**Flow Handles Automatically:**
+- Value proposition dialog before system prompt
+- "Ask again" dialog with timing/count limits
+- "Go to settings" dialog when permanently denied
+- Web-specific instructions (can't open browser settings)
+- Auto-detection when user returns from settings
+
+**Low-Level Manual Control:**
+```dart
+// Check current status
+final status = await NotificationService().getPermissionStatus();
+
+// Manual initialization
+final result = await NotificationService().initializeNotifications();
+
+// Get denial tracking info
+final denialInfo = await NotificationService().getNotificationDenialInfo();
+if (denialInfo != null && denialInfo.denialCount >= 3) {
+  // Maybe show settings prompt
+}
+```
+
+#### FCM Token Management
+
+**Version:** Added in 0.3.0
+
+FCM token management is now consolidated in `NotificationService` (moved from `AuthServiceImpl`).
+
+**Automatic Auth Integration:**
+```dart
+// NotificationService auto-wires to AuthService if registered in GetIt
+await NotificationService().connectToAuthService(
+  onTokenChanged: (newToken, oldToken) async {
+    // Custom backend sync (optional - default uses Firebase callable)
+    await myBackendService.updateFcmToken(newToken, oldToken);
+  },
+);
+```
+
+**Manual Token Management:**
+```dart
+// Initialize FCM token manually
+await NotificationService().initializeFcmToken(
+  onTokenChanged: (newToken, oldToken) async {
+    await myBackendService.updateFcmToken(newToken, oldToken);
+  },
+);
+
+// Get cached token
+final token = NotificationService().cachedFcmToken;
+
+// Clear token on logout
+await NotificationService().clearFcmToken();
+```
+
+**Pre-Logout Cleanup:**
+```dart
+// Before signing out, unregister token while still authenticated
+await NotificationService().preLogoutCleanup();
+await authService.signOut();
+```
+
+#### App-Level Notification Toggle
+
+**Version:** Added in 0.3.0
+
+Allow users to enable/disable notifications at the app level (separate from OS permission).
+
+```dart
+// Check if enabled
+final enabled = await NotificationService().isNotificationsEnabled();
+
+// Disable (stops token sync, deletes local token)
+await NotificationService().disableNotifications();
+
+// Re-enable (requests permission if needed, syncs new token)
+final result = await NotificationService().enableNotifications();
+```
+
 #### Best Practices
 
 1. **Initialize early** - Call `initialize()` in `main()` before `runApp()`
 2. **Request permissions contextually** - Show permission request at meaningful moments, not immediately on app start
-3. **Customize all text** - Use localized strings for all UI text parameters
-4. **Handle denied state** - Use `NotificationPermissionHelper` to check if you can prompt again
-5. **Test badge support** - Badge functionality varies by Android manufacturer
-6. **Use the background handler** - Always register `dreamicNotificationBackgroundHandler` for proper background message handling
-7. **Optimize images** - Use reasonably sized images (< 2MB) to avoid slow downloads
-8. **Limit action buttons** - Use 2-3 actions max for best UX
-9. **Test on devices** - Rich notifications behave differently on various Android manufacturers
-10. **Use appropriate channels** - Choose the right channel for notification importance
+3. **Use the high-level flow** - `runNotificationPermissionFlow()` handles edge cases automatically
+4. **Customize all text** - Use localized strings for all UI text parameters
+5. **Handle denied state** - Use `NotificationPermissionHelper` to check if you can prompt again
+6. **Test badge support** - Badge functionality varies by Android manufacturer
+7. **Use the background handler** - Always register `dreamicNotificationBackgroundHandler` for proper background message handling
+8. **Optimize images** - Use reasonably sized images (< 2MB) to avoid slow downloads
+9. **Limit action buttons** - Use 2-3 actions max for best UX
+10. **Test on devices** - Rich notifications behave differently on various Android manufacturers
+11. **Use appropriate channels** - Choose the right channel for notification importance
+12. **Pre-logout cleanup** - Call `preLogoutCleanup()` before signing out to unregister tokens properly
 
 #### Complete Documentation
 
@@ -521,8 +649,39 @@ AppConfigBase.doUseBackendEmulator // Use Firebase emulator
 AppConfigBase.backendEmulatorRemoteAddress // Emulator address
 
 // FCM settings
-AppConfigBase.useFCM // Enable/disable FCM
+AppConfigBase.useFCM              // Enable/disable FCM (auto-detects iOS simulator)
+AppConfigBase.useFCMWeb           // Enable FCM on web (default: false, requires VAPID)
+AppConfigBase.fcmAutoInitialize   // Auto-request permission on login (default: true)
 ```
+
+**FCM Configuration (Deferred Permission):**
+
+```dart
+// Disable auto-permission prompt on login (wait for manual trigger)
+AppConfigBase.fcmAutoInitializeDefault = false;
+
+// Enable web FCM (requires VAPID key and service worker setup)
+AppConfigBase.useFCMWebDefault = true;
+
+// Or via build flags
+// flutter run --dart-define FCM_AUTO_INITIALIZE=false --dart-define USE_FCM_WEB=true
+```
+
+| Config | Default | Description |
+|--------|---------|-------------|
+| `useFCM` | `true` (except iOS simulator) | Master FCM toggle |
+| `useFCMWeb` | `false` | Web FCM toggle (requires VAPID setup) |
+| `fcmAutoInitialize` | `true` | Auto-request permission on login |
+
+**When to disable `fcmAutoInitialize`:**
+- You want to show a value proposition before requesting permission
+- You want to delay the prompt until after onboarding
+- You need fine-grained control over the permission flow
+
+**When to enable `useFCMWeb`:**
+- You've configured a VAPID key in Firebase Console
+- You've set up the service worker (`web/firebase-messaging-sw.js`)
+- You want push notifications in browsers
 
 **App Version Management:**
 ```dart
@@ -1999,7 +2158,7 @@ Helpful extensions and utilities for List operations.
 - `OutdatedAppPage` - Full page for required updates
 
 **Other:**
-- `TappableAction` - Enhanced button with debouncing and loading states
+- `TappableAction` - Enhanced button with debouncing, throttling, rate limiting, and loading states (see [Tap Handling & Timing Primitives](#tap-handling--timing-primitives) for comprehensive documentation)
 - `FrostedContainerWidget` - Frosted glass effect container
 - `ToastWidget` - Toast notifications
 - `AdaptiveIcons` - Platform-adaptive icons
@@ -2070,6 +2229,617 @@ Helpers for converting between data formats and models.
 Location: `lib/data/helpers/function_streamer.dart`
 
 Stream results from Firebase Cloud Functions.
+
+---
+
+## Tap Handling & Timing Primitives
+
+Location: `lib/presentation/elements/tappable_action.dart`
+
+Comprehensive timing control system for user interactions, providing debouncing, throttling, rate limiting, and async concurrency management.
+
+### Core Primitives
+
+#### Throttler
+
+Executes immediately on first call, blocks subsequent calls until duration passes.
+
+```dart
+final throttler = Throttler(
+  duration: const Duration(milliseconds: 500),
+  enabled: true,
+  debugMode: false,
+  name: 'myThrottler',
+  resetOnError: true,
+  onMetrics: (executionTime, executed) {
+    print('Execution: ${executionTime.inMilliseconds}ms, executed: $executed');
+  },
+);
+
+// Execute with throttling
+throttler.call(() => performAction());
+
+// Check state
+if (throttler.isThrottled) {
+  print('Currently in cooldown');
+}
+
+// Reset and cleanup
+throttler.reset();
+throttler.dispose();
+```
+
+#### Debouncer
+
+Waits for a pause in activity before executing. Supports leading and trailing edge execution.
+
+```dart
+final debouncer = Debouncer(
+  duration: const Duration(milliseconds: 300),
+  leading: false,   // Execute immediately on first call
+  trailing: true,   // Execute after pause (default)
+  resetOnError: true,
+  onMetrics: (waitTime, cancelled) {
+    print('Wait: ${waitTime.inMilliseconds}ms, cancelled: $cancelled');
+  },
+);
+
+// Execute with debouncing
+debouncer.call(() => performSearch());
+
+// Execute immediately (bypass debounce)
+debouncer.flush(() => performImmediateSearch());
+
+// Cleanup
+debouncer.cancel();
+debouncer.dispose();
+```
+
+**Leading vs Trailing Edge:**
+- **Leading only**: Execute immediately, ignore subsequent calls during cooldown
+- **Trailing only** (default): Wait for pause, then execute
+- **Both**: Execute immediately AND after pause
+
+#### RateLimiter
+
+Token bucket algorithm for sustained rate limiting with burst capacity. Uses `Stopwatch` (monotonic clock) for accurate timing.
+
+```dart
+final rateLimiter = RateLimiter(
+  maxTokens: 10,                              // Burst capacity
+  refillRate: 5,                              // Tokens added per interval
+  refillInterval: const Duration(seconds: 1), // How often tokens refill
+  enabled: true,
+  debugMode: false,
+  name: 'apiLimiter',
+  onMetrics: (tokensRemaining, acquired) {
+    print('Tokens: $tokensRemaining, acquired: $acquired');
+  },
+);
+
+// Try to acquire token and execute
+if (rateLimiter.call(() => makeApiCall())) {
+  print('API call executed');
+} else {
+  print('Rate limited, try again later');
+}
+
+// Check availability
+print('Available tokens: ${rateLimiter.availableTokens}');
+print('Can acquire: ${rateLimiter.canAcquire}');
+print('Time until next: ${rateLimiter.timeUntilNextToken}');
+
+// Async version
+final result = await rateLimiter.callAsync(() async => await fetchData());
+
+// Reset to full capacity
+rateLimiter.reset();
+rateLimiter.dispose();
+```
+
+#### HighFrequencyThrottler
+
+Optimized for high-frequency events (16-32ms intervals like scroll/resize). Uses `DateTime.now()` comparison instead of Timer objects for reduced overhead.
+
+```dart
+final hfThrottler = HighFrequencyThrottler(
+  duration: const Duration(milliseconds: 16), // ~60fps
+);
+
+// In scroll handler
+scrollController.addListener(() {
+  hfThrottler.call(() => updateScrollPosition());
+});
+
+// Wrap for listeners
+final wrapped = hfThrottler.wrap(() => onScroll());
+
+hfThrottler.reset();
+hfThrottler.dispose();
+```
+
+#### ThrottleDebouncer
+
+Combines throttle + debounce: executes immediately (leading edge), then again after pause (trailing edge). Useful for real-time feedback with final confirmation.
+
+```dart
+final throttleDebouncer = ThrottleDebouncer(
+  duration: const Duration(milliseconds: 500),
+);
+
+// First call: executes immediately
+// Subsequent calls during window: queued
+// After window: executes queued callback
+throttleDebouncer.call(() => saveProgress());
+
+print('Is throttled: ${throttleDebouncer.isThrottled}');
+print('Has pending: ${throttleDebouncer.hasPendingCallback}');
+
+throttleDebouncer.reset();
+throttleDebouncer.dispose();
+```
+
+#### BatchThrottler<T>
+
+Collects multiple actions and executes them as a single batch after a pause. Perfect for analytics events, database writes, or API batching.
+
+```dart
+final batchThrottler = BatchThrottler<AnalyticsEvent>(
+  duration: const Duration(seconds: 2),
+  onBatchExecute: (batch) {
+    // Send all events at once
+    analyticsService.sendBatch(batch);
+  },
+  debugMode: true,
+  name: 'analyticsBatcher',
+);
+
+// Add events (batched automatically)
+batchThrottler.add(AnalyticsEvent('page_view', data: {'page': 'home'}));
+batchThrottler.add(AnalyticsEvent('button_click', data: {'id': 'cta'}));
+
+print('Pending: ${batchThrottler.pendingCount}');
+
+// Execute immediately
+batchThrottler.flush();
+
+// Discard pending without executing
+batchThrottler.clear();
+
+batchThrottler.dispose();
+```
+
+### Async Primitives
+
+#### AsyncDebouncer
+
+Async debouncing with auto-cancellation of previous calls. Returns null if cancelled by a newer invocation.
+
+```dart
+final asyncDebouncer = AsyncDebouncer(
+  duration: const Duration(milliseconds: 300),
+  enabled: true,
+  resetOnError: true,
+  debugMode: false,
+  name: 'searchDebouncer',
+  onMetrics: (executionTime, cancelled) {
+    print('Time: ${executionTime.inMilliseconds}ms, cancelled: $cancelled');
+  },
+);
+
+// Run async operation with debouncing
+final result = await asyncDebouncer.run(() async {
+  return await searchApi(query);
+});
+
+if (result != null) {
+  displayResults(result);
+} else {
+  // Cancelled by newer call
+}
+
+asyncDebouncer.cancel();
+asyncDebouncer.dispose();
+```
+
+#### AsyncThrottler
+
+Async throttling with process-based locking. Locks during execution and optionally times out.
+
+```dart
+final asyncThrottler = AsyncThrottler(
+  maxDuration: const Duration(seconds: 10), // Optional timeout
+  enabled: true,
+  resetOnError: false,
+  debugMode: false,
+  name: 'submitThrottler',
+  onMetrics: (executionTime) {
+    print('Execution took: ${executionTime.inMilliseconds}ms');
+  },
+);
+
+// Execute async operation
+await asyncThrottler.call(() async {
+  await submitForm();
+});
+
+print('Is locked: ${asyncThrottler.isLocked}');
+
+// Wrap for builder widgets
+final onTap = asyncThrottler.wrap(() async => await saveData());
+
+asyncThrottler.reset();
+asyncThrottler.dispose();
+```
+
+#### AsyncExecutor
+
+Handles async operations with concurrency control. Supports four concurrency modes.
+
+```dart
+final executor = AsyncExecutor(
+  mode: ConcurrencyMode.drop,    // drop, replace, keepLatest, enqueue
+  maxDuration: const Duration(seconds: 30),
+  enabled: true,
+  resetOnError: false,
+  debugMode: false,
+  name: 'formExecutor',
+  onMetrics: (executionTime) {
+    print('Completed in: ${executionTime.inMilliseconds}ms');
+  },
+);
+
+// Execute with concurrency control
+final wasExecuted = await executor.execute(() async {
+  await performOperation();
+});
+
+print('Is executing: ${executor.isExecuting}');
+print('Queue size: ${executor.queueSize}');
+print('Pending count: ${executor.pendingCount}');
+
+// Check if specific call should continue
+final callId = executor.currentCallId;
+// ... later ...
+if (executor.shouldContinue(callId)) {
+  // This call wasn't superseded
+}
+
+executor.cancel();
+executor.reset();
+executor.dispose();
+```
+
+**Concurrency Modes:**
+
+| Mode | Behavior |
+|------|----------|
+| `drop` | Ignore new calls while processing (default) |
+| `replace` | Cancel current operation and start new one |
+| `keepLatest` | Keep current + queue latest only, drop intermediate |
+| `enqueue` | Queue all calls, execute sequentially (FIFO) |
+
+### TappableAction Widget
+
+Enhanced button wrapper with comprehensive timing control, network awareness, and group coordination.
+
+#### Basic Usage
+
+```dart
+TappableAction(
+  onTap: () => performAction(),
+  config: const TappableActionConfig(),
+  builder: (context, onTap) {
+    return ElevatedButton(
+      onPressed: onTap,
+      child: Text('Submit'),
+    );
+  },
+)
+```
+
+#### Configuration Options
+
+```dart
+TappableActionConfig(
+  // === Network & Basic ===
+  requireNetwork: true,              // Disable when offline
+  debounceTaps: true,                // Enable timing control
+  coolDownDuration: Duration(milliseconds: 300),
+  delayBeforeFirstTapDuration: null, // Initial delay before first tap allowed
+  disableVisuallyDuringFirstDelay: true,
+  minDisabledDuration: null,         // Minimum time button stays disabled
+  groupId: 'checkout-buttons',       // Coordinate with other TappableActions
+  disableVisuallyDuringDebouncing: true,
+
+  // === Execution Mode ===
+  executionMode: TapExecutionMode.throttle,
+  executeOnLeadingEdge: true,
+  executeOnTrailingEdge: false,
+
+  // === Concurrency Control ===
+  concurrencyMode: TapConcurrencyMode.drop,
+
+  // === Rate Limiting ===
+  rateLimitMaxTokens: 10,
+  rateLimitRefillInterval: Duration(seconds: 1),
+  rateLimitTokensPerRefill: 5,
+
+  // === Observability ===
+  onMetrics: (metrics) {
+    analytics.track('tap', {
+      'throttled': metrics.wasThrottled,
+      'duration_ms': metrics.executionDuration.inMilliseconds,
+      'mode': metrics.executionMode.name,
+    });
+  },
+  enabled: true,
+  maxDuration: Duration(seconds: 30),
+  debugName: 'checkoutButton',
+)
+```
+
+#### Execution Modes
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `throttle` | Execute immediately, block subsequent | Default for buttons |
+| `debounce` | Wait for pause before executing | Search inputs |
+| `throttleDebounce` | Leading + trailing edge | Real-time + confirmation |
+| `rateLimited` | Token bucket with burst capacity | High-frequency actions |
+| `highFrequency` | DateTime-based, no Timer overhead | Scroll/resize handlers |
+
+#### Configuration Presets
+
+**Default (Throttle):**
+```dart
+TappableAction(
+  config: const TappableActionConfig(),  // Throttle, leading edge, drop mode
+  // ...
+)
+```
+
+**Search Input:**
+```dart
+TappableAction(
+  config: const TappableActionConfig.search(),
+  // executionMode: debounce, leading: false, trailing: true
+  // Great for search-as-you-type
+  // ...
+)
+```
+
+**Toggle Button (Like/Favorite):**
+```dart
+TappableAction(
+  config: const TappableActionConfig.toggle(),
+  // executionMode: throttle, concurrencyMode: replace
+  // Immediate feedback, latest state wins
+  // ...
+)
+```
+
+**High-Frequency (Slider/Scroll):**
+```dart
+TappableAction(
+  config: const TappableActionConfig.highFrequency(),
+  // executionMode: highFrequency
+  // Optimized for 16-32ms intervals
+  // ...
+)
+```
+
+**Slider with Rate Limiting:**
+```dart
+TappableAction(
+  config: const TappableActionConfig.slider(),
+  // executionMode: rateLimited
+  // Allows bursts with sustained limit
+  // ...
+)
+```
+
+**Critical Actions (Payment/Delete):**
+```dart
+TappableAction(
+  config: const TappableActionConfig.critical(),
+  // Longer cooldown, delay before first tap
+  // Extra protection against accidental double-taps
+  // ...
+)
+```
+
+#### Group Coordination
+
+Coordinate multiple TappableActions to prevent concurrent actions:
+
+```dart
+// All buttons with same groupId are disabled when any one is tapped
+TappableAction(
+  config: const TappableActionConfig(groupId: 'checkout-buttons'),
+  onTap: () => processPayment(),
+  builder: (context, onTap) => ElevatedButton(
+    onPressed: onTap,
+    child: Text('Pay Now'),
+  ),
+)
+
+TappableAction(
+  config: const TappableActionConfig(groupId: 'checkout-buttons'),
+  onTap: () => applyCoupon(),
+  builder: (context, onTap) => TextButton(
+    onPressed: onTap,
+    child: Text('Apply Coupon'),
+  ),
+)
+```
+
+**Group Manager Features:**
+- Automatic lifecycle management
+- Auto-reset when group becomes empty
+- App resume handling (resets all groups)
+- Configurable cleanup of inactive groups
+- Debug info for troubleshooting
+
+```dart
+// Access group manager for debugging
+final manager = TappableActionGroupManager();
+final debugInfo = manager.getDebugInfo();
+print('Total groups: ${debugInfo['totalGroups']}');
+
+// Force reset a specific group
+manager.resetGroup('checkout-buttons');
+
+// Reset all groups
+manager.resetAllGroups();
+```
+
+#### TapMetrics
+
+Metrics data for tap analytics and observability:
+
+```dart
+TappableActionConfig(
+  onMetrics: (TapMetrics metrics) {
+    print('Execution duration: ${metrics.executionDuration.inMilliseconds}ms');
+    print('Was throttled: ${metrics.wasThrottled}');
+    print('Was cancelled: ${metrics.wasCancelled}');
+    print('Had error: ${metrics.hadError}');
+    print('Tap count in window: ${metrics.tapCountInWindow}');
+    print('Group ID: ${metrics.groupId}');
+    print('Execution mode: ${metrics.executionMode}');
+    print('Timestamp: ${metrics.timestamp}');
+  },
+)
+```
+
+### TappableActionInkedWell
+
+Simplified wrapper combining TappableAction with InkWell:
+
+```dart
+TappableActionInkedWell(
+  onTap: () => navigateToDetails(),
+  borderRadius: BorderRadius.circular(8),
+  config: const TappableActionConfig(),
+  child: ListTile(
+    title: Text('Item Title'),
+    subtitle: Text('Item description'),
+  ),
+)
+```
+
+### TapDebouncer Widget
+
+Stateful debouncer widget with loading state management:
+
+```dart
+TapDebouncer(
+  onTap: () async {
+    await saveData();
+  },
+  cooldown: const Duration(milliseconds: 500),
+  executionMode: TapExecutionMode.throttle,
+  leading: true,
+  trailing: false,
+  builder: (context, onTap) {
+    return ElevatedButton(
+      onPressed: onTap,
+      child: Text('Save'),
+    );
+  },
+  waitBuilder: (context, child) {
+    // Shown while busy
+    return Stack(
+      children: [
+        child,
+        Center(child: CircularProgressIndicator()),
+      ],
+    );
+  },
+)
+```
+
+### Best Practices
+
+1. **Choose the right primitive:**
+   - Button taps → `Throttler` or `TappableAction` with throttle mode
+   - Search input → `Debouncer` or `TappableAction` with debounce mode
+   - API calls → `RateLimiter` to respect rate limits
+   - Scroll handlers → `HighFrequencyThrottler` for minimal overhead
+
+2. **Use group coordination for related actions:**
+   - Assign same `groupId` to buttons that shouldn't run concurrently
+   - Example: payment buttons, form submission, navigation actions
+
+3. **Handle errors appropriately:**
+   - Use `resetOnError: true` when you want the primitive to recover from errors
+   - Metrics callbacks help track error rates
+
+4. **Dispose primitives properly:**
+   - Always call `dispose()` in widget `dispose()` method
+   - TappableAction handles this automatically
+
+5. **Use configuration presets:**
+   - Start with presets (`.search()`, `.toggle()`, etc.) and customize as needed
+   - Presets encode best practices for common use cases
+
+6. **Monitor with metrics:**
+   - Use `onMetrics` callback to track throttle rates, errors, and performance
+   - Helps identify UX issues (too many throttled taps = frustrated users)
+
+### Testing
+
+TappableAction primitives are fully testable with mock timers:
+
+```dart
+import 'package:dreamic/presentation/elements/tappable_action.dart';
+
+class MockTimerFactory implements TimerFactory {
+  Timer? lastTimer;
+  Duration? lastDuration;
+  VoidCallback? lastCallback;
+
+  @override
+  Timer createTimer(Duration duration, VoidCallback callback) {
+    lastDuration = duration;
+    lastCallback = callback;
+    lastTimer = Timer(Duration.zero, () {}); // Immediate
+    return lastTimer!;
+  }
+
+  void fire() {
+    lastCallback?.call();
+  }
+}
+
+void main() {
+  test('Throttler blocks during cooldown', () {
+    final mockTimer = MockTimerFactory();
+    final throttler = Throttler(
+      duration: const Duration(milliseconds: 500),
+      timerFactory: mockTimer,
+    );
+
+    var callCount = 0;
+
+    throttler.call(() => callCount++);
+    expect(callCount, 1);
+
+    throttler.call(() => callCount++);
+    expect(callCount, 1); // Blocked
+
+    mockTimer.fire(); // End cooldown
+
+    throttler.call(() => callCount++);
+    expect(callCount, 2);
+
+    throttler.dispose();
+  });
+}
+```
+
+For widget testing with TappableAction, see the [Testing](#testing) section.
 
 ---
 
@@ -2149,7 +2919,6 @@ The dreamic package provides helper functions to streamline app initialization. 
      GetIt.I.registerSingleton<AuthServiceInt>(
        AuthServiceImpl(
          firebaseApp: fbApp,
-         useFirebaseFCM: !kIsWeb, // Enable FCM on mobile
          onAuthenticated: (uid) async {
            // Called when user signs in
            // Clear caches, initialize services, etc.
@@ -2497,7 +3266,7 @@ BlocBuilder<AppCubit, AppState>(
 - **Solution:** Wait for auth state to initialize: `await authService.waitForCanCheckLoginState()`
 
 **Problem:** FCM not working on iOS simulator
-- **Solution:** FCM doesn't work on iOS simulator. Test on real device or disable FCM for simulators with `useFirebaseFCM: !kIsWeb && !Platform.isIOS` (or check for simulator)
+- **Solution:** FCM doesn't work on iOS simulator. By default, `AppConfigBase.useFCM` automatically returns `false` on iOS simulators. For manual control, set `AppConfigBase.useFCMDefault = false` before initializing `NotificationService`. Test push notifications on a real device.
 
 ### Network Issues
 
@@ -2586,7 +3355,6 @@ void setupGetIt(FirebaseApp fbApp) {
   GetIt.I.registerSingleton<AuthServiceInt>(
     AuthServiceImpl(
       firebaseApp: fbApp,
-      useFirebaseFCM: !kIsWeb,
       onAuthenticated: (uid) async {
         // Initialize user-specific services
       },
@@ -2910,7 +3678,8 @@ See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for comprehensive testing patterns,
   - `SETUP_APP_UPDATES.md` - Detailed app update setup guide
   - `APP_UPDATE_WEB_RELOADER_IMPLEMENTATION.md` - Web-specific update handling
 - **UI Components:**
-  - `TAPPABLE_ACTION_MIGRATION_GUIDE.md` - TappableAction usage guide
+  - `TAPPABLE_ACTION_MIGRATION_GUIDE.md` - TappableAction migration guide
+  - See [Tap Handling & Timing Primitives](#tap-handling--timing-primitives) for comprehensive debounce/throttle documentation
 - **Configuration:**
   - `WEB_REMOTE_CONFIG_FIX.md` - Web-specific Remote Config issues and solutions
 

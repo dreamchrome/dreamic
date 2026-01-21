@@ -286,7 +286,7 @@ class NotificationPermissionBottomSheet extends StatelessWidget {
 
     if (result == OkCancelResult.ok && context.mounted) {
       final service = NotificationService();
-      await service.openSystemSettings();
+      await service.openNotificationSettings();
     }
   }
 }

@@ -243,7 +243,7 @@ class _NotificationPermissionStatusWidgetState extends State<NotificationPermiss
     }
 
     final service = NotificationService();
-    await service.openSystemSettings();
+    await service.openNotificationSettings();
 
     // Reload status when user returns from settings
     await Future.delayed(const Duration(seconds: 1));

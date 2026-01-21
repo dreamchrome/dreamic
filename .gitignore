@@ -63,3 +63,10 @@ app.*.map.json
 # Allows packages to be local path dependencies per developer
 pubspec_overrides.yaml
 .claude/settings.local.json
+
+# FVM - Flutter Version Management
+.fvm/flutter_sdk
+.fvm/versions
+
+# FVM Version Cache
+.fvm/

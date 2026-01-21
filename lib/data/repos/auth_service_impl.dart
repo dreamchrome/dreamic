@@ -6,7 +6,6 @@ import 'package:dartz/dartz.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dreamic/data/helpers/repository_failure.dart';
 import 'package:dreamic/utils/retry_it.dart';
@@ -23,27 +22,74 @@ import '../../app/app_config_base.dart';
 import '../../utils/logger.dart';
 import 'auth_service_int.dart';
 
-const String sharedPrefKeyFcmToken = 'commonSharedKeyFcmToken';
 //TODO: use this to update the server when it changes
-const String sharedPrefKeyTimezone = 'commonSharedKeyTimezone';
+const String sharedPrefKeyTimezone = 'dreamic_timezone';
 
 //TODO: this doesn't work with both anon auth and federated auth, but it could
 
 class AuthServiceImpl implements AuthServiceInt {
-  Future<void> Function(String? uid)? onAuthenticated;
-  Future<void> Function()? onRefreshed;
-  Future<void> Function()? onLoggedOut;
+  /// List of callbacks invoked when user authenticates.
+  final List<Future<void> Function(String? uid)> _onAuthenticatedCallbacks = [];
 
-  /// Whether to use Firebase FCM for push notifications
-  /// This is the general setting, which can be disabled by the app config setting, but not overridden to enable FCM by the app config.
-  bool useFirebaseFCM;
+  /// List of callbacks invoked when user data is refreshed.
+  final List<Future<void> Function()> _onRefreshedCallbacks = [];
+
+  /// List of callbacks invoked AFTER logout is complete.
+  final List<Future<void> Function()> _onLoggedOutCallbacks = [];
+
+  /// List of callbacks invoked BEFORE signing out, while still authenticated.
+  ///
+  /// Use [addOnAboutToLogOutCallback] to register callbacks for cleanup tasks
+  /// that require authentication (e.g., unregistering FCM tokens from backend).
+  /// Each callback is called with a timeout; failures won't block sign out.
+  final List<Future<void> Function()> _onAboutToLogOutCallbacks = [];
+
+  @override
+  void addOnAuthenticatedCallback(Future<void> Function(String? uid) callback) {
+    _onAuthenticatedCallbacks.add(callback);
+  }
+
+  @override
+  bool removeOnAuthenticatedCallback(Future<void> Function(String? uid) callback) {
+    return _onAuthenticatedCallbacks.remove(callback);
+  }
+
+  @override
+  void addOnRefreshedCallback(Future<void> Function() callback) {
+    _onRefreshedCallbacks.add(callback);
+  }
+
+  @override
+  bool removeOnRefreshedCallback(Future<void> Function() callback) {
+    return _onRefreshedCallbacks.remove(callback);
+  }
+
+  @override
+  void addOnLoggedOutCallback(Future<void> Function() callback) {
+    _onLoggedOutCallbacks.add(callback);
+  }
+
+  @override
+  bool removeOnLoggedOutCallback(Future<void> Function() callback) {
+    return _onLoggedOutCallbacks.remove(callback);
+  }
+
+  @override
+  void addOnAboutToLogOutCallback(Future<void> Function() callback) {
+    _onAboutToLogOutCallbacks.add(callback);
+  }
+
+  @override
+  bool removeOnAboutToLogOutCallback(Future<void> Function() callback) {
+    return _onAboutToLogOutCallbacks.remove(callback);
+  }
+
   HttpsCallable authCallable =
       AppConfigBase.firebaseFunctionCallable(AppConfigBase.authMainCallableFunction);
   late final fb_auth.FirebaseAuth _fbAuth;
 
   // bool _hasGottenUserPrivate = false;
   bool _hasAuthStateChangeListenerRunAtLeastOnce = false;
-  bool _hasInitializedFCM = false;
   String? _accessCodeCached;
   final StreamController<bool> _isLoggedInStreamController = StreamController<bool>.broadcast();
 
@@ -87,16 +133,30 @@ class AuthServiceImpl implements AuthServiceInt {
 
   AuthServiceImpl({
     required FirebaseApp firebaseApp,
-    required this.useFirebaseFCM,
-    this.onAuthenticated,
-    this.onRefreshed,
-    this.onLoggedOut,
+    Future<void> Function(String? uid)? onAuthenticated,
+    Future<void> Function()? onRefreshed,
+    Future<void> Function()? onLoggedOut,
+    Future<void> Function()? onAboutToLogOut,
   }) {
     // This can be disabled for hardcoding
     logd('Instantiated AuthServiceImpl');
     _fbAuth = fb_auth.FirebaseAuth.instanceFor(app: firebaseApp);
     _fbAuth.authStateChanges().listen(handleAuthStateChanges);
     _fbAuth.idTokenChanges().listen((event) => handleTokenChanges(event));
+
+    // Add constructor-provided callbacks to lists for backward compatibility
+    if (onAuthenticated != null) {
+      _onAuthenticatedCallbacks.add(onAuthenticated);
+    }
+    if (onRefreshed != null) {
+      _onRefreshedCallbacks.add(onRefreshed);
+    }
+    if (onLoggedOut != null) {
+      _onLoggedOutCallbacks.add(onLoggedOut);
+    }
+    if (onAboutToLogOut != null) {
+      _onAboutToLogOutCallbacks.add(onAboutToLogOut);
+    }
 
     // For debuggin
     if (AppConfigBase.signoutOnReload) {
@@ -143,7 +203,14 @@ class AuthServiceImpl implements AuthServiceInt {
         _authStateCompleter!.complete(true);
       }
 
-      await onAuthenticated?.call(fbUser.uid);
+      // Call all onAuthenticated callbacks
+      for (final callback in _onAuthenticatedCallbacks) {
+        try {
+          await callback(fbUser.uid);
+        } catch (e) {
+          logw('onAuthenticated callback failed: $e');
+        }
+      }
     }
   }
 
@@ -160,14 +227,9 @@ class AuthServiceImpl implements AuthServiceInt {
       //TODO: added this here but not sure it needs to do this again...
       // await refreshCurrentUser();
 
-      if (useFirebaseFCM) {
-        // Initialize FCM if app config allows it
-        if (AppConfigBase.useFCM) {
-          await initFCM();
-        } else {
-          logd('FCM is disabled in AppConfigBase, not initializing FCM');
-        }
-      }
+      // Note: FCM token management has been moved to NotificationService.
+      // Apps should subscribe to isLoggedInStream and call
+      // NotificationService.initializeFcmToken() when user logs in.
     }
 
     //
@@ -224,12 +286,41 @@ class AuthServiceImpl implements AuthServiceInt {
 
     // ...existing signOut code...
     try {
+      // Call all onAboutToLogOut callbacks while still authenticated (before Firebase signOut)
+      // This allows cleanup tasks like FCM token unregistration that require auth
+      if (useFbAuthAlso && _onAboutToLogOutCallbacks.isNotEmpty) {
+        final timeout = Duration(milliseconds: AppConfigBase.timeoutForAboutToLogOutCallbackMill);
+        try {
+          await Future.wait(
+            _onAboutToLogOutCallbacks.map((callback) => callback().catchError((e) {
+              logw('onAboutToLogOut callback failed: $e');
+              // Return null to allow other callbacks to complete
+            })),
+          ).timeout(
+            timeout,
+            onTimeout: () {
+              logw('onAboutToLogOut callbacks timed out after $timeout');
+              return []; // Return empty list on timeout
+            },
+          );
+        } catch (e) {
+          logw('onAboutToLogOut callbacks failed: $e');
+          // Continue with sign out even if callbacks fail
+        }
+      }
+
       if (useFbAuthAlso) {
         await _fbAuth.signOut();
       }
 
-      // Call the optional callback
-      await onLoggedOut?.call();
+      // Call all onLoggedOut callbacks (after sign out is complete)
+      for (final callback in _onLoggedOutCallbacks) {
+        try {
+          await callback();
+        } catch (e) {
+          logw('onLoggedOut callback failed: $e');
+        }
+      }
 
       // Clear the cookie on the server if using federated auth
       if (AppConfigBase.useCookieFederatedAuth) {
@@ -249,10 +340,11 @@ class AuthServiceImpl implements AuthServiceInt {
       // Clear the stored user info
       SharedPreferences prefs = await SharedPreferences.getInstance();
 
-      await prefs.remove(sharedPrefKeyFcmToken);
       await prefs.remove(sharedPrefKeyTimezone);
 
-      _hasInitializedFCM = false;
+      // Note: FCM token cleanup has been moved to NotificationService.clearFcmToken()
+      // Apps should call NotificationService.clearFcmToken() before signing out.
+
       _accessCodeCached = null;
     } on fb_auth.FirebaseAuthException catch (e) {
       loge(e);
@@ -1686,119 +1778,6 @@ class AuthServiceImpl implements AuthServiceInt {
     } catch (e) {
       loge(e);
       return left(AuthServiceSignInFailure.unexpected);
-    }
-  }
-
-  //
-  //
-  // FCM
-  //
-  //
-
-  Future<void> initFCM() async {
-    logd('Initializing FCM with _hasInitializedFCM = $_hasInitializedFCM');
-
-    try {
-      FirebaseMessaging messaging = FirebaseMessaging.instance;
-
-      // Request permission for iOS devices
-      await messaging.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
-      //TODO: do we need to do something with the settings?
-      // NotificationSettings settings = await messaging.requestPermission(
-      //   alert: true,
-      //   badge: true,
-      //   sound: true,
-      // );
-
-      // For apple platforms, ensure the APNS token is available before making any FCM plugin API calls
-      String? apnsToken;
-      if (defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.macOS) {
-        // Wait for APNS token to be available
-        int retries = 0;
-        while (apnsToken == null && retries < 30) {
-          apnsToken = await messaging.getAPNSToken();
-          if (apnsToken == null) {
-            logd('APNS token not available yet, waiting...');
-            await Future.delayed(const Duration(milliseconds: 250));
-            retries++;
-          }
-        }
-        if (apnsToken == null) {
-          loge('APNS token was not set after waiting.');
-          // Optionally: return or throw here
-        }
-      }
-
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-
-      String? oldToken = prefs.getString(sharedPrefKeyFcmToken);
-      String? newToken;
-
-      try {
-        newToken = await messaging.getToken();
-      } catch (e) {
-        loge('Failed to get FCM token (Firebase Installations Service may be unavailable): $e');
-        // Don't propagate the error - FCM is not critical for app functionality
-        return;
-      }
-
-      if (newToken != null && (newToken != oldToken || !_hasInitializedFCM)) {
-        try {
-          logd('Updating FCM token on server: $newToken');
-          await _updateTokenOnServer(newToken, oldToken ?? "");
-          await prefs.setString(sharedPrefKeyFcmToken, newToken);
-        } catch (e) {
-          loge('Error updating FCM token on server: $e');
-        }
-      }
-
-      if (!_hasInitializedFCM) {
-        messaging.onTokenRefresh.listen((newToken) async {
-          SharedPreferences prefs = await SharedPreferences.getInstance();
-          String? oldToken = prefs.getString(sharedPrefKeyFcmToken);
-          try {
-            await _updateTokenOnServer(newToken, oldToken ?? "");
-            await prefs.setString(sharedPrefKeyFcmToken, newToken);
-          } catch (e) {
-            loge('Error updating FCM token on server: $e');
-          }
-        });
-      }
-
-      _hasInitializedFCM = true;
-    } catch (e) {
-      loge('FCM initialization failed: $e');
-      // Don't set _hasInitializedFCM to true if initialization failed
-      // This allows retry on next auth state change
-    }
-  }
-
-  Future<void> _updateTokenOnServer(String newToken, String oldToken) async {
-    // Call a Firebase function to update the token on the server.
-    final data = <String, dynamic>{
-      'newToken': newToken,
-      'oldToken': oldToken,
-      'timezone': (await FlutterTimezone.getLocalTimezone()).identifier,
-    };
-
-    if (AppConfigBase.notificationsUpdateFcmTokenUseGrouped) {
-      // Grouped style: call group function with action parameter
-      await AppConfigBase.firebaseFunctionCallable(
-              AppConfigBase.notificationsUpdateFcmTokenGroupFunction!)
-          .call(<String, dynamic>{
-        'action': AppConfigBase.notificationsUpdateFcmTokenAction,
-        ...data,
-      });
-    } else {
-      // Standalone style: call function directly
-      await AppConfigBase.firebaseFunctionCallable(
-              AppConfigBase.notificationsUpdateFcmTokenFunction)
-          .call(data);
     }
   }
 }

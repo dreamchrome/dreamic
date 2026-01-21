@@ -1,3 +1,206 @@
+## 0.4.0
+
+### ⚠️ Breaking Changes: FCM Token Management
+
+#### Overview
+FCM (Firebase Cloud Messaging) token management has been moved from `AuthServiceImpl` to `NotificationService`. This provides better separation of concerns and enables the deferred permission prompt feature.
+
+#### Breaking Changes
+* **REMOVED:** `useFirebaseFCM` parameter from `AuthServiceImpl` constructor
+* **MOVED:** FCM token management (registration, refresh, cleanup) to `NotificationService`
+* **CHANGED:** `AppConfigBase.useFCMWeb` now defaults to `false` (web FCM is opt-in, requires VAPID setup)
+* **CHANGED:** `AppConfigBase.fcmAutoInitialize` now defaults to `false` (see below)
+
+#### Migration Required
+
+**Old Pattern (REMOVED):**
+```dart
+GetIt.I.registerSingleton<AuthServiceInt>(
+  AuthServiceImpl(
+    firebaseApp: fbApp,
+    useFirebaseFCM: !kIsWeb,  // This parameter no longer exists
+    onAuthenticated: (uid) async { ... },
+    onLoggedOut: () async { ... },
+  ),
+);
+```
+
+**New Pattern:**
+```dart
+// 1. AuthServiceImpl - no FCM parameters
+GetIt.I.registerSingleton<AuthServiceInt>(
+  AuthServiceImpl(
+    firebaseApp: fbApp,
+    onAuthenticated: (uid) async { ... },
+    onLoggedOut: () async { ... },
+  ),
+);
+
+// 2. FCM is configured via AppConfigBase (optional)
+AppConfigBase.useFCMDefault = true;      // Mobile: defaults true (false on iOS simulator)
+AppConfigBase.useFCMWebDefault = true;   // Web: defaults false (requires VAPID setup)
+
+// 3. NotificationService handles FCM tokens
+await NotificationService().initialize(
+  onNotificationTapped: (route, data) async { ... },
+);
+await NotificationService().connectToAuthService();  // Auto-syncs tokens on auth changes
+```
+
+#### New FCM Configuration Flags
+* `AppConfigBase.useFCM` - Master FCM toggle (auto-false on iOS simulator)
+* `AppConfigBase.useFCMWeb` - Web-specific FCM toggle (defaults false)
+* `AppConfigBase.fcmAutoInitialize` - Auto-request permission on login (now defaults false)
+* Can be set via code or build flags: `--dart-define USE_FCM=true`
+
+#### Deferred Notification Permissions (New Default)
+
+**`fcmAutoInitialize` now defaults to `false`** - consuming apps must explicitly request notification permissions at an appropriate time in their UX flow.
+
+**Old Behavior (auto-prompt on login):**
+```dart
+// Permissions were automatically requested when user logged in
+// No code needed - but poor UX (users hadn't seen value yet)
+```
+
+**New Behavior (explicit permission request):**
+```dart
+// After NotificationService().initialize(), call one of:
+
+// Option 1: Full flow with value proposition dialog (recommended)
+final result = await NotificationService().runNotificationPermissionFlow(context);
+
+// Option 2: Direct permission request
+final result = await NotificationService().initializeNotifications();
+```
+
+**To restore old behavior:**
+```dart
+// Before Firebase.initializeApp()
+AppConfigBase.fcmAutoInitializeDefault = true;
+
+// Or via build flag
+// flutter run --dart-define FCM_AUTO_INITIALIZE=true
+```
+
+#### Benefits
+* **Deferred Permissions**: Request notification permission at optimal moments, not app launch
+* **Better UX**: Full control over permission prompts with customizable UI
+* **Cleaner Auth**: `AuthServiceImpl` focuses on authentication only
+* **Automatic Cleanup**: `connectToAuthService()` handles token sync on login/logout
+
+See `NOTIFICATION_GUIDE.md` for complete setup and migration instructions.
+
+---
+
+### ⚠️ Breaking Changes: TappableAction Debounce/Throttle System
+
+#### Overview
+Complete rewrite of the debounce/throttle system in `TappableAction`. The external `tap_debouncer` dependency has been removed and replaced with a comprehensive in-house implementation providing advanced timing control, concurrency modes, and observability.
+
+#### Breaking Changes
+* **REMOVED:** `tap_debouncer` dependency from pubspec.yaml
+* **DELETED:** `lib/app/helpers/debouncer_widget.dart` (unused file)
+* **REMOVED:** `DebouncerHandler` class (replaced by `AsyncExecutor`)
+
+#### New Core Primitives
+All primitives support: `enabled`, `resetOnError`, `debugMode`, `name`, `onMetrics`, `wrap()`, `cancel()`, `dispose()`.
+
+| Primitive | Purpose |
+|-----------|---------|
+| `CallbackController` | Abstract base class for sync primitives |
+| `Throttler` | Execute immediately, block subsequent calls |
+| `Debouncer` | Wait for pause before executing (leading/trailing edge) |
+| `RateLimiter` | Token bucket algorithm with burst capacity |
+| `HighFrequencyThrottler` | Optimized for 16-32ms intervals (DateTime-based) |
+| `ThrottleDebouncer` | Combined leading + trailing execution |
+| `BatchThrottler<T>` | Aggregate multiple actions into batch |
+| `AsyncDebouncer` | Async debouncing with auto-cancellation |
+| `AsyncThrottler` | Process-based locking with timeout |
+| `AsyncExecutor` | Concurrency control (drop/replace/keepLatest/enqueue) |
+
+#### New Enums
+```dart
+enum TapExecutionMode {
+  throttle,        // Execute immediately, block subsequent (default)
+  debounce,        // Wait for pause before executing
+  throttleDebounce,// Leading + trailing execution
+  rateLimited,     // Token bucket rate limiting
+  highFrequency,   // Optimized for 16-32ms intervals
+}
+
+enum TapConcurrencyMode {
+  drop,       // Ignore new while processing (default)
+  replace,    // Cancel current, start new
+  keepLatest, // Keep current + queue latest only
+  enqueue,    // Queue all, execute sequentially (FIFO)
+}
+```
+
+#### Extended TappableActionConfig
+New fields added (all with defaults for backward compatibility):
+* `executionMode` - Timing mode (defaults to `throttle`)
+* `executeOnLeadingEdge` - Execute on first call (defaults to `true`)
+* `executeOnTrailingEdge` - Execute after pause (defaults to `false`)
+* `concurrencyMode` - Async handler control (defaults to `drop`)
+* `rateLimitMaxTokens`, `rateLimitRefillInterval`, `rateLimitTokensPerRefill` - Rate limiter config
+* `onMetrics` - Callback for tap analytics
+* `enabled` - Enable/disable toggle
+* `maxDuration` - Timeout for async operations
+* `debugName` - Debug logging identifier
+
+#### New Config Presets
+```dart
+// Search inputs - debounce with trailing edge
+TappableActionConfig.search()
+
+// Toggle buttons - immediate feedback, replace on rapid tap
+TappableActionConfig.toggle()
+
+// Sliders - rate limited with burst capacity
+TappableActionConfig.slider()
+```
+
+#### Migration Guide
+
+**Existing code requires NO changes** - all existing APIs are preserved:
+```dart
+// This still works exactly as before
+TappableAction(
+  config: const TappableActionConfig(
+    requireNetwork: true,
+    debounceTaps: true,
+    coolDownDuration: Duration(milliseconds: 300),
+    groupId: 'my-group',
+  ),
+  onTap: () => doSomething(),
+  builder: (context, onTap) => ElevatedButton(
+    onPressed: onTap,
+    child: Text('Tap me'),
+  ),
+)
+```
+
+**If using `DebouncerHandler` directly** (rare), migrate to `AsyncExecutor`:
+```dart
+// Old (REMOVED)
+final handler = DebouncerHandler();
+await handler.execute(() async => doWork());
+
+// New
+final executor = AsyncExecutor(mode: ConcurrencyMode.drop);
+await executor.execute(() async => doWork());
+executor.dispose(); // Call in widget dispose
+```
+
+#### Benefits
+* **-1 dependency**: Removes `tap_debouncer` external package
+* **Full control**: In-house primitives with `TimerFactory` for testability
+* **Rich features**: 5 execution modes, 4 concurrency modes, metrics, debugging
+* **Memory safe**: Proper disposal, mounted checks, call ID tracking
+
+---
+
 ## 0.3.5
 
 ### New Features
