@@ -93,6 +93,114 @@ See `NOTIFICATION_GUIDE.md` for complete setup and migration instructions.
 
 ---
 
+### ⚠️ Breaking Changes: TappableAction Debounce/Throttle System
+
+#### Overview
+Complete rewrite of the debounce/throttle system in `TappableAction`. The external `tap_debouncer` dependency has been removed and replaced with a comprehensive in-house implementation providing advanced timing control, concurrency modes, and observability.
+
+#### Breaking Changes
+* **REMOVED:** `tap_debouncer` dependency from pubspec.yaml
+* **DELETED:** `lib/app/helpers/debouncer_widget.dart` (unused file)
+* **REMOVED:** `DebouncerHandler` class (replaced by `AsyncExecutor`)
+
+#### New Core Primitives
+All primitives support: `enabled`, `resetOnError`, `debugMode`, `name`, `onMetrics`, `wrap()`, `cancel()`, `dispose()`.
+
+| Primitive | Purpose |
+|-----------|---------|
+| `CallbackController` | Abstract base class for sync primitives |
+| `Throttler` | Execute immediately, block subsequent calls |
+| `Debouncer` | Wait for pause before executing (leading/trailing edge) |
+| `RateLimiter` | Token bucket algorithm with burst capacity |
+| `HighFrequencyThrottler` | Optimized for 16-32ms intervals (DateTime-based) |
+| `ThrottleDebouncer` | Combined leading + trailing execution |
+| `BatchThrottler<T>` | Aggregate multiple actions into batch |
+| `AsyncDebouncer` | Async debouncing with auto-cancellation |
+| `AsyncThrottler` | Process-based locking with timeout |
+| `AsyncExecutor` | Concurrency control (drop/replace/keepLatest/enqueue) |
+
+#### New Enums
+```dart
+enum TapExecutionMode {
+  throttle,        // Execute immediately, block subsequent (default)
+  debounce,        // Wait for pause before executing
+  throttleDebounce,// Leading + trailing execution
+  rateLimited,     // Token bucket rate limiting
+  highFrequency,   // Optimized for 16-32ms intervals
+}
+
+enum TapConcurrencyMode {
+  drop,       // Ignore new while processing (default)
+  replace,    // Cancel current, start new
+  keepLatest, // Keep current + queue latest only
+  enqueue,    // Queue all, execute sequentially (FIFO)
+}
+```
+
+#### Extended TappableActionConfig
+New fields added (all with defaults for backward compatibility):
+* `executionMode` - Timing mode (defaults to `throttle`)
+* `executeOnLeadingEdge` - Execute on first call (defaults to `true`)
+* `executeOnTrailingEdge` - Execute after pause (defaults to `false`)
+* `concurrencyMode` - Async handler control (defaults to `drop`)
+* `rateLimitMaxTokens`, `rateLimitRefillInterval`, `rateLimitTokensPerRefill` - Rate limiter config
+* `onMetrics` - Callback for tap analytics
+* `enabled` - Enable/disable toggle
+* `maxDuration` - Timeout for async operations
+* `debugName` - Debug logging identifier
+
+#### New Config Presets
+```dart
+// Search inputs - debounce with trailing edge
+TappableActionConfig.search()
+
+// Toggle buttons - immediate feedback, replace on rapid tap
+TappableActionConfig.toggle()
+
+// Sliders - rate limited with burst capacity
+TappableActionConfig.slider()
+```
+
+#### Migration Guide
+
+**Existing code requires NO changes** - all existing APIs are preserved:
+```dart
+// This still works exactly as before
+TappableAction(
+  config: const TappableActionConfig(
+    requireNetwork: true,
+    debounceTaps: true,
+    coolDownDuration: Duration(milliseconds: 300),
+    groupId: 'my-group',
+  ),
+  onTap: () => doSomething(),
+  builder: (context, onTap) => ElevatedButton(
+    onPressed: onTap,
+    child: Text('Tap me'),
+  ),
+)
+```
+
+**If using `DebouncerHandler` directly** (rare), migrate to `AsyncExecutor`:
+```dart
+// Old (REMOVED)
+final handler = DebouncerHandler();
+await handler.execute(() async => doWork());
+
+// New
+final executor = AsyncExecutor(mode: ConcurrencyMode.drop);
+await executor.execute(() async => doWork());
+executor.dispose(); // Call in widget dispose
+```
+
+#### Benefits
+* **-1 dependency**: Removes `tap_debouncer` external package
+* **Full control**: In-house primitives with `TimerFactory` for testability
+* **Rich features**: 5 execution modes, 4 concurrency modes, metrics, debugging
+* **Memory safe**: Proper disposal, mounted checks, call ID tracking
+
+---
+
 ## 0.3.5
 
 ### New Features
