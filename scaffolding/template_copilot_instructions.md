@@ -368,11 +368,30 @@ void loge(Object error, [String? message, StackTrace? trace])
 **REQUIRED:**
 - **ALWAYS** use `AppConfigBase.firebaseFunctionCallable()` from dreamic for Firebase callable functions
 - **ALWAYS** pass model data using `toCallable()` method from BaseFirestoreModel
+- **ALWAYS** cast `HttpsCallableResult.data` correctly (see example below)
 
 **FORBIDDEN:**
 - **NEVER** call Firebase functions directly using `FirebaseFunctions.instance`
+- **NEVER** cast result.data directly as `Map<String, dynamic>` - this will fail at runtime!
 
 **Benefits:** Ensures proper error handling, timeouts, and logging
+
+**⚠️ CRITICAL: HttpsCallableResult.data Type Casting**
+
+`HttpsCallableResult.data` returns `Map<Object?, Object?>`, NOT `Map<String, dynamic>`. Direct casting will fail at runtime!
+
+```dart
+// ❌ WRONG - This will throw a runtime exception!
+final data = result.data as Map<String, dynamic>;
+
+// ✅ CORRECT - Always use Map.from() to convert
+final data = Map<String, dynamic>.from(result.data as Map);
+
+// ✅ CORRECT - For nested maps (e.g., items in arrays)
+final items = (result.data['items'] as List).map((item) =>
+  Map<String, dynamic>.from(item as Map)
+).toList();
+```
 
 **Example:**
 ```dart
@@ -380,13 +399,15 @@ import 'package:dreamic/dreamic.dart';
 
 Future<void> createPost(PostModel post) async {
   final callable = AppConfigBase.firebaseFunctionCallable('createPost');
-  
+
   try {
     final result = await callable.call({
       'post': post.toCallable(), // Uses dreamic's serialization
     });
-    
-    logd('createPost: Success - ${result.data}');
+
+    // Correctly cast the result data
+    final data = Map<String, dynamic>.from(result.data as Map);
+    logd('createPost: Success - postId: ${data['postId']}');
   } catch (e) {
     loge('createPost: Failed - $e');
   }

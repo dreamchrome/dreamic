@@ -77,10 +77,18 @@ enum SerializationContext {
 /// ## Cloud Functions:
 ///
 /// ```dart
-/// // Callable function (removes timestamp fields)
+/// // Sending data to callable function (removes timestamp fields)
 /// final callable = FirebaseFunctions.instance.httpsCallable('createPost');
 /// await callable.call(post.toCallable());
+///
+/// // Receiving data from callable function
+/// final result = await callable.call({'postId': 'abc123'});
+/// final post = PostModel.fromJson(result.data as Map<String, dynamic>);
 /// ```
+///
+/// The [SmartTimestampConverter] automatically handles all timestamp formats
+/// returned by Cloud Functions, including `{_seconds, _nanoseconds}` maps,
+/// milliseconds, and ISO strings.
 abstract class BaseFirestoreModel {
   /// The single generated toJson method from json_serializable.
   /// This should be implemented by the generated code.
@@ -192,11 +200,30 @@ abstract class BaseFirestoreModel {
   /// (from [getCreateTimestampFields] and [getUpdateTimestampFields]) are removed
   /// since the server will add them.
   ///
-  /// Example:
+  /// ## Sending Data
+  ///
   /// ```dart
   /// final callable = FirebaseFunctions.instance.httpsCallable('createPost');
   /// await callable.call(post.toCallable());
   /// ```
+  ///
+  /// ## Receiving Data
+  ///
+  /// To deserialize responses from callable functions, use your model's
+  /// `fromJson` factory. The [SmartTimestampConverter] automatically handles
+  /// all timestamp formats returned by Cloud Functions.
+  ///
+  /// ```dart
+  /// final callable = FirebaseFunctions.instance.httpsCallable('getPost');
+  /// final result = await callable.call({'postId': 'abc123'});
+  /// final post = PostModel.fromJson(result.data as Map<String, dynamic>);
+  /// ```
+  ///
+  /// Supported timestamp formats in responses:
+  /// - `{_seconds: int, _nanoseconds: int}` (Cloud Functions format)
+  /// - `{seconds: int, nanoseconds: int}` (standard format)
+  /// - Milliseconds since epoch (int)
+  /// - ISO 8601 strings
   Map<String, dynamic> toCallable() {
     final json = toJson();
     return _processForContext(json, SerializationContext.callable);

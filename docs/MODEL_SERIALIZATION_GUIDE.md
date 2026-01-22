@@ -171,13 +171,22 @@ enum SerializationContext {
 
 ### Method Selection Matrix
 
+**Serialization (Dart → External)**:
+
 | Method | Use Case | `createdAt` | `updatedAt` |
 |--------|----------|-------------|-------------|
 | `toFirestoreCreate()` | New documents | `FieldValue.serverTimestamp()` | `FieldValue.serverTimestamp()` |
 | `toFirestoreUpdate()` | Updates | Removed (preserved) | `FieldValue.serverTimestamp()` |
 | `toFirestoreRaw()` | Data migration | Exact DateTime → Timestamp | Exact DateTime → Timestamp |
-| `toCallable()` | Cloud Functions | Field removed | Field removed |
+| `toCallable()` | Cloud Functions (send) | Field removed | Field removed |
 | `toJson()` | Local storage | Milliseconds (int) | Milliseconds (int) |
+
+**Deserialization (External → Dart)**:
+
+| Method | Use Case | Handles Formats |
+|--------|----------|-----------------|
+| `fromJson()` | Firestore, Cloud Functions, Local | Timestamp, `{_seconds, _nanoseconds}`, milliseconds, ISO strings |
+| `fromFirestore()` | Firestore documents | Adds document ID, delegates to `fromJson()` |
 
 ---
 
@@ -540,6 +549,122 @@ def update_post(req: https_fn.CallableRequest) -> dict:
   "uid": "user123",                               // Server adds ✓
 }
 ```
+
+### Receiving Data from Callable Functions
+
+**Purpose**: Deserializing responses from Firebase Cloud Functions
+
+When you call a Firebase callable function, it returns data that needs to be deserialized back into your model. The `SmartTimestampConverter` automatically handles all timestamp formats that Cloud Functions might return.
+
+**Supported Response Formats**:
+- `{_seconds: int, _nanoseconds: int}` (Cloud Functions format)
+- `{seconds: int, nanoseconds: int}` (standard format)
+- Milliseconds since epoch (int)
+- ISO 8601 strings
+
+**Usage**:
+```dart
+// Call the function
+final callable = FirebaseFunctions.instance.httpsCallable('getPost');
+final result = await callable.call({'postId': 'abc123'});
+
+// Deserialize the response
+final post = PostModel.fromJson(result.data as Map<String, dynamic>);
+
+// Access the deserialized data
+print(post.title);
+print(post.createdAt);  // DateTime object, correctly parsed
+```
+
+**Complete Round-Trip Example**:
+```dart
+class PostService {
+  final FirebaseFunctions _functions = FirebaseFunctions.instance;
+
+  // CREATE via callable
+  Future<PostModel> createPost(PostModel post) async {
+    final callable = _functions.httpsCallable('createPost');
+
+    // Send data (timestamps removed, server will add them)
+    final result = await callable.call(post.toCallable());
+
+    // Receive and deserialize response
+    return PostModel.fromJson(result.data as Map<String, dynamic>);
+  }
+
+  // READ via callable
+  Future<PostModel?> getPost(String postId) async {
+    final callable = _functions.httpsCallable('getPost');
+    final result = await callable.call({'postId': postId});
+
+    if (result.data == null) return null;
+    return PostModel.fromJson(result.data as Map<String, dynamic>);
+  }
+
+  // UPDATE via callable
+  Future<PostModel> updatePost(String postId, PostModel post) async {
+    final callable = _functions.httpsCallable('updatePost');
+
+    // toCallable() removes createdAt and updatedAt
+    final result = await callable.call({
+      'postId': postId,
+      ...post.toCallable(),
+    });
+
+    return PostModel.fromJson(result.data as Map<String, dynamic>);
+  }
+
+  // LIST via callable
+  Future<List<PostModel>> listPosts({int limit = 20}) async {
+    final callable = _functions.httpsCallable('listPosts');
+    final result = await callable.call({'limit': limit});
+
+    final List<dynamic> items = result.data['posts'] as List<dynamic>;
+    return items
+        .map((item) => PostModel.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+}
+```
+
+**Server-Side Response Example** (TypeScript):
+```typescript
+export const getPost = functions.https.onCall(async (data, context) => {
+  const { postId } = data;
+
+  const doc = await db.collection('posts').doc(postId).get();
+
+  if (!doc.exists) {
+    return null;
+  }
+
+  // Return the document data
+  // Timestamps are automatically serialized as {_seconds, _nanoseconds}
+  return {
+    id: doc.id,
+    ...doc.data(),
+  };
+});
+```
+
+**Why This Works**:
+
+The `SmartTimestampConverter` in your model handles the deserialization:
+
+```dart
+@SmartTimestampConverter()
+final DateTime? createdAt;
+```
+
+When `fromJson` is called, the converter's `fromJson` method checks the input type:
+1. If it's a Map with `_seconds`/`_nanoseconds` → converts to DateTime
+2. If it's an int (milliseconds) → converts to DateTime
+3. If it's a String (ISO format) → parses to DateTime
+4. If it's already a Timestamp → converts to DateTime
+
+This means you don't need a separate `fromCallable()` method—the standard `fromJson()` factory handles all cases automatically.
+
+---
 
 ### toJson()
 
@@ -1315,6 +1440,8 @@ Future<void> archivePosts({required DateTime before}) async {
 
 ## Decision Tree
 
+### Serialization (Writing Data)
+
 ```
 ┌─────────────────────────────────────┐
 │  Need to save/serialize data?       │
@@ -1336,17 +1463,50 @@ Future<void> archivePosts({required DateTime before}) async {
                └─── To local storage? ──→ toJson()
 ```
 
+### Deserialization (Reading Data)
+
+```
+┌─────────────────────────────────────┐
+│  Need to read/deserialize data?     │
+└──────────────┬──────────────────────┘
+               │
+               ├─── From Firestore DocumentSnapshot?
+               │    │
+               │    └─── Model.fromFirestore(doc)
+               │         (adds doc.id, delegates to fromJson)
+               │
+               ├─── From Cloud Function response?
+               │    │
+               │    └─── Model.fromJson(result.data as Map<String, dynamic>)
+               │         (SmartTimestampConverter handles all formats)
+               │
+               └─── From local storage/JSON?
+                    │
+                    └─── Model.fromJson(jsonDecode(string))
+```
+
 ### Quick Reference Table
+
+**Writing:**
 
 | Scenario | Method | Why? |
 |----------|--------|------|
 | Creating a new post | `toFirestoreCreate()` | Server sets both timestamps |
 | Updating an existing post | `toFirestoreUpdate()` | Preserves createdAt, updates updatedAt |
 | Importing 2020 data | `toFirestoreRaw()` | Keeps exact historical timestamps |
-| Calling cloud function | `toCallable()` | Server handles timestamps |
+| Sending to cloud function | `toCallable()` | Server handles timestamps |
 | Saving draft locally | `toJson()` | JSON-compatible format |
 | Cloning a document | `toFirestoreCreate(useServerTimestamp: false)` | Copy createdAt, new updatedAt |
 | Archiving data | `toFirestoreRaw()` | Preserve everything exactly |
+
+**Reading:**
+
+| Scenario | Method | Why? |
+|----------|--------|------|
+| Reading from Firestore | `Model.fromFirestore(doc)` | Handles document ID + data |
+| Receiving from cloud function | `Model.fromJson(result.data)` | SmartTimestampConverter handles formats |
+| Loading from local storage | `Model.fromJson(json)` | Same converter handles all formats |
+| Deserializing any JSON | `Model.fromJson(map)` | Universal entry point |
 
 ---
 

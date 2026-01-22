@@ -1662,7 +1662,8 @@ class AuthServiceImpl implements AuthServiceInt {
             },
           ));
 
-      final data = result.data as Map<String, dynamic>;
+      // HttpsCallableResult.data returns Map<Object?, Object?>, not Map<String, dynamic>
+      final data = Map<String, dynamic>.from(result.data as Map);
 
       // Check if the code is valid
       if (data['result'] != 'valid') {
