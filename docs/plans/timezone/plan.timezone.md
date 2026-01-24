@@ -121,6 +121,8 @@ Backend expectations:
 - Multiple device docs per user are normal on web.
 - Prune devices by `lastActiveAt` (and optionally `platform == 'web'`) to keep the collection clean.
 
+Optional (defer to v2 unless needed): store a low-cardinality hint like `deviceIdStability: 'persistent' | 'ephemeral'` to help backend cleanup/debugging.
+
 Appendix: Web `deviceId` option matrix (background)
 
 Web is inherently less stable than mobile because users can clear site data, use private browsing, rotate profiles, or block storage. This matrix is included as background for the v1 decision above.
@@ -206,6 +208,23 @@ Notes:
 - `touchDevice()` should not assume the doc exists (it should be an upsert server-side).
 - For efficiency, these actions may be coalesced into a single backend `upsertDevice` call when they occur close together (common on app startup/login).
 
+#### Offline / pending sync (v1)
+
+Device sync is best-effort and must never block UI flows. To ensure eventual consistency across flaky networks, persist a single **pending upsert payload** locally (overwrite/merge in place; not a queue):
+
+- Payload (fields optional unless noted):
+  - required: `deviceId`
+  - optional: `timezone`, `timezoneOffsetMinutes`, `fcmToken` (nullable), `touch` (bool)
+  - metadata: `pendingUpdatedAt` (local timestamp), `lastAttemptAt` (local timestamp)
+- Merge rules:
+  - Per-field last-write-wins for `timezone`, `timezoneOffsetMinutes`, `fcmToken`.
+  - `touch` is sticky: once true, it stays true until a successful flush.
+  - Allow `fcmToken: null` to represent explicit clearing.
+- Flush triggers: on the same lifecycle entrypoints as the service calls (auth/register, resume, touch, token changes). If a flush is skipped due to backoff, keep pending and retry on the next trigger.
+- Backoff: enforce a minimum time between attempts (start with 10–15 minutes) using `lastAttemptAt`, but bypass backoff when timezone/offset/token changed (except when within the change-debounce window).
+- Success/failure semantics: clear pending only on successful backend ack; on failure keep pending, update `lastAttemptAt`, and return without surfacing an error.
+- Auth precondition: if not authenticated when an update intent occurs, store pending and flush on next authenticated event.
+
 #### Throttling discussion (pick v1 defaults)
 
 We need specific values, but they should be chosen based on expected app usage patterns (resume frequency), acceptable Firestore write volume, and how aggressively we want to recover from missed DST transitions.
@@ -214,6 +233,7 @@ Clarifying terms (why questions #2 and #3 can feel redundant):
 
 - **Unchanged min interval (resume throttle)**: “If nothing changed, don’t write more often than once every X.” This prevents spam on frequent resumes.
 - **Unchanged max interval (forced refresh)**: “Even if nothing changed, ensure we write at least once every Y.” This is a safety net for DST transitions if the app isn’t opened near the transition.
+- **Changed debounce interval**: “If timezone/offset changed, still limit updates to at most once every Z to avoid flapping near borders.”
 
 If we set both values to the same duration (e.g., 48h), they effectively collapse into a single rule: “write unchanged at most once every 48h.”
 
@@ -225,12 +245,11 @@ Candidate starting points (not decisions):
 - `touchDevice()` throttle: 15–120 minutes (common choice: 60)
 - `unregisterDevice()` timebox: 1–3 seconds best-effort (common choice: 2)
 
-Decision needed:
-- What are our v1 defaults for each throttle/timebox?
+Decision (v1 defaults):
 
 v1 decision (package defaults; all should be configurable by consuming apps):
 
-- Always bypass throttles when timezone OR offset changed: **yes**
+- Apply a **change-debounce** when timezone OR offset changed: **10 minutes** (prevents rapid flapping)
 - `updateTimezoneOrOffsetIfChanged()` unchanged min interval (resume throttle): **48 hours**
 - `updateTimezoneOrOffsetIfChanged()` unchanged max interval (forced refresh): **48 hours**
   - Note: this matches the desire to avoid unnecessary writes while still eventually updating offset for DST.
@@ -255,6 +274,7 @@ Tuning guidance for consuming apps (especially if backend relies on `lastActiveA
 Suggested Remote Config keys (names TBD; these are placeholders):
 - `deviceTimezoneUnchangedSyncMinMinutes` (default: 2880)
 - `deviceTimezoneUnchangedSyncMaxMinutes` (default: 2880)
+- `deviceTimezoneChangeDebounceMinutes` (default: 10)
 - `deviceTouchThrottleMinutes` (default: 60)
 
 ### Timezone / Offset Change Detection (DST-safe)
@@ -273,12 +293,16 @@ class DeviceServiceImpl implements DeviceServiceInt {
     final currentOffsetMinutes = DateTime.now().timeZoneOffset.inMinutes;
 
     // Throttle server writes to avoid resume spam.
-    // Still allow immediate sync if timezone/offset changed.
+    // If timezone/offset changed, still apply a short debounce to prevent flapping.
     final now = DateTime.now();
-    final recentlySynced = _lastServerSyncAt != null && now.difference(_lastServerSyncAt!) < const Duration(minutes: 15);
+    final recentlySyncedUnchanged = _lastServerSyncAt != null && now.difference(_lastServerSyncAt!) < const Duration(hours: 48);
+    final withinChangeDebounce = _lastServerSyncAt != null && now.difference(_lastServerSyncAt!) < const Duration(minutes: 10);
 
     final didChange = _cachedTimezone != currentTimezone || _cachedOffsetMinutes != currentOffsetMinutes;
-    if (!didChange && recentlySynced) {
+    if (didChange && withinChangeDebounce) {
+      return right(false);
+    }
+    if (!didChange && recentlySyncedUnchanged) {
       return right(false);
     }
 
@@ -446,6 +470,8 @@ On logout, both “stop sending pushes for this user” and “stop considering 
 Decision (v1): use the existing AuthService “about-to-logout” hook to trigger a single coordinated cleanup step:
 - `DeviceService.unregisterDevice()` deletes `users/{uid}/devices/{deviceId}` (best-effort).
 - `NotificationService` deletes the local FCM token (best-effort) so that even if backend cleanup fails, any remaining server-side sends to that token will start failing.
+
+Constraint: this cleanup is **best-effort** and **timeboxed**; it must never block logout or make logout fail.
 
 Important ordering / race note:
 - If these happen concurrently, that’s acceptable.
@@ -753,145 +779,13 @@ dependencies:
 
 ---
 
-## Open Questions
+### v1 Decisions (summary)
 
-1. **Device cleanup on logout**: Should we delete the device document or just leave it stale? Leaving it preserves history but creates orphaned data.
-
-2. **Offline handling**: What if timezone update fails due to no network? Queue for retry?
-
-3. **Web platform**: How stable is device ID for web? Should we use a different strategy?
-
-4. **Privacy considerations**: Is storing device model/OS version necessary? Could be useful for debugging but might raise privacy concerns.
-
-5. **Rate limiting**: Should we throttle timezone updates to avoid excessive writes (e.g., max once per hour)?
-
-### Discussion (work these into v1 decisions)
-
-#### v1 selections so far (based on discussion)
-
-- **(1) Device cleanup on logout**: Choose **A: Delete on logout (best-effort)**.
-  - Use the existing AuthService “about-to-logout” hook (with its timeout) to call `unregisterDevice()` before sign-out.
-- **(2) Offline handling**: Choose **B: Best-effort + persist pending sync**.
-  - Persist a minimal “pending sync” payload and retry on next resume/login.
-- **(3) Web platform (deviceId stability)**: Choose **A: Best-effort persisted UUID + ephemeral fallback**.
-  - Duplicates are acceptable; staleness cleanup via `lastActiveAt` should naturally prune over time.
-- **(4) Privacy**: Choose **A: Minimal schema by default**.
-  - Device tracking must remain **independent of notification permission** (timezone/device registration should not require notification permission).
-
-1. **Device cleanup on logout**
-
-Options:
-- **A: Delete on logout (best-effort)**: call `unregisterDevice()` before sign-out.
-  - Pros: fewer stale docs, simpler “active devices” semantics.
-  - Cons: deletion might fail (offline); also loses “recent device” history unless backend captures it elsewhere.
-- **B: Never delete; rely on staleness**: keep device docs and let `lastActiveAt` determine active vs inactive.
-  - Pros: preserves history/debugging; fewer failure cases on logout.
-  - Cons: devices collection grows; requires cleanup/ignore logic.
-- **C: Soft-delete**: set `disabledAt`/`loggedOutAt` instead of deleting.
-  - Pros: keeps history while marking inactive.
-  - Cons: more schema + logic, and still needs cleanup.
-
-Decision prompts:
-- Do we want device docs to represent “current endpoints” (A) or “known endpoints” (B/C)?
-- If we keep docs (B/C), what is the canonical staleness threshold for “active” (e.g., 30/60/90 days)?
-
-v1 decision:
-- Use **A: Delete on logout (best-effort)** using `AuthServiceInt.addOnAboutToLogOutCallback` (timeboxed by existing hook).
-
-Plan invariants (required for Option A correctness + safety):
-- Logout cleanup is **best-effort** and **timeboxed**; it must never block logout or make logout fail.
-- Backend must treat “deliverable endpoints” as **eligible only when** `fcmToken != null` **and** `lastActiveAt` is within an “active window” (e.g., 30–90 days). This rule must be enforced by all scheduled jobs/callables regardless of logout behavior.
-- Deleting the device doc is an optimization, not a correctness dependency: if deletion fails offline, backend eligibility rules + staleness handling must still prevent long-term sends.
-- On logout, `NotificationService` should still delete the **local** push token (best-effort) to reduce cross-account notification risk even if backend cleanup fails.
-
-2. **Offline handling**
-
-Options:
-- **A: Best-effort only**: if a sync fails, do nothing; next lifecycle event tries again naturally.
-  - Pros: simplest.
-  - Cons: may take longer to recover if app resumes frequently but always throttles “unchanged” cases.
-- **B: Best-effort + persist pending sync**: store the last attempted payload and retry on next resume/login.
-  - Pros: better eventual consistency.
-  - Cons: adds a little local state and backoff rules.
-- **C: Background retry**: schedule retries in the background (platform-dependent).
-  - Pros: fastest eventual consistency.
-  - Cons: complexity; background execution constraints.
-
-Decision prompts:
-- Is “eventual update when user opens app again” acceptable (A), or do we want a small pending-sync mechanism (B)?
-- If we do pending-sync, what’s the simplest backoff rule (e.g., max once per resume, minimum 10–15 minutes between attempts)?
-
-v1 decision:
-- Use **B: Best-effort + persist pending sync**.
-
-Plan details (v1: minimal pending-sync spec):
-- Persist a single **pending upsert payload** locally (overwrite/merge in place; not a queue) so the system converges without unbounded growth.
-- Payload shape (minimal; fields optional unless noted):
-  - required: `deviceId`
-  - optional: `timezone`, `timezoneOffsetMinutes`, `fcmToken` (nullable), `touch` (bool)
-  - metadata: `pendingUpdatedAt` (local timestamp), `lastAttemptAt` (local timestamp)
-- Merge rules when new intent arrives:
-  - Per-field last-write-wins for `timezone`, `timezoneOffsetMinutes`, `fcmToken`.
-  - `touch` is sticky: once true, it stays true until a successful flush.
-  - Allow `fcmToken: null` to represent explicit clearing (e.g., token deleted/rotated away).
-- Flush triggers (best-effort; should not block UI flows):
-  - On any lifecycle entrypoint that already exists in the plan: login/auth refresh (`registerDevice()`), resume (`updateTimezoneOrOffsetIfChanged()`), periodic keepalive (`touchDevice()`), and token changes (`updateFcmToken(...)`).
-  - Additionally: if a flush is skipped due to backoff, keep the pending payload and retry on the next trigger.
-- Backoff / rate limiting (keep it simple):
-  - Enforce a minimum time between flush attempts (recommend starting point: 10–15 minutes) using `lastAttemptAt`.
-  - Bypass backoff when timezone, offset, or token changed (i.e., pending payload represents a correctness-relevant change, not just a touch).
-- Success / failure semantics:
-  - On successful backend ack: clear the pending payload.
-  - On failure (offline, timeout, transient errors): keep the pending payload, update `lastAttemptAt`, and return without surfacing an error to the user.
-  - Never allow pending-sync failures to block login/logout/resume flows; they are strictly “eventual consistency”.
-- Auth precondition:
-  - If not authenticated when an update intent occurs, store pending and flush on next authenticated event.
-
-3. **Web platform (deviceId stability)**
-
-Options:
-- **A: Best-effort persisted UUID** (localStorage/IndexedDB) + ephemeral fallback when storage unavailable.
-- **B: Session-only device identity** (always ephemeral).
-  - Pros: simplest + privacy-forward.
-  - Cons: creates many short-lived device docs; noisy.
-
-Decision prompts:
-- Is it acceptable that web creates duplicate docs sometimes (A), assuming backend cleanup by staleness?
-- Do we want to special-case web cleanup thresholds (e.g., shorter retention)?
-
-v1 decision:
-- Use **A: Best-effort persisted UUID + ephemeral fallback**.
-- Accept duplicates; rely on staleness cleanup over time.
-
-4. **Privacy considerations**
-
-Options:
-- **A: Minimal schema by default**: only timezone/offset/platform/appVersion + timestamps.
-- **B: Add `deviceInfo` (opt-in)**: model/osVersion for debugging.
-
-Decision prompts:
-- Should `deviceInfo` be collected by default, or only when consuming apps explicitly enable it?
-- Any compliance constraints we need to respect in this package’s defaults/documentation?
-
-v1 decision:
-- Use **A: Minimal schema by default**.
-- Keep device tracking independent of notification permission (no coupling to notification opt-in).
-
-5. **Rate limiting**
-
-Key design questions:
-- How often does the app typically resume in real usage?
-- How costly is an extra write vs the risk of stale offsets around DST?
-
-Decision prompts:
-- Choose v1 defaults for throttles/timeboxes (see “Throttling discussion” above).
-- Confirm the “always bypass throttle on timezone OR offset change” rule.
-- Do we want a forced refresh cadence (e.g., every 24h) to recover from missed DST transitions?
-
-v1 decision:
-- Always bypass throttle on timezone OR offset change: **yes**
-- Set unchanged sync intervals to **48 hours** (and expose via Remote Config / `AppConfigBase` for consuming apps).
-- Set `touchDevice()` throttle default to **60 minutes** (configurable via Remote Config / `AppConfigBase`).
+- Logout cleanup: delete device doc on logout (best-effort/timeboxed); local token deletion remains best-effort for safety.
+- Offline handling: best-effort + persisted pending upsert payload (single merged payload, simple backoff).
+- Web deviceId: best-effort persisted UUID (IndexedDB → localStorage) with in-memory fallback.
+- Privacy: minimal schema by default; `deviceInfo` is opt-in.
+- Rate limiting: apply 10-minute change-debounce; unchanged timezone sync 48h; `touchDevice()` throttle 60m (all configurable).
 
 ---
 
@@ -973,38 +867,21 @@ Include a comment in each scaffolding file:
 
 ### Open Questions
 
-1. Should the scaffolding include test files for the functions?
-2. Should there be a "minimal" (just callable) vs "full" (scheduled + triggers) version?
-3. How do we communicate breaking changes in the scaffolding to consuming apps?
+None.
 
-### Discussion (scaffolding)
+### Options (scaffolding)
 
-1. Should the scaffolding include test files for the functions?
+1. Test scaffolding (decision):
 
-Options:
-- **A: Minimal tests included** (recommended if we want confidence): unit tests for `timezone_utils` and the local-time window math.
-- **B: No tests** (simpler scaffolding): consumers add tests if/when they adopt.
+- Include runnable reference tests in the package scaffolding (e.g., `timezone_utils` and local-time window math) so we can validate templates here before consumers adopt.
 
-Decision prompt:
-- Do we want this package to ship “reference tests” as part of the template?
+2. Scaffolding layout (decision):
 
-2. Should there be a "minimal" (just callable) vs "full" (scheduled + triggers) version?
+- Use a single `device/` folder with optional files (`device_callable.ts` required; scheduled/triggers optional) and document variants in the README.
 
-Options:
-- **A: One folder, optional files**: `device_callable.ts` required; scheduled/triggers optional; README describes both installs.
-- **B: Two folders**: `device_minimal/` and `device_full/`.
+3. Scaffolding change communication (decision):
 
-Decision prompt:
-- Which is easier for consuming apps to adopt correctly without copy/paste mistakes?
-
-3. How do we communicate breaking changes in the scaffolding to consuming apps?
-
-Options:
-- **A: Header comment only**: `@packageVersion` + short guidance.
-- **B: Add a template changelog**: e.g., `scaffolding/firebase_functions/device/CHANGELOG.md` and/or “Upgrade notes” section in README.
-
-Decision prompt:
-- Do we want to treat scaffolding changes as semver-governed (recommended), and if so, where do we document required fields/indexes?
+- Add a scaffolding-specific `CHANGELOG.md` plus `@packageVersion` headers in each template file and an “Upgrade notes” section in the scaffolding README.
 
 ---
 
