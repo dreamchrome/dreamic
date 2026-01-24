@@ -185,6 +185,8 @@ abstract class DeviceServiceInt {
   Future<Either<RepositoryFailure, Unit>> unregisterDevice();
 
   /// Gets all devices for the current user.
+  ///
+  /// Requires authentication; if unauthenticated, return an auth failure.
   Future<Either<RepositoryFailure, List<DeviceInfo>>> getMyDevices();
 }
 ```
@@ -206,7 +208,8 @@ abstract class DeviceServiceInt {
 Notes:
 - `registerDevice()` should also set `_cachedTimezone` / `_cachedOffsetMinutes` on success.
 - `touchDevice()` should not assume the doc exists (it should be an upsert server-side).
-- For efficiency, these actions may be coalesced into a single backend `upsertDevice` call when they occur close together (common on app startup/login).
+- For efficiency, these actions may be coalesced into a single backend call by invoking the unified callable with `action: 'register'` and including any optional fields that are available at that moment (e.g., `fcmToken`).
+- `_cachedTimezone` / `_cachedOffsetMinutes` are in-memory only (reset on app restart); the next update check should treat missing cache as “changed”.
 
 #### Offline / pending sync (v1)
 
@@ -245,9 +248,7 @@ Candidate starting points (not decisions):
 - `touchDevice()` throttle: 15–120 minutes (common choice: 60)
 - `unregisterDevice()` timebox: 1–3 seconds best-effort (common choice: 2)
 
-Decision (v1 defaults):
-
-v1 decision (package defaults; all should be configurable by consuming apps):
+Decision (v1 defaults; all should be configurable by consuming apps):
 
 - Apply a **change-debounce** when timezone OR offset changed: **10 minutes** (prevents rapid flapping)
 - `updateTimezoneOrOffsetIfChanged()` unchanged min interval (resume throttle): **48 hours**
@@ -410,9 +411,9 @@ This ensures:
 - token + timezone + activity updates can be **coalesced** into a single backend call when they happen close together (common on app start/login).
 
 Recommended implementation approach (plan-only):
-- Provide a backend callable (name TBD) like `upsertDevice` that upserts `users/{uid}/devices/{deviceId}`.
+- Provide a single backend callable (name TBD) like `deviceAction` that upserts `users/{uid}/devices/{deviceId}` and uses an `action` parameter to determine required fields and behavior.
 - The callable accepts optional fields so callers can send “what they know now” without requiring multiple calls:
-  - required: `deviceId`
+  - required: `action`, `deviceId`
   - optional: `timezone`, `timezoneOffsetMinutes`, `platform`, `appVersion`, `deviceInfo`
   - optional: `fcmToken` (nullable)
   - optional: `touch: true` to update `lastActiveAt`
@@ -421,7 +422,7 @@ Recommended implementation approach (plan-only):
   - `updateTimezoneOrOffsetIfChanged()`
   - `touchDevice()`
   - `updateFcmToken()`
-  into a single `upsertDevice` call when triggered by the same lifecycle event.
+  into a single `deviceAction` call when triggered by the same lifecycle event.
 
 Notes:
 - Coalescing is an optimization; correctness does not depend on it.
@@ -456,7 +457,7 @@ Robustness rules (v1):
 
 To keep accuracy while reducing calls:
 - Prefer a **single backend callable** that upserts the device doc and accepts:
-  - `deviceId`, `timezone`, `timezoneOffsetMinutes`, `platform`, `appVersion`
+  - `action`, `deviceId`, `timezone`, `timezoneOffsetMinutes`, `platform`, `appVersion`
   - optional `fcmToken` (when available)
   - optional `touch` flag to update `lastActiveAt`
 - When notifications are disabled/unavailable: call the same callable without `fcmToken`.
@@ -830,9 +831,7 @@ The Flutter `DeviceService` will use configurable function names (matching exist
 
 ```dart
 // In AppConfigBase
-static String deviceRegisterFunction = 'deviceRegister';
-static String deviceUnregisterFunction = 'deviceUnregister';
-static String deviceTouchFunction = 'deviceTouch';
+static String deviceActionFunction = 'deviceAction';
 ```
 
 ### Version Compatibility
@@ -919,154 +918,146 @@ These are the callable functions that the Flutter `DeviceService` will invoke. T
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
-interface RegisterDeviceRequest {
+type DeviceAction = "register" | "touch" | "unregister" | "updateToken";
+
+interface DeviceActionRequest {
+  action: DeviceAction;
   deviceId: string;
-  timezone: string;           // IANA format, e.g., "America/New_York"
-  timezoneOffsetMinutes: number; // Client computed: DateTime.now().timeZoneOffset.inMinutes
-  platform: "ios" | "android" | "web";
-  appVersion: string;
+  timezone?: string;              // IANA format, e.g., "America/New_York"
+  timezoneOffsetMinutes?: number; // Client computed: DateTime.now().timeZoneOffset.inMinutes
+  platform?: "ios" | "android" | "web";
+  appVersion?: string;
+  fcmToken?: string | null;
   deviceInfo?: {
     model?: string;
     osVersion?: string;
   };
 }
 
-interface RegisterDeviceResponse {
+interface DeviceActionResponse {
   success: boolean;
-  timezoneChanged: boolean;
-  timezoneOffsetChanged: boolean;
+  timezoneChanged?: boolean;
+  timezoneOffsetChanged?: boolean;
   previousTimezone?: string;
 }
 
 /**
- * Registers or updates a device for the authenticated user.
- * Called by DeviceService.registerDevice() on app startup.
- *
- * This function:
- * 1. Validates the request data
- * 2. Uses client-provided timezoneOffsetMinutes (DST-safe, avoids fragile parsing)
- * 3. Creates or updates the device document
- * 4. Returns whether timezone or offset changed (useful for client-side logic)
+ * Unified device callable with an `action` parameter.
+ * Called by DeviceService methods with action-specific payloads.
  */
-export const deviceRegister = onCall<RegisterDeviceRequest>(async (request) => {
+export const deviceAction = onCall<DeviceActionRequest>(async (request) => {
   // Require authentication
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Must be logged in");
   }
 
   const uid = request.auth.uid;
-  const { deviceId, timezone, timezoneOffsetMinutes, platform, appVersion, deviceInfo } = request.data;
+  const {
+    action,
+    deviceId,
+    timezone,
+    timezoneOffsetMinutes,
+    platform,
+    appVersion,
+    fcmToken,
+    deviceInfo,
+  } = request.data;
 
-  // Validate required fields
-  if (!deviceId || !timezone || timezoneOffsetMinutes === undefined || !platform || !appVersion) {
-    throw new HttpsError("invalid-argument", "Missing required fields");
-  }
-
-  // Validate timezone is a valid IANA timezone
-  if (!isValidIANATimezone(timezone)) {
-    throw new HttpsError("invalid-argument", "Invalid timezone format");
+  if (!deviceId || !action) {
+    throw new HttpsError("invalid-argument", "action and deviceId are required");
   }
 
   const db = getFirestore();
   const deviceRef = db.doc(`users/${uid}/devices/${deviceId}`);
 
-  // Get existing device to check if timezone changed
-  const existingDevice = await deviceRef.get();
-  const previousTimezone = existingDevice.exists
-    ? existingDevice.data()?.timezone
-    : null;
-  const timezoneChanged = previousTimezone !== null && previousTimezone !== timezone;
+  switch (action) {
+    case "register": {
+      if (!timezone || timezoneOffsetMinutes === undefined || !platform || !appVersion) {
+        throw new HttpsError("invalid-argument", "Missing required fields for register");
+      }
+      if (!isValidIANATimezone(timezone)) {
+        throw new HttpsError("invalid-argument", "Invalid timezone format");
+      }
+      if (!Number.isFinite(timezoneOffsetMinutes) || Math.abs(timezoneOffsetMinutes) > 14 * 60) {
+        throw new HttpsError("invalid-argument", "Invalid timezoneOffsetMinutes");
+      }
 
-  // timezoneOffsetMinutes is provided by the client.
-  // It supports half/45-minute offsets and updates on DST transitions.
-  if (!Number.isFinite(timezoneOffsetMinutes) || Math.abs(timezoneOffsetMinutes) > 14 * 60) {
-    throw new HttpsError("invalid-argument", "Invalid timezoneOffsetMinutes");
+      const existingDevice = await deviceRef.get();
+      const previousTimezone = existingDevice.exists
+        ? existingDevice.data()?.timezone
+        : null;
+      const timezoneChanged = previousTimezone !== null && previousTimezone !== timezone;
+
+      const deviceData: Record<string, unknown> = {
+        timezone,
+        timezoneOffsetMinutes,
+        platform,
+        appVersion,
+        lastActiveAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+        ...(deviceInfo && { deviceInfo }),
+      };
+      if (fcmToken !== undefined) {
+        deviceData.fcmToken = fcmToken;
+        deviceData.fcmTokenUpdatedAt = FieldValue.serverTimestamp();
+      }
+
+      if (existingDevice.exists) {
+        await deviceRef.update(deviceData);
+      } else {
+        await deviceRef.set({
+          ...deviceData,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+      }
+
+      const response: DeviceActionResponse = {
+        success: true,
+        timezoneChanged,
+        timezoneOffsetChanged:
+          previousTimezone !== null && existingDevice.exists
+            ? existingDevice.data()?.timezoneOffsetMinutes !== timezoneOffsetMinutes
+            : false,
+        ...(timezoneChanged && { previousTimezone }),
+      };
+
+      return response;
+    }
+
+    case "touch": {
+      await deviceRef.set(
+        {
+          lastActiveAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return { success: true };
+    }
+
+    case "updateToken": {
+      if (fcmToken === undefined) {
+        throw new HttpsError("invalid-argument", "fcmToken is required for updateToken (nullable)");
+      }
+      await deviceRef.set(
+        {
+          fcmToken,
+          fcmTokenUpdatedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return { success: true };
+    }
+
+    case "unregister": {
+      await deviceRef.delete();
+      return { success: true };
+    }
+
+    default:
+      throw new HttpsError("invalid-argument", "Unknown action");
   }
-
-  // Prepare device data
-  const deviceData = {
-    timezone,
-    timezoneOffsetMinutes,
-    platform,
-    appVersion,
-    lastActiveAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
-    ...(deviceInfo && { deviceInfo }),
-  };
-
-  if (existingDevice.exists) {
-    // Update existing device
-    await deviceRef.update(deviceData);
-  } else {
-    // Create new device
-    await deviceRef.set({
-      ...deviceData,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-  }
-
-  const response: RegisterDeviceResponse = {
-    success: true,
-    timezoneChanged,
-    timezoneOffsetChanged:
-      previousTimezone !== null && existingDevice.exists
-        ? existingDevice.data()?.timezoneOffsetMinutes !== timezoneOffsetMinutes
-        : false,
-    ...(timezoneChanged && { previousTimezone }),
-  };
-
-  return response;
-});
-
-/**
- * Unregisters a device for the authenticated user.
- * Called by DeviceService.unregisterDevice() on logout.
- */
-export const deviceUnregister = onCall<{ deviceId: string }>(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError("unauthenticated", "Must be logged in");
-  }
-
-  const uid = request.auth.uid;
-  const { deviceId } = request.data;
-
-  if (!deviceId) {
-    throw new HttpsError("invalid-argument", "deviceId is required");
-  }
-
-  const db = getFirestore();
-  await db.doc(`users/${uid}/devices/${deviceId}`).delete();
-
-  return { success: true };
-});
-
-/**
- * Lightweight endpoint to update just lastActiveAt timestamp.
- * Called periodically or on app resume to keep device "fresh".
- */
-export const deviceTouch = onCall<{ deviceId: string }>(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError("unauthenticated", "Must be logged in");
-  }
-
-  const uid = request.auth.uid;
-  const { deviceId } = request.data;
-
-  if (!deviceId) {
-    throw new HttpsError("invalid-argument", "deviceId is required");
-  }
-
-  const db = getFirestore();
-  // Use merge=true to avoid failing if the doc doesn't exist yet.
-  await db.doc(`users/${uid}/devices/${deviceId}`).set(
-    {
-      lastActiveAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: true },
-  );
-
-  return { success: true };
 });
 
 // Helper functions (see timezone_utils.ts for full implementations)
@@ -1086,7 +1077,9 @@ The `DeviceServiceImpl` will call these functions:
 
 ```dart
 // In DeviceServiceImpl
-HttpsCallable _deviceCallable = AppConfigBase.firebaseFunctionCallable('deviceRegister');
+HttpsCallable _deviceCallable = AppConfigBase.firebaseFunctionCallable(
+  AppConfigBase.deviceActionFunction,
+);
 
 @override
 Future<Either<RepositoryFailure, bool>> registerDevice() async {
@@ -1097,6 +1090,7 @@ Future<Either<RepositoryFailure, bool>> registerDevice() async {
     final packageInfo = await PackageInfo.fromPlatform();
 
     final result = await _deviceCallable.call({
+      'action': 'register',
       'deviceId': deviceId,
       'timezone': timezone,
       'timezoneOffsetMinutes': offsetMinutes,
