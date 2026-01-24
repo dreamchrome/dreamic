@@ -51,20 +51,37 @@ Notes:
 
 ### Device ID Strategy
 
-Options:
-1. **Generated UUID stored locally** - Persists across app reinstalls on iOS (Keychain), less reliable on Android
-2. **Firebase Installation ID** - Built-in, but can change on reinstall
-3. **Composite key** - Combine platform + some stable identifier
+#### Purpose and uniqueness requirements
 
-**Recommendation**: Use Firebase Installation ID (`firebase_app_installations` package) as it's already integrated with Firebase and provides reasonable stability.
+The `deviceId` exists to provide a stable (idempotent) identifier for the *current app install/profile* so repeated calls to `registerDevice()` and `touchDevice()` update the same backend document:
+
+`users/{uid}/devices/{deviceId}`
+
+Uniqueness requirements:
+
+- **Required**: unique per user (because it is namespaced by `uid` in the Firestore path).
+- **Recommended**: globally unique format (UUIDv4) to minimize accidental collisions and to simplify debugging.
+
+Stability requirements (v1 / “tier 1”):
+
+- **Stable across app restarts** for a given install/profile.
+- **Not required** to survive uninstall/reinstall (mobile/desktop) or “Clear site data” (web).
+- Must tolerate duplicates/stale docs, cleaned up by `lastActiveAt`.
+
+#### Recommendation (v1)
+
+- Generate a **random UUIDv4** once and **persist it locally**.
+- Treat web `deviceId` as **best-effort** (storage can be cleared/blocked).
+
+This design models devices as “active endpoints (installs)”, which aligns with notification/timezone freshness use cases.
 
 #### Web Considerations (deviceId stability)
 
 Web storage can be cleared more often, so treat `deviceId` as “best effort” on web.
 
 Recommended strategy:
-1. **Prefer** Firebase Installation ID when available.
-2. If unavailable/unstable on web, **fallback to a locally persisted UUID** (e.g., localStorage).
+1. **Prefer** a locally persisted UUID (IndexedDB or localStorage).
+2. If storage is unavailable/blocked, generate an **ephemeral session UUID**.
 3. Accept that web “device identity” may reset; backend should handle multiple device docs per user and prune stale devices.
 
 #### Web `deviceId` decision matrix
@@ -73,7 +90,6 @@ Web is inherently less stable than mobile because users can clear site data, use
 
 | Option | Stability (web) | Survives reload | Survives browser restart | Survives “Clear site data” | Privacy posture | Notes |
 |---|---:|---:|---:|---:|---|---|
-| Firebase Installation ID | Medium | Yes | Usually | No | Good | Best default when Firebase is already in use; can reset on storage clears/reinstall-like events. |
 | localStorage UUID | Medium | Yes | Yes | No | Good | Simple fallback; generate once and store; resets when storage cleared or blocked. |
 | IndexedDB UUID | Medium | Yes | Yes | No | Good | Similar to localStorage; sometimes more resilient depending on browser settings. |
 | Cookie UUID | Low–Medium | Yes | Yes | Usually no (unless cookies cleared) | Medium | Cookies may be blocked (3rd-party contexts), shortened lifetimes, or cleared; adds complexity. |
@@ -81,9 +97,9 @@ Web is inherently less stable than mobile because users can clear site data, use
 | Composite (platform + userId) | Low | Yes | Yes | N/A | Good | Not a real device identifier; cannot distinguish multiple browsers/devices; only useful as a fallback key for “per-user” storage. |
 
 Recommendation for v1:
-- **Use Firebase Installation ID on all platforms where available**.
-- **On web, fallback to a locally persisted UUID** (localStorage or IndexedDB) if Installation ID is unavailable.
-- If both are unavailable (storage disabled), generate an **ephemeral session UUID**; accept that it will create short-lived device docs.
+- **Use a locally persisted UUID** on all platforms.
+- On web, store in **IndexedDB/localStorage** as available; accept resets.
+- If storage is unavailable (disabled/private mode), generate an **ephemeral session UUID**; accept that it will create short-lived device docs.
 
 Backend expectations:
 - Multiple device docs per user are normal on web.
@@ -147,6 +163,21 @@ abstract class DeviceServiceInt {
 Notes:
 - `registerDevice()` should also set `_cachedTimezone` / `_cachedOffsetMinutes` on success.
 - `touchDevice()` should not assume the doc exists (it should be an upsert server-side).
+
+#### Throttling discussion (pick v1 defaults)
+
+We need specific values, but they should be chosen based on expected app usage patterns (resume frequency), acceptable Firestore write volume, and how aggressively we want to recover from missed DST transitions.
+
+Candidate starting points (not decisions):
+
+- `updateTimezoneOrOffsetIfChanged()` throttle when unchanged: 5–30 minutes (common choice: 15)
+- Forced refresh even if unchanged: 12–48 hours (common choice: 24)
+  - Purpose: catch DST offset changes if the app wasn’t opened near the transition.
+- `touchDevice()` throttle: 15–120 minutes (common choice: 60)
+- `unregisterDevice()` timebox: 1–3 seconds best-effort (common choice: 2)
+
+Decision needed:
+- What are our v1 defaults for each throttle/timebox?
 
 ### Timezone / Offset Change Detection (DST-safe)
 
@@ -479,7 +510,7 @@ lib/data/
 
 ```yaml
 dependencies:
-  firebase_app_installations: ^x.x.x  # For device ID
+  uuid: ^x.x.x                        # For deviceId generation
   flutter_timezone: ^x.x.x            # Already used
   device_info_plus: ^x.x.x            # For device metadata (optional)
 ```
@@ -498,12 +529,99 @@ dependencies:
 
 5. **Rate limiting**: Should we throttle timezone updates to avoid excessive writes (e.g., max once per hour)?
 
-### Proposed answers (to make v1 implementation-ready)
+### Discussion (work these into v1 decisions)
 
-1. **Device cleanup on logout**: Try to delete the device doc using `AuthServiceImpl._onAboutToLogOutCallbacks` (best-effort, timeboxed). If it fails, do not block logout; stale cleanup happens server-side.
-2. **Offline handling**: Treat all server sync as best-effort. Persist a small local “pending sync” state (timezone, offset, last attempted time) and retry on next resume/login.
-3. **Web deviceId**: Prefer Firebase Installation ID; fallback to localStorage UUID; accept resets.
-4. **Rate limiting**: Use throttled `touchDevice()` and throttled `updateTimezoneOrOffsetIfChanged()`. Always bypass throttle when timezone/offset changed.
+#### v1 selections so far (based on discussion)
+
+- **(1) Device cleanup on logout**: Choose **A: Delete on logout (best-effort)**.
+  - Use the existing AuthService “about-to-logout” hook (with its timeout) to call `unregisterDevice()` before sign-out.
+- **(2) Offline handling**: Choose **B: Best-effort + persist pending sync**.
+  - Persist a minimal “pending sync” payload and retry on next resume/login.
+- **(3) Web platform (deviceId stability)**: Choose **A: Best-effort persisted UUID + ephemeral fallback**.
+  - Duplicates are acceptable; staleness cleanup via `lastActiveAt` should naturally prune over time.
+- **(4) Privacy**: Choose **A: Minimal schema by default**.
+  - Device tracking must remain **independent of notification permission** (timezone/device registration should not require notification permission).
+
+1. **Device cleanup on logout**
+
+Options:
+- **A: Delete on logout (best-effort)**: call `unregisterDevice()` before sign-out.
+  - Pros: fewer stale docs, simpler “active devices” semantics.
+  - Cons: deletion might fail (offline); also loses “recent device” history unless backend captures it elsewhere.
+- **B: Never delete; rely on staleness**: keep device docs and let `lastActiveAt` determine active vs inactive.
+  - Pros: preserves history/debugging; fewer failure cases on logout.
+  - Cons: devices collection grows; requires cleanup/ignore logic.
+- **C: Soft-delete**: set `disabledAt`/`loggedOutAt` instead of deleting.
+  - Pros: keeps history while marking inactive.
+  - Cons: more schema + logic, and still needs cleanup.
+
+Decision prompts:
+- Do we want device docs to represent “current endpoints” (A) or “known endpoints” (B/C)?
+- If we keep docs (B/C), what is the canonical staleness threshold for “active” (e.g., 30/60/90 days)?
+
+v1 decision:
+- Use **A: Delete on logout (best-effort)** using `AuthServiceImpl._onAboutToLogOutCallbacks` (timeboxed by existing hook).
+
+2. **Offline handling**
+
+Options:
+- **A: Best-effort only**: if a sync fails, do nothing; next lifecycle event tries again naturally.
+  - Pros: simplest.
+  - Cons: may take longer to recover if app resumes frequently but always throttles “unchanged” cases.
+- **B: Best-effort + persist pending sync**: store the last attempted payload and retry on next resume/login.
+  - Pros: better eventual consistency.
+  - Cons: adds a little local state and backoff rules.
+- **C: Background retry**: schedule retries in the background (platform-dependent).
+  - Pros: fastest eventual consistency.
+  - Cons: complexity; background execution constraints.
+
+Decision prompts:
+- Is “eventual update when user opens app again” acceptable (A), or do we want a small pending-sync mechanism (B)?
+- If we do pending-sync, what’s the simplest backoff rule (e.g., max once per resume, minimum 10–15 minutes between attempts)?
+
+v1 decision:
+- Use **B: Best-effort + persist pending sync**.
+
+3. **Web platform (deviceId stability)**
+
+Options:
+- **A: Best-effort persisted UUID** (localStorage/IndexedDB) + ephemeral fallback when storage unavailable.
+- **B: Session-only device identity** (always ephemeral).
+  - Pros: simplest + privacy-forward.
+  - Cons: creates many short-lived device docs; noisy.
+
+Decision prompts:
+- Is it acceptable that web creates duplicate docs sometimes (A), assuming backend cleanup by staleness?
+- Do we want to special-case web cleanup thresholds (e.g., shorter retention)?
+
+v1 decision:
+- Use **A: Best-effort persisted UUID + ephemeral fallback**.
+- Accept duplicates; rely on staleness cleanup over time.
+
+4. **Privacy considerations**
+
+Options:
+- **A: Minimal schema by default**: only timezone/offset/platform/appVersion + timestamps.
+- **B: Add `deviceInfo` (opt-in)**: model/osVersion for debugging.
+
+Decision prompts:
+- Should `deviceInfo` be collected by default, or only when consuming apps explicitly enable it?
+- Any compliance constraints we need to respect in this package’s defaults/documentation?
+
+v1 decision:
+- Use **A: Minimal schema by default**.
+- Keep device tracking independent of notification permission (no coupling to notification opt-in).
+
+5. **Rate limiting**
+
+Key design questions:
+- How often does the app typically resume in real usage?
+- How costly is an extra write vs the risk of stale offsets around DST?
+
+Decision prompts:
+- Choose v1 defaults for throttles/timeboxes (see “Throttling discussion” above).
+- Confirm the “always bypass throttle on timezone OR offset change” rule.
+- Do we want a forced refresh cadence (e.g., every 24h) to recover from missed DST transitions?
 
 ---
 
@@ -588,6 +706,35 @@ Include a comment in each scaffolding file:
 1. Should the scaffolding include test files for the functions?
 2. Should there be a "minimal" (just callable) vs "full" (scheduled + triggers) version?
 3. How do we communicate breaking changes in the scaffolding to consuming apps?
+
+### Discussion (scaffolding)
+
+1. Should the scaffolding include test files for the functions?
+
+Options:
+- **A: Minimal tests included** (recommended if we want confidence): unit tests for `timezone_utils` and the local-time window math.
+- **B: No tests** (simpler scaffolding): consumers add tests if/when they adopt.
+
+Decision prompt:
+- Do we want this package to ship “reference tests” as part of the template?
+
+2. Should there be a "minimal" (just callable) vs "full" (scheduled + triggers) version?
+
+Options:
+- **A: One folder, optional files**: `device_callable.ts` required; scheduled/triggers optional; README describes both installs.
+- **B: Two folders**: `device_minimal/` and `device_full/`.
+
+Decision prompt:
+- Which is easier for consuming apps to adopt correctly without copy/paste mistakes?
+
+3. How do we communicate breaking changes in the scaffolding to consuming apps?
+
+Options:
+- **A: Header comment only**: `@packageVersion` + short guidance.
+- **B: Add a template changelog**: e.g., `scaffolding/firebase_functions/device/CHANGELOG.md` and/or “Upgrade notes” section in README.
+
+Decision prompt:
+- Do we want to treat scaffolding changes as semver-governed (recommended), and if so, where do we document required fields/indexes?
 
 ---
 
