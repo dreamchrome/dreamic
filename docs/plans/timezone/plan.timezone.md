@@ -924,7 +924,7 @@ Include a comment in each scaffolding file:
 
 ### Setup Instructions (for README.md)
 
-```markdown
+````markdown
 ## Device Functions Setup
 
 1. Copy contents of `device/` to your functions `src/` directory
@@ -940,7 +940,7 @@ Include a comment in each scaffolding file:
    ```bash
    firebase deploy --only functions
    ```
-```
+````
 
 ### Open Questions
 
