@@ -84,9 +84,27 @@ Recommended strategy:
 2. If storage is unavailable/blocked, generate an **ephemeral session UUID**.
 3. Accept that web “device identity” may reset; backend should handle multiple device docs per user and prune stale devices.
 
-#### Web `deviceId` decision matrix
+Decision (v1):
 
-Web is inherently less stable than mobile because users can clear site data, use private browsing, rotate profiles, or block storage. Treat web `deviceId` as “best effort” and design for duplicates/staleness.
+- **DeviceId format:** UUIDv4.
+- **Mobile/desktop persistence:** persist locally via the platform’s standard app storage.
+- **Web persistence (priority order):**
+  1. **IndexedDB** (preferred when available)
+  2. **localStorage** (fallback)
+  3. **In-memory session UUID** if persistent storage is unavailable/blocked/throws
+- **Explicit non-goals:** do **not** use cookies for identity, and do **not** use fingerprinting.
+
+Rationale:
+- IndexedDB/localStorage UUIDs are “good enough” stability for the intended semantics (an *install/profile endpoint*).
+- Ephemeral fallback keeps the app functional in private/blocked-storage scenarios, while accepting duplicate short-lived device docs.
+
+Backend expectations:
+- Multiple device docs per user are normal on web.
+- Prune devices by `lastActiveAt` (and optionally `platform == 'web'`) to keep the collection clean.
+
+Appendix: Web `deviceId` option matrix (background)
+
+Web is inherently less stable than mobile because users can clear site data, use private browsing, rotate profiles, or block storage. This matrix is included as background for the v1 decision above.
 
 | Option | Stability (web) | Survives reload | Survives browser restart | Survives “Clear site data” | Privacy posture | Notes |
 |---|---:|---:|---:|---:|---|---|
@@ -95,15 +113,6 @@ Web is inherently less stable than mobile because users can clear site data, use
 | Cookie UUID | Low–Medium | Yes | Yes | Usually no (unless cookies cleared) | Medium | Cookies may be blocked (3rd-party contexts), shortened lifetimes, or cleared; adds complexity. |
 | “Fingerprint” (UA/canvas/etc) | High (but brittle) | Yes | Yes | N/A | Poor | Do NOT use; privacy-invasive, increasingly blocked, and risky for policy/compliance. |
 | Composite (platform + userId) | Low | Yes | Yes | N/A | Good | Not a real device identifier; cannot distinguish multiple browsers/devices; only useful as a fallback key for “per-user” storage. |
-
-Recommendation for v1:
-- **Use a locally persisted UUID** on all platforms.
-- On web, store in **IndexedDB/localStorage** as available; accept resets.
-- If storage is unavailable (disabled/private mode), generate an **ephemeral session UUID**; accept that it will create short-lived device docs.
-
-Backend expectations:
-- Multiple device docs per user are normal on web.
-- Prune devices by `lastActiveAt` (and optionally `platform == 'web'`) to keep the collection clean.
 
 ---
 
@@ -304,6 +313,11 @@ This allows backend to:
 1. Look up FCM token
 2. Get associated deviceId
 3. Query device document for timezone
+
+Uniqueness / de-dupe rule (v1):
+- Treat an FCM token as **unique per user**. Using `users/{uid}/fcmTokens/{tokenHash}` makes this idempotent.
+- If the backend receives a registration for a `tokenHash` that already exists but the incoming `deviceId` differs (e.g., web storage reset created a new deviceId while the same FCM token still exists), the server should **overwrite the token doc’s `deviceId`** to the new value and treat the previous device association as stale.
+- Avoid storing the token on the device doc as a source of truth; the token doc should remain the canonical mapping (`tokenHash` → `deviceId`).
 
 ---
 
