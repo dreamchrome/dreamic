@@ -4,6 +4,12 @@
 
 Create a `DeviceService` that tracks device-level information, with timezone as the primary initial use case. This service will be independent of, but complementary to, the existing notification/FCM token management.
 
+Update (v1 direction): use a **single canonical Firestore document per install/profile** (`users/{uid}/devices/{deviceId}`) to store both:
+- device state needed for timezone-aware logic (`timezone`, `timezoneOffsetMinutes`, `lastActiveAt`), and
+- the *current* push token (when available) needed to deliver notifications.
+
+`NotificationService` still owns **permission prompting + token acquisition**. `DeviceService` owns **device identity + timezone/active tracking**. The backend uses the *device doc* as the authoritative “deliverable endpoint” when it has a non-null `fcmToken`.
+
 ## Goals
 
 1. Track device timezone independently of notification permissions
@@ -14,7 +20,8 @@ Create a `DeviceService` that tracks device-level information, with timezone as 
 
 ## Non-Goals (for initial implementation)
 
-- Replacing or modifying FCM token management (that stays in NotificationService)
+- Replacing or modifying notification permission UX or FCM/APNs token acquisition (that stays in `NotificationService`)
+- Maintaining a full token history/audit trail (optional v2)
 - User-level "primary timezone" (can be added later)
 - Timezone history/audit trail
 
@@ -35,6 +42,8 @@ users/{uid}/devices/{deviceId}
   ├── timezone: string              // IANA format, e.g., "America/New_York"
   ├── timezoneOffsetMinutes: int    // Current UTC offset in minutes (supports half/45-min offsets)
   ├── lastActiveAt: Timestamp       // Last time this device was active
+  ├── fcmToken: string?             // Current push token for this install/profile (nullable)
+  ├── fcmTokenUpdatedAt: Timestamp? // Last time the token field was updated (server timestamp)
   ├── createdAt: Timestamp          // When device was first registered
   ├── updatedAt: Timestamp          // Last time this device doc was updated
   ├── platform: string              // "ios", "android", "web"
@@ -47,6 +56,16 @@ users/{uid}/devices/{deviceId}
 Notes:
 - `timezone` is the **semantic** value (DST rules, names, etc). `timezoneOffsetMinutes` is denormalized for efficient queries.
 - `timezoneOffsetMinutes` MUST be refreshed even when `timezone` is unchanged (DST).
+- `fcmToken` is the *current* deliverable token for this install/profile. It is intentionally stored on the device doc so scheduled jobs can pick the user’s active device and send without joins.
+
+Definitions (v1):
+- **Device doc**: one document per app install/profile (UUID `deviceId` persisted locally).
+- **Deliverable endpoint**: a device doc with a non-null `fcmToken` and `lastActiveAt` within an “active window” (e.g., 30–90 days).
+- **Active device** (per user): the deliverable endpoint with the greatest `lastActiveAt`.
+
+Robustness rule (token rotation / stale mappings):
+- Token updates are written by overwriting `fcmToken` on the *same* device doc.
+- To prevent a token from lingering on multiple device docs due to offline failures, the backend should (best-effort) enforce uniqueness by clearing the same `fcmToken` from any other device docs found via `collectionGroup('devices').where('fcmToken', '==', token)` (rare path; runs only on token update).
 ```
 
 ### Device ID Strategy
@@ -145,10 +164,22 @@ abstract class DeviceServiceInt {
   /// Marks this device as active (updates lastActiveAt).
   Future<Either<RepositoryFailure, Unit>> touchDevice();
 
+  /// Updates the current device doc with the latest push token.
+  ///
+  /// This is called by NotificationService when:
+  /// - a token is first obtained
+  /// - a token rotates/refreshes
+  /// - a token is deleted/unavailable (pass null)
+  ///
+  /// IMPORTANT: This does NOT prompt for permission; it only persists state.
+  Future<Either<RepositoryFailure, Unit>> updateFcmToken({
+    required String? fcmToken,
+  });
+
   /// Removes the current device registration.
   ///
   /// Called BEFORE logout while still authenticated.
-  /// Hooked into AuthServiceImpl._onAboutToLogOutCallbacks.
+  /// Hooked into AuthServiceInt.addOnAboutToLogOutCallback.
   Future<Either<RepositoryFailure, Unit>> unregisterDevice();
 
   /// Gets all devices for the current user.
@@ -167,11 +198,13 @@ abstract class DeviceServiceInt {
 | Login / auth refresh | `registerDevice()` (creates/updates device) |
 | App resume from background | `updateTimezoneOrOffsetIfChanged()` (lightweight check + throttled) |
 | Periodic “keepalive” while app is used | `touchDevice()` (throttled; best-effort) |
+| Push token obtained/rotated/deleted | `updateFcmToken(fcmToken: ...)` (called by NotificationService; best-effort) |
 | About-to-logout (while still authed) | `unregisterDevice()` (best-effort, timeboxed) |
 
 Notes:
 - `registerDevice()` should also set `_cachedTimezone` / `_cachedOffsetMinutes` on success.
 - `touchDevice()` should not assume the doc exists (it should be an upsert server-side).
+- For efficiency, these actions may be coalesced into a single backend `upsertDevice` call when they occur close together (common on app startup/login).
 
 #### Throttling discussion (pick v1 defaults)
 
@@ -271,25 +304,40 @@ Guidance:
 
 ### Integration with AuthService
 
-The `DeviceService` should be initialized after authentication.
+Goal: mirror `NotificationService`’s “self-wiring” auth integration so consuming apps do not need to manually call `registerDevice()` / `unregisterDevice()`.
 
-#### Reactive hookup pattern (mirror NotificationService)
+#### Recommended pattern (v1): `DeviceService.connectToAuthService()`
 
-Rather than requiring consumers to call the service in perfect order, provide a `connectToAuthService()` (or similar) entrypoint that:
-- Registers an “on authenticated” callback to call `registerDevice()`.
-- Registers an “about to logout” callback to call `unregisterDevice()` while still authenticated.
-- Avoids throwing when called in unauthenticated state (no-op / typed failure).
+Provide a single entrypoint that wires `DeviceService` into `AuthServiceInt`’s existing callback arrays:
+- `addOnAuthenticatedCallback(...)` → calls `registerDevice()` (best-effort)
+- `addOnRefreshedCallback(...)` → calls `registerDevice()` or a lightweight “ensure upsert” (best-effort)
+- `addOnAboutToLogOutCallback(...)` → calls `unregisterDevice()` while still authenticated (best-effort)
+
+This matches how `NotificationService.connectToAuthService()` abstracts auth lifecycle wiring.
+
+Plan-level API sketch:
 
 ```dart
-// In AuthServiceImpl.handleAuthStateChanges or via callback
-if (fbUser != null) {
-  // User just authenticated
-  await deviceService.registerDevice();
-}
-
-// On logout
-await deviceService.unregisterDevice(); // MUST happen before signOut (best-effort)
+Future<void> connectToAuthService({
+  AuthServiceInt? authService,
+  // Optional overrides for consuming apps that want custom behavior.
+  Future<void> Function(String? uid)? onAuthenticated,
+  Future<void> Function()? onRefreshed,
+  Future<void> Function()? onAboutToLogOut,
+})
 ```
+
+Behavior details (v1):
+- If `authService` is null, attempt to resolve `AuthServiceInt` from GetIt (guarded; if not registered, log and no-op).
+- Store the registered callbacks internally so repeated calls to `connectToAuthService()` are idempotent (remove old callbacks before adding new ones).
+- Default handlers:
+  - onAuthenticated: `registerDevice()` and (optionally) `touchDevice()`
+  - onRefreshed: `registerDevice()` (keeps timezone/token metadata fresh when auth refresh occurs)
+  - onAboutToLogOut: `unregisterDevice()`
+
+Customization model:
+- Consuming apps can override any of the three handlers for unusual flows.
+- The default should be “works out of the box” with no configuration.
 
 #### Account switching on same device
 
@@ -300,28 +348,166 @@ Default behavior:
 
 ### Integration with NotificationService
 
-The `NotificationService` can optionally store a reference to the device:
+Goal: keep notification delivery (push tokens) and timezone awareness (device docs) compatible **without coupling timezone tracking to notification permission**.
+
+Recommended consuming-app setup (v1):
+- Call `deviceService.connectToAuthService()` once during app startup (or enable auto-connect via config if you add such a flag).
+- Call `notificationService.connectToAuthService(...)` once during app startup (do NOT remove this wiring; it still handles permission + token acquisition + local cleanup).
+- Configure `NotificationService` so token lifecycle changes are forwarded to `DeviceService.updateFcmToken(fcmToken: ...)` (single backend writer).
+
+Plan-level example:
+
+```dart
+await deviceService.connectToAuthService();
+
+await notificationService.connectToAuthService(
+  // IMPORTANT: delegate backend token persistence to DeviceService.
+  // NotificationService still manages getting/deleting the token locally.
+  onTokenChanged: (newToken, oldToken) async {
+    await deviceService.updateFcmToken(fcmToken: newToken);
+  },
+);
+```
+
+Logout note (avoid duplicate backend calls):
+- Backend cleanup should be driven by `DeviceService.unregisterDevice()` via `AuthServiceInt.addOnAboutToLogOutCallback`.
+- If `NotificationService.connectToAuthService()` performs a backend unregistration callback on logout, that callback should either be disabled in this mode or delegate to `DeviceService.updateFcmToken(fcmToken: null)` only if you explicitly want to clear the token before deletion.
+
+#### Avoiding duplicate backend calls (v1)
+
+Because timezone/active tracking and push token tracking overlap, v1 should avoid having both services independently write to Firestore/Functions.
+
+Decision (v1):
+- **All backend persistence goes through a single “upsert device” path owned by `DeviceService`.**
+- `NotificationService` never writes device/token state to the backend directly; it only acquires/deletes tokens and forwards token changes to `DeviceService.updateFcmToken(...)`.
+
+This ensures:
+- only one canonical document is updated (`users/{uid}/devices/{deviceId}`), and
+- token + timezone + activity updates can be **coalesced** into a single backend call when they happen close together (common on app start/login).
+
+Recommended implementation approach (plan-only):
+- Provide a backend callable (name TBD) like `upsertDevice` that upserts `users/{uid}/devices/{deviceId}`.
+- The callable accepts optional fields so callers can send “what they know now” without requiring multiple calls:
+  - required: `deviceId`
+  - optional: `timezone`, `timezoneOffsetMinutes`, `platform`, `appVersion`, `deviceInfo`
+  - optional: `fcmToken` (nullable)
+  - optional: `touch: true` to update `lastActiveAt`
+- `DeviceService` maintains a short-lived in-memory “pending payload” and a debounce window (e.g., 250–1000ms) to merge:
+  - `registerDevice()`
+  - `updateTimezoneOrOffsetIfChanged()`
+  - `touchDevice()`
+  - `updateFcmToken()`
+  into a single `upsertDevice` call when triggered by the same lifecycle event.
+
+Notes:
+- Coalescing is an optimization; correctness does not depend on it.
+- If coalescing feels too magical for v1, keep it simple but still follow the key rule: NotificationService forwards token state to DeviceService so only one service writes.
+
+#### Canonical collection (v1)
+
+Store everything required to (a) pick the user’s current active device and (b) deliver to it in one place:
 
 ```
-users/{uid}/fcmTokens/{tokenHash}
+users/{uid}/devices/{deviceId}
+  ├── timezone: string
+  ├── timezoneOffsetMinutes: int
+  ├── lastActiveAt: Timestamp
+  ├── platform: string
+  ├── fcmToken: string?             // nullable when notifications are unavailable/disabled
+  ├── fcmTokenUpdatedAt: Timestamp?
+  └── ... (minimal device metadata)
+```
+
+Ownership rules (v1):
+- `DeviceService` owns: `deviceId` generation, `timezone`/`timezoneOffsetMinutes`, `lastActiveAt`, and minimal device metadata.
+- `NotificationService` owns: permission prompting and acquiring/deleting the push token.
+- `NotificationService` informs `DeviceService` via `updateFcmToken(fcmToken: ...)`.
+
+Robustness rules (v1):
+- Token rotation is handled by overwriting `devices/{deviceId}.fcmToken`.
+- Backend scheduled jobs MUST read the token from the chosen active device doc at send time (no stale token lists).
+- On token update, backend should (best-effort) enforce “token appears on at most one device doc” using a `collectionGroup('devices')` equality query and clearing stale references.
+
+#### Network call minimization (v1)
+
+To keep accuracy while reducing calls:
+- Prefer a **single backend callable** that upserts the device doc and accepts:
+  - `deviceId`, `timezone`, `timezoneOffsetMinutes`, `platform`, `appVersion`
+  - optional `fcmToken` (when available)
+  - optional `touch` flag to update `lastActiveAt`
+- When notifications are disabled/unavailable: call the same callable without `fcmToken`.
+
+This keeps timezone tracking independent of notification permission while still allowing “active device in local time” notifications.
+
+#### Logout / account switching (robustness)
+
+On logout, both “stop sending pushes for this user” and “stop considering this device active for this user” must happen while still authenticated.
+
+Decision (v1): use the existing AuthService “about-to-logout” hook to trigger a single coordinated cleanup step:
+- `DeviceService.unregisterDevice()` deletes `users/{uid}/devices/{deviceId}` (best-effort).
+- `NotificationService` deletes the local FCM token (best-effort) so that even if backend cleanup fails, any remaining server-side sends to that token will start failing.
+
+Important ordering / race note:
+- If these happen concurrently, that’s acceptable.
+- If deletion fails (offline), staleness cleanup still applies, but deleting the local token reduces the risk of cross-account notification leakage on shared devices.
+
+#### Optional v2 (only if needed): token-centric docs
+
+If a consuming app later needs token history/audit, token-level staleness pruning, or truly token-centric `collectionGroup('fcmTokens')` scheduling, add a token subcollection:
+
+```
+users/{uid}/devices/{deviceId}/fcmTokens/{tokenHash}
   ├── token: string
-  ├── deviceId: string  // <-- Reference to devices collection
-  ├── ...
+  ├── createdAt: Timestamp
+  ├── updatedAt: Timestamp
+  ├── lastSeenAt: Timestamp
+  └── ...
 ```
 
-This allows backend to:
-1. Look up FCM token
-2. Get associated deviceId
-3. Query device document for timezone
-
-Uniqueness / de-dupe rule (v1):
-- Treat an FCM token as **unique per user**. Using `users/{uid}/fcmTokens/{tokenHash}` makes this idempotent.
-- If the backend receives a registration for a `tokenHash` that already exists but the incoming `deviceId` differs (e.g., web storage reset created a new deviceId while the same FCM token still exists), the server should **overwrite the token doc’s `deviceId`** to the new value and treat the previous device association as stale.
-- Avoid storing the token on the device doc as a source of truth; the token doc should remain the canonical mapping (`tokenHash` → `deviceId`).
+This preserves “one canonical device doc” while allowing multi-token edge cases without introducing a second peer collection.
 
 ---
 
 ## Backend Considerations
+
+### Scheduling query unit (v1): devices
+
+For v1, scheduled notification jobs should query **device docs** and send to the token stored on the chosen active device.
+
+Recommendation (v1):
+- Query `collectionGroup('devices')` by `timezoneOffsetMinutes` (with an offset buffer) and any optional filters like `platform` and `lastActiveAt`.
+- Validate final eligibility using the device’s IANA `timezone` at send-time.
+- Choose per-user delivery policy (e.g., “most recent active device”) by ranking on `lastActiveAt`.
+- Send to `device.fcmToken` for the selected device.
+
+This avoids joins and avoids maintaining separate token docs while remaining DST-safe.
+
+### Notification targeting patterns (industry defaults)
+
+FCM/APNs do not automatically choose “the right device”. They deliver to the token(s) you target. The backend must decide which token set is eligible.
+
+Common patterns (all should be supported by this data model):
+- **Send to all active devices**: simplest and most common. Good for critical/transactional notifications. Requires good staleness cleanup.
+- **Send to most-recently-active device only**: reduces noise for multi-device users. Common for “daily reminder” style notifications.
+- **Send to N most-recent devices**: compromise between reliability and noise.
+- **Platform preference / fallback**: e.g., prefer mobile over web.
+- **Quiet hours / local-time windows**: use timezone to align with user context.
+
+Recommended v1 defaults (configurable by consuming apps):
+- Default delivery policy for “reminders” (like 9am local time): **send to most-recently-active device**, with an optional fallback to “send to all active devices” if no device has been active recently.
+- Default delivery policy for critical alerts: **send to all active devices**.
+
+Data needed to support these policies efficiently:
+- `users/{uid}/devices/{deviceId}.lastActiveAt` to rank devices by recency.
+- `users/{uid}/devices/{deviceId}.fcmToken` to deliver to the chosen active device.
+- `platform` on device docs to support platform preference.
+
+Platform preference guidance (v1):
+- Store `platform` on **device docs** because scheduled sending starts from device docs in v1.
+- Prefer applying platform preference in-memory after your primary candidate query (typically by timezone offset/time window). Adding extra Firestore `where` clauses for platform is usually not worth the index/write complexity unless your scale demands it.
+
+Efficiency note (9am local time scheduling):
+- Scheduled jobs query candidate devices by offset/time window, pick per-user winners (most recent), then send to the token on that device doc.
 
 ### Single Source of Truth: Backend Time-Window Query Module
 
@@ -610,7 +796,7 @@ Decision prompts:
 - If we keep docs (B/C), what is the canonical staleness threshold for “active” (e.g., 30/60/90 days)?
 
 v1 decision:
-- Use **A: Delete on logout (best-effort)** using `AuthServiceImpl._onAboutToLogOutCallbacks` (timeboxed by existing hook).
+- Use **A: Delete on logout (best-effort)** using `AuthServiceInt.addOnAboutToLogOutCallback` (timeboxed by existing hook).
 
 2. **Offline handling**
 
