@@ -824,6 +824,29 @@ Decision prompts:
 v1 decision:
 - Use **B: Best-effort + persist pending sync**.
 
+Plan details (v1: minimal pending-sync spec):
+- Persist a single **pending upsert payload** locally (overwrite/merge in place; not a queue) so the system converges without unbounded growth.
+- Payload shape (minimal; fields optional unless noted):
+  - required: `deviceId`
+  - optional: `timezone`, `timezoneOffsetMinutes`, `fcmToken` (nullable), `touch` (bool)
+  - metadata: `pendingUpdatedAt` (local timestamp), `lastAttemptAt` (local timestamp)
+- Merge rules when new intent arrives:
+  - Per-field last-write-wins for `timezone`, `timezoneOffsetMinutes`, `fcmToken`.
+  - `touch` is sticky: once true, it stays true until a successful flush.
+  - Allow `fcmToken: null` to represent explicit clearing (e.g., token deleted/rotated away).
+- Flush triggers (best-effort; should not block UI flows):
+  - On any lifecycle entrypoint that already exists in the plan: login/auth refresh (`registerDevice()`), resume (`updateTimezoneOrOffsetIfChanged()`), periodic keepalive (`touchDevice()`), and token changes (`updateFcmToken(...)`).
+  - Additionally: if a flush is skipped due to backoff, keep the pending payload and retry on the next trigger.
+- Backoff / rate limiting (keep it simple):
+  - Enforce a minimum time between flush attempts (recommend starting point: 10–15 minutes) using `lastAttemptAt`.
+  - Bypass backoff when timezone, offset, or token changed (i.e., pending payload represents a correctness-relevant change, not just a touch).
+- Success / failure semantics:
+  - On successful backend ack: clear the pending payload.
+  - On failure (offline, timeout, transient errors): keep the pending payload, update `lastAttemptAt`, and return without surfacing an error to the user.
+  - Never allow pending-sync failures to block login/logout/resume flows; they are strictly “eventual consistency”.
+- Auth precondition:
+  - If not authenticated when an update intent occurs, store pending and flush on next authenticated event.
+
 3. **Web platform (deviceId stability)**
 
 Options:
