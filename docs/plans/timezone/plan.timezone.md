@@ -798,6 +798,12 @@ Decision prompts:
 v1 decision:
 - Use **A: Delete on logout (best-effort)** using `AuthServiceInt.addOnAboutToLogOutCallback` (timeboxed by existing hook).
 
+Plan invariants (required for Option A correctness + safety):
+- Logout cleanup is **best-effort** and **timeboxed**; it must never block logout or make logout fail.
+- Backend must treat “deliverable endpoints” as **eligible only when** `fcmToken != null` **and** `lastActiveAt` is within an “active window” (e.g., 30–90 days). This rule must be enforced by all scheduled jobs/callables regardless of logout behavior.
+- Deleting the device doc is an optimization, not a correctness dependency: if deletion fails offline, backend eligibility rules + staleness handling must still prevent long-term sends.
+- On logout, `NotificationService` should still delete the **local** push token (best-effort) to reduce cross-account notification risk even if backend cleanup fails.
+
 2. **Offline handling**
 
 Options:
