@@ -168,6 +168,13 @@ Notes:
 
 We need specific values, but they should be chosen based on expected app usage patterns (resume frequency), acceptable Firestore write volume, and how aggressively we want to recover from missed DST transitions.
 
+Clarifying terms (why questions #2 and #3 can feel redundant):
+
+- **Unchanged min interval (resume throttle)**: “If nothing changed, don’t write more often than once every X.” This prevents spam on frequent resumes.
+- **Unchanged max interval (forced refresh)**: “Even if nothing changed, ensure we write at least once every Y.” This is a safety net for DST transitions if the app isn’t opened near the transition.
+
+If we set both values to the same duration (e.g., 48h), they effectively collapse into a single rule: “write unchanged at most once every 48h.”
+
 Candidate starting points (not decisions):
 
 - `updateTimezoneOrOffsetIfChanged()` throttle when unchanged: 5–30 minutes (common choice: 15)
@@ -178,6 +185,35 @@ Candidate starting points (not decisions):
 
 Decision needed:
 - What are our v1 defaults for each throttle/timebox?
+
+v1 decision (package defaults; all should be configurable by consuming apps):
+
+- Always bypass throttles when timezone OR offset changed: **yes**
+- `updateTimezoneOrOffsetIfChanged()` unchanged min interval (resume throttle): **48 hours**
+- `updateTimezoneOrOffsetIfChanged()` unchanged max interval (forced refresh): **48 hours**
+  - Note: this matches the desire to avoid unnecessary writes while still eventually updating offset for DST.
+- `touchDevice()` throttle: **60 minutes**
+- `unregisterDevice()` timebox: handled by existing auth “about-to-logout” hook timeout (see app config)
+
+Configuration approach (plan-only):
+
+- Add Remote Config / `AppConfigBase`-exposed settings for these values so consuming apps can tune based on:
+  - how frequently the app resumes
+  - whether backend jobs rely on `lastActiveAt` freshness
+  - acceptable write volume
+
+Tuning guidance for consuming apps (especially if backend relies on `lastActiveAt`):
+
+- If backend scheduled jobs/analytics treat “active device” as `lastActiveAt >= now - X`, choose `touchDevice()` throttle such that typical users will still refresh `lastActiveAt` within that window during normal usage.
+  - Example: if your backend filters to “active in last 24h”, a 60-minute touch throttle is usually fine.
+  - If your backend needs tighter guarantees (e.g., “active in last 2h”), reduce the touch throttle accordingly.
+- Keep timezone/offset sync much less frequent when unchanged (e.g., 48h) unless your backend makes near-real-time decisions from `timezoneOffsetMinutes`.
+- When in doubt, prefer conservative writes (battery/network) and let backend logic tolerate staleness by widening candidate queries and validating by IANA timezone at send-time.
+
+Suggested Remote Config keys (names TBD; these are placeholders):
+- `deviceTimezoneUnchangedSyncMinMinutes` (default: 2880)
+- `deviceTimezoneUnchangedSyncMaxMinutes` (default: 2880)
+- `deviceTouchThrottleMinutes` (default: 60)
 
 ### Timezone / Offset Change Detection (DST-safe)
 
@@ -622,6 +658,11 @@ Decision prompts:
 - Choose v1 defaults for throttles/timeboxes (see “Throttling discussion” above).
 - Confirm the “always bypass throttle on timezone OR offset change” rule.
 - Do we want a forced refresh cadence (e.g., every 24h) to recover from missed DST transitions?
+
+v1 decision:
+- Always bypass throttle on timezone OR offset change: **yes**
+- Set unchanged sync intervals to **48 hours** (and expose via Remote Config / `AppConfigBase` for consuming apps).
+- Set `touchDevice()` throttle default to **60 minutes** (configurable via Remote Config / `AppConfigBase`).
 
 ---
 
