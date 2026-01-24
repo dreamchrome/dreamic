@@ -18,6 +18,12 @@ Create a `DeviceService` that tracks device-level information, with timezone as 
 - User-level "primary timezone" (can be added later)
 - Timezone history/audit trail
 
+### Important Constraints
+
+- **DST-safe**: The system must keep `timezoneOffsetMinutes` accurate even when the IANA timezone string does not change (DST transitions).
+- **Efficient**: Avoid unnecessary writes on frequent app resume events; only sync when needed and throttle background “touch” calls.
+- **Robust**: Offline or transient backend failures must not block the app; sync should be best-effort with retries on later lifecycle events.
+
 ---
 
 ## Data Model
@@ -27,15 +33,20 @@ Create a `DeviceService` that tracks device-level information, with timezone as 
 ```
 users/{uid}/devices/{deviceId}
   ├── timezone: string              // IANA format, e.g., "America/New_York"
-  ├── timezoneOffsetMinutes: int    // Current UTC offset in minutes (for quick queries)
+  ├── timezoneOffsetMinutes: int    // Current UTC offset in minutes (supports half/45-min offsets)
   ├── lastActiveAt: Timestamp       // Last time this device was active
   ├── createdAt: Timestamp          // When device was first registered
+  ├── updatedAt: Timestamp          // Last time this device doc was updated
   ├── platform: string              // "ios", "android", "web"
   ├── appVersion: string            // App version on this device
   └── deviceInfo: map (optional)    // Additional device metadata
       ├── model: string
       ├── osVersion: string
       └── ...
+
+Notes:
+- `timezone` is the **semantic** value (DST rules, names, etc). `timezoneOffsetMinutes` is denormalized for efficient queries.
+- `timezoneOffsetMinutes` MUST be refreshed even when `timezone` is unchanged (DST).
 ```
 
 ### Device ID Strategy
@@ -47,6 +58,37 @@ Options:
 
 **Recommendation**: Use Firebase Installation ID (`firebase_app_installations` package) as it's already integrated with Firebase and provides reasonable stability.
 
+#### Web Considerations (deviceId stability)
+
+Web storage can be cleared more often, so treat `deviceId` as “best effort” on web.
+
+Recommended strategy:
+1. **Prefer** Firebase Installation ID when available.
+2. If unavailable/unstable on web, **fallback to a locally persisted UUID** (e.g., localStorage).
+3. Accept that web “device identity” may reset; backend should handle multiple device docs per user and prune stale devices.
+
+#### Web `deviceId` decision matrix
+
+Web is inherently less stable than mobile because users can clear site data, use private browsing, rotate profiles, or block storage. Treat web `deviceId` as “best effort” and design for duplicates/staleness.
+
+| Option | Stability (web) | Survives reload | Survives browser restart | Survives “Clear site data” | Privacy posture | Notes |
+|---|---:|---:|---:|---:|---|---|
+| Firebase Installation ID | Medium | Yes | Usually | No | Good | Best default when Firebase is already in use; can reset on storage clears/reinstall-like events. |
+| localStorage UUID | Medium | Yes | Yes | No | Good | Simple fallback; generate once and store; resets when storage cleared or blocked. |
+| IndexedDB UUID | Medium | Yes | Yes | No | Good | Similar to localStorage; sometimes more resilient depending on browser settings. |
+| Cookie UUID | Low–Medium | Yes | Yes | Usually no (unless cookies cleared) | Medium | Cookies may be blocked (3rd-party contexts), shortened lifetimes, or cleared; adds complexity. |
+| “Fingerprint” (UA/canvas/etc) | High (but brittle) | Yes | Yes | N/A | Poor | Do NOT use; privacy-invasive, increasingly blocked, and risky for policy/compliance. |
+| Composite (platform + userId) | Low | Yes | Yes | N/A | Good | Not a real device identifier; cannot distinguish multiple browsers/devices; only useful as a fallback key for “per-user” storage. |
+
+Recommendation for v1:
+- **Use Firebase Installation ID on all platforms where available**.
+- **On web, fallback to a locally persisted UUID** (localStorage or IndexedDB) if Installation ID is unavailable.
+- If both are unavailable (storage disabled), generate an **ephemeral session UUID**; accept that it will create short-lived device docs.
+
+Backend expectations:
+- Multiple device docs per user are normal on web.
+- Prune devices by `lastActiveAt` (and optionally `platform == 'web'`) to keep the collection clean.
+
 ---
 
 ## Service Interface
@@ -54,12 +96,20 @@ Options:
 ```dart
 abstract class DeviceServiceInt {
   /// Registers or updates the current device in Firestore.
-  /// Should be called on app startup after authentication.
+  ///
+  /// Called on login/auth refresh (reactive hookup similar to NotificationService).
+  ///
+  /// This is best-effort and should not block the app startup.
   Future<Either<RepositoryFailure, Unit>> registerDevice();
 
-  /// Updates just the timezone if it has changed.
-  /// Returns true if timezone was updated, false if unchanged.
-  Future<Either<RepositoryFailure, bool>> updateTimezoneIfChanged();
+  /// Updates timezone/offset if needed.
+  ///
+  /// Returns true if server was updated, false if unchanged (or throttled).
+  ///
+  /// IMPORTANT: Must update when either:
+  /// - IANA timezone changes (travel)
+  /// - UTC offset changes (DST) even if IANA timezone is unchanged
+  Future<Either<RepositoryFailure, bool>> updateTimezoneOrOffsetIfChanged();
 
   /// Gets the current device's ID.
   Future<String> getDeviceId();
@@ -71,7 +121,9 @@ abstract class DeviceServiceInt {
   Future<Either<RepositoryFailure, Unit>> touchDevice();
 
   /// Removes the current device registration.
-  /// Called on logout to clean up device data.
+  ///
+  /// Called BEFORE logout while still authenticated.
+  /// Hooked into AuthServiceImpl._onAboutToLogOutCallbacks.
   Future<Either<RepositoryFailure, Unit>> unregisterDevice();
 
   /// Gets all devices for the current user.
@@ -83,41 +135,74 @@ abstract class DeviceServiceInt {
 
 ## Implementation Details
 
-### When to Update Timezone
+### When to Sync Device State
 
 | Event | Action |
 |-------|--------|
-| App launch (after auth) | `registerDevice()` - creates or updates device |
-| App resume from background | `updateTimezoneIfChanged()` - lightweight check |
-| User travels (timezone changes) | Detected on next app resume |
-| Logout | `unregisterDevice()` - optional, could also just leave stale |
+| Login / auth refresh | `registerDevice()` (creates/updates device) |
+| App resume from background | `updateTimezoneOrOffsetIfChanged()` (lightweight check + throttled) |
+| Periodic “keepalive” while app is used | `touchDevice()` (throttled; best-effort) |
+| About-to-logout (while still authed) | `unregisterDevice()` (best-effort, timeboxed) |
 
-### Timezone Change Detection
+Notes:
+- `registerDevice()` should also set `_cachedTimezone` / `_cachedOffsetMinutes` on success.
+- `touchDevice()` should not assume the doc exists (it should be an upsert server-side).
+
+### Timezone / Offset Change Detection (DST-safe)
 
 ```dart
 class DeviceServiceImpl implements DeviceServiceInt {
   String? _cachedTimezone;
+  int? _cachedOffsetMinutes;
+  DateTime? _lastServerSyncAt;
+  DateTime? _lastTouchAt;
 
   @override
-  Future<Either<RepositoryFailure, bool>> updateTimezoneIfChanged() async {
-    final currentTimezone = await FlutterTimezone.getLocalTimezone();
+  Future<Either<RepositoryFailure, bool>> updateTimezoneOrOffsetIfChanged() async {
+    // Fast local checks (no network)
+    final currentTimezone = (await FlutterTimezone.getLocalTimezone()).identifier;
+    final currentOffsetMinutes = DateTime.now().timeZoneOffset.inMinutes;
 
-    if (_cachedTimezone == currentTimezone) {
-      return right(false); // No change
+    // Throttle server writes to avoid resume spam.
+    // Still allow immediate sync if timezone/offset changed.
+    final now = DateTime.now();
+    final recentlySynced = _lastServerSyncAt != null && now.difference(_lastServerSyncAt!) < const Duration(minutes: 15);
+
+    final didChange = _cachedTimezone != currentTimezone || _cachedOffsetMinutes != currentOffsetMinutes;
+    if (!didChange && recentlySynced) {
+      return right(false);
     }
 
-    // Update Firestore
-    await _updateDeviceTimezone(currentTimezone);
+    // Update server (best-effort)
+    await _syncDeviceTimezoneAndOffset(
+      timezone: currentTimezone,
+      timezoneOffsetMinutes: currentOffsetMinutes,
+    );
+
     _cachedTimezone = currentTimezone;
+    _cachedOffsetMinutes = currentOffsetMinutes;
+    _lastServerSyncAt = now;
 
     return right(true);
   }
 }
+
+Guidance:
+- Use `DateTime.now().timeZoneOffset.inMinutes` to compute offset; it naturally supports half-hour and 45-minute offsets.
+- DST transitions are handled because `timeZoneOffset` changes even if the IANA timezone string doesn’t.
+- The throttle window is a tunable constant (e.g., 15 minutes). You can also add a “force refresh once per day” to recover from missed DST events when the app isn’t opened around the transition.
 ```
 
 ### Integration with AuthService
 
-The `DeviceService` should be initialized after authentication:
+The `DeviceService` should be initialized after authentication.
+
+#### Reactive hookup pattern (mirror NotificationService)
+
+Rather than requiring consumers to call the service in perfect order, provide a `connectToAuthService()` (or similar) entrypoint that:
+- Registers an “on authenticated” callback to call `registerDevice()`.
+- Registers an “about to logout” callback to call `unregisterDevice()` while still authenticated.
+- Avoids throwing when called in unauthenticated state (no-op / typed failure).
 
 ```dart
 // In AuthServiceImpl.handleAuthStateChanges or via callback
@@ -127,8 +212,15 @@ if (fbUser != null) {
 }
 
 // On logout
-await deviceService.unregisterDevice(); // or leave for history
+await deviceService.unregisterDevice(); // MUST happen before signOut (best-effort)
 ```
+
+#### Account switching on same device
+
+Default behavior:
+- On logout, `unregisterDevice()` attempts to remove the current user’s device doc (via about-to-logout callback).
+- If it fails (offline/timeout), proceed with logout; backend cleanup handles staleness.
+- On next login (possibly different user), `registerDevice()` registers the device for the new user.
 
 ### Integration with NotificationService
 
@@ -150,6 +242,184 @@ This allows backend to:
 
 ## Backend Considerations
 
+### Single Source of Truth: Backend Time-Window Query Module
+
+To avoid duplicating tricky time math across multiple scheduled jobs / callables, define a single backend module responsible for:
+
+1. Computing the *candidate* Firestore query (based on `timezoneOffsetMinutes`) for “devices whose local time is within X minutes of Y:Z”.
+2. Performing the *authoritative* local-time check using the device’s IANA `timezone` at decision time.
+3. Handling DST/offline staleness by widening candidate queries (so we don’t miss devices whose `timezoneOffsetMinutes` is stale).
+
+Recommended scaffolding module (consuming app Firebase Functions):
+
+```
+scaffolding/
+└── firebase_functions/
+    └── device/
+        ├── device_time_queries.ts   # <-- single source of truth for time-window queries
+        ├── timezone_utils.ts        # timezone helpers (IANA validation, offset computation)
+        └── ...
+```
+
+#### Key rule: `timezone` is authoritative; `timezoneOffsetMinutes` is a query hint
+
+- Backend must treat the IANA `timezone` string as the source of truth for correctness.
+- `timezoneOffsetMinutes` exists primarily to make Firestore queries feasible.
+- Scheduled jobs must **validate final eligibility** (e.g., “is it ~9:00 local time?”) using the IANA timezone at send-time.
+
+This prevents “wrong-time sends” if the app wasn’t opened around a DST transition.
+
+#### Recommended API surface (TypeScript)
+
+```ts
+// device_time_queries.ts
+
+export type LocalTimeTarget = {
+  hour: number;   // 0-23
+  minute: number; // 0-59
+};
+
+export type LocalTimeWindowQueryOptions = {
+  nowUtc?: Date;                 // default: new Date()
+  windowMinutes: number;         // e.g. 15
+  offsetQueryBufferMinutes?: number; // default: 60 (DST-safe widening)
+  platforms?: Array<'ios' | 'android' | 'web'>;
+};
+
+export type DeviceDoc = {
+  uid: string;
+  deviceId: string;
+  timezone: string;
+  timezoneOffsetMinutes?: number;
+  platform?: string;
+  lastActiveAt?: FirebaseFirestore.Timestamp;
+  // plus whatever else you store
+};
+
+/**
+ * Returns candidate device docs whose *cached offsets* suggest their local time
+ * may be in the target window.
+ *
+ * IMPORTANT: Candidates must be validated with `isNowInLocalTimeWindow()` using
+ * the device's IANA timezone before sending notifications.
+ */
+export async function queryDeviceCandidatesByLocalTime(
+  target: LocalTimeTarget,
+  options: LocalTimeWindowQueryOptions,
+): Promise<DeviceDoc[]>;
+
+/**
+ * Authoritative check: computes local time from IANA timezone at `nowUtc`.
+ * This is the final gate before sending.
+ */
+export function isNowInLocalTimeWindow(
+  timezone: string,
+  target: LocalTimeTarget,
+  nowUtc: Date,
+  windowMinutes: number,
+): boolean;
+```
+
+#### Standard timezone library recommendation
+
+To keep time math consistent across functions and Node runtimes, standardize on a single timezone implementation.
+
+**Recommendation (v1):** use `luxon`.
+
+Why:
+- Handles IANA timezones + DST correctly.
+- Simple API for “convert UTC instant to local time in zone”.
+- Avoids fragile `Intl.DateTimeFormat(...).formatToParts(...)` parsing.
+
+Install (in consuming app Firebase Functions):
+
+```bash
+npm install luxon
+npm install -D @types/luxon
+```
+
+#### Canonical implementation approach (Luxon)
+
+The goal is that every backend job uses the same core helpers.
+
+```ts
+// timezone_utils.ts
+import { DateTime } from 'luxon';
+
+export function isValidIanaTimezone(timezone: string): boolean {
+  // Luxon returns an invalid DateTime for unknown zones.
+  return DateTime.utc().setZone(timezone).isValid;
+}
+
+export function getOffsetMinutesAtUtcInstant(timezone: string, nowUtc: Date): number {
+  const dt = DateTime.fromJSDate(nowUtc, { zone: 'utc' }).setZone(timezone);
+  if (!dt.isValid) throw new Error(`Invalid timezone: ${timezone}`);
+  return dt.offset; // minutes
+}
+
+export function getLocalMinutesOfDay(timezone: string, nowUtc: Date): number {
+  const dt = DateTime.fromJSDate(nowUtc, { zone: 'utc' }).setZone(timezone);
+  if (!dt.isValid) throw new Error(`Invalid timezone: ${timezone}`);
+  return dt.hour * 60 + dt.minute;
+}
+```
+
+```ts
+// device_time_queries.ts
+import { getLocalMinutesOfDay } from './timezone_utils';
+
+export function isNowInLocalTimeWindow(
+  timezone: string,
+  target: { hour: number; minute: number },
+  nowUtc: Date,
+  windowMinutes: number,
+): boolean {
+  const localNow = getLocalMinutesOfDay(timezone, nowUtc);
+  const targetMinutes = target.hour * 60 + target.minute;
+
+  // Circular distance on a 24h clock.
+  const diff = Math.abs(localNow - targetMinutes);
+  const circularDiff = Math.min(diff, 1440 - diff);
+  return circularDiff <= windowMinutes;
+}
+```
+
+Notes:
+- Keep `nowUtc` explicit and pass it through all helpers to avoid accidental reliance on server local timezone.
+- Use a “circular distance” check so windows around midnight work correctly.
+- Treat invalid timezones as data-quality errors (skip device / log), not fatal for the entire batch.
+
+#### Candidate query algorithm (offset-range selection)
+
+We want “devices whose *local* time is within a window around $(H:M)$”.
+
+- Let $u$ be the current UTC minutes-of-day (0–1439).
+- Let $t$ be the target local minutes-of-day, $t = 60H + M$.
+- Let the local-time window be $[t - w, t + w]$ in minutes (wraps across midnight).
+- Local minutes-of-day is $(u + o) \bmod 1440$, where $o$ is `timezoneOffsetMinutes`.
+
+To query via Firestore, compute 1–2 offset ranges for `timezoneOffsetMinutes` that could satisfy the window.
+
+DST/offline staleness: widen the offset window by `offsetQueryBufferMinutes` (recommend default 60) so devices with stale cached offsets still become candidates.
+
+After fetching candidates by offset range(s), always apply `isNowInLocalTimeWindow(device.timezone, ...)` to filter down to the truly eligible set.
+
+Notes:
+- Offset ranges can split into two due to midnight wrap. The module should hide this complexity.
+- If `timezoneOffsetMinutes` is missing for some docs, either:
+  - exclude them from the indexed query (preferred), or
+  - include a fallback slow-path only for small populations.
+
+#### Usage pattern (all scheduled jobs)
+
+Any function that needs “devices where it’s currently ~X o’clock” should:
+
+1. Call `queryDeviceCandidatesByLocalTime()`.
+2. Filter candidates using `isNowInLocalTimeWindow()`.
+3. Group by user/token as needed and send.
+
+This ensures *every job* uses the same DST-safe logic and staleness buffers.
+
 ### Querying Devices by Timezone
 
 For scheduling notifications at "9am local time":
@@ -163,6 +433,10 @@ const devices = await db.collectionGroup('devices')
 ```
 
 Note: `timezoneOffsetMinutes` is denormalized for query efficiency. The IANA timezone string is the source of truth for DST handling.
+
+IMPORTANT: Since `timezoneOffsetMinutes` changes on DST transitions even when `timezone` does not, the client must periodically refresh it (see throttling notes above). Backend scheduled tasks can also tolerate some staleness by using wider windows and/or validating the IANA timezone at send-time.
+
+**Updated guidance (preferred):** backend scheduled tasks should always validate the final send decision using the IANA `timezone` (authoritative). Use `timezoneOffsetMinutes` only to fetch candidates efficiently.
 
 ### Stale Device Cleanup
 
@@ -224,6 +498,13 @@ dependencies:
 
 5. **Rate limiting**: Should we throttle timezone updates to avoid excessive writes (e.g., max once per hour)?
 
+### Proposed answers (to make v1 implementation-ready)
+
+1. **Device cleanup on logout**: Try to delete the device doc using `AuthServiceImpl._onAboutToLogOutCallbacks` (best-effort, timeboxed). If it fails, do not block logout; stale cleanup happens server-side.
+2. **Offline handling**: Treat all server sync as best-effort. Persist a small local “pending sync” state (timezone, offset, last attempted time) and retry on next resume/login.
+3. **Web deviceId**: Prefer Firebase Installation ID; fallback to localStorage UUID; accept resets.
+4. **Rate limiting**: Use throttled `touchDevice()` and throttled `updateTimezoneOrOffsetIfChanged()`. Always bypass throttle when timezone/offset changed.
+
 ---
 
 ## Success Criteria
@@ -241,7 +522,11 @@ dependencies:
 
 The DeviceService requires both Flutter code (in this package) and Firebase Functions (in consuming apps). Backend functions will be provided as templates in the existing `scaffolding/` folder.
 
-**Note:** No Firestore security rules needed - all device writes go through Firebase Functions (server-side), not direct client writes.
+**Note:** Device writes go through Firebase Functions (server-side) and should NOT be done via direct client Firestore writes.
+
+Recommended Firestore rules guidance for consuming apps:
+- Deny client writes to `users/{uid}/devices/{deviceId}`.
+- Allow reads only if you want client UI to list devices (or expose a callable to read instead).
 
 ### Scaffolding Structure
 
@@ -343,15 +628,19 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 interface RegisterDeviceRequest {
   deviceId: string;
   timezone: string;           // IANA format, e.g., "America/New_York"
+  timezoneOffsetMinutes: number; // Client computed: DateTime.now().timeZoneOffset.inMinutes
   platform: "ios" | "android" | "web";
   appVersion: string;
-  deviceModel?: string;
-  osVersion?: string;
+  deviceInfo?: {
+    model?: string;
+    osVersion?: string;
+  };
 }
 
 interface RegisterDeviceResponse {
   success: boolean;
   timezoneChanged: boolean;
+  timezoneOffsetChanged: boolean;
   previousTimezone?: string;
 }
 
@@ -361,9 +650,9 @@ interface RegisterDeviceResponse {
  *
  * This function:
  * 1. Validates the request data
- * 2. Calculates timezoneOffsetMinutes from IANA timezone
+ * 2. Uses client-provided timezoneOffsetMinutes (DST-safe, avoids fragile parsing)
  * 3. Creates or updates the device document
- * 4. Returns whether timezone changed (useful for client-side logic)
+ * 4. Returns whether timezone or offset changed (useful for client-side logic)
  */
 export const deviceRegister = onCall<RegisterDeviceRequest>(async (request) => {
   // Require authentication
@@ -372,10 +661,10 @@ export const deviceRegister = onCall<RegisterDeviceRequest>(async (request) => {
   }
 
   const uid = request.auth.uid;
-  const { deviceId, timezone, platform, appVersion, deviceModel, osVersion } = request.data;
+  const { deviceId, timezone, timezoneOffsetMinutes, platform, appVersion, deviceInfo } = request.data;
 
   // Validate required fields
-  if (!deviceId || !timezone || !platform || !appVersion) {
+  if (!deviceId || !timezone || timezoneOffsetMinutes === undefined || !platform || !appVersion) {
     throw new HttpsError("invalid-argument", "Missing required fields");
   }
 
@@ -394,8 +683,11 @@ export const deviceRegister = onCall<RegisterDeviceRequest>(async (request) => {
     : null;
   const timezoneChanged = previousTimezone !== null && previousTimezone !== timezone;
 
-  // Calculate current UTC offset for query efficiency
-  const timezoneOffsetMinutes = getTimezoneOffsetMinutes(timezone);
+  // timezoneOffsetMinutes is provided by the client.
+  // It supports half/45-minute offsets and updates on DST transitions.
+  if (!Number.isFinite(timezoneOffsetMinutes) || Math.abs(timezoneOffsetMinutes) > 14 * 60) {
+    throw new HttpsError("invalid-argument", "Invalid timezoneOffsetMinutes");
+  }
 
   // Prepare device data
   const deviceData = {
@@ -405,8 +697,7 @@ export const deviceRegister = onCall<RegisterDeviceRequest>(async (request) => {
     appVersion,
     lastActiveAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
-    ...(deviceModel && { deviceModel }),
-    ...(osVersion && { osVersion }),
+    ...(deviceInfo && { deviceInfo }),
   };
 
   if (existingDevice.exists) {
@@ -423,6 +714,10 @@ export const deviceRegister = onCall<RegisterDeviceRequest>(async (request) => {
   const response: RegisterDeviceResponse = {
     success: true,
     timezoneChanged,
+    timezoneOffsetChanged:
+      previousTimezone !== null && existingDevice.exists
+        ? existingDevice.data()?.timezoneOffsetMinutes !== timezoneOffsetMinutes
+        : false,
     ...(timezoneChanged && { previousTimezone }),
   };
 
@@ -468,9 +763,14 @@ export const deviceTouch = onCall<{ deviceId: string }>(async (request) => {
   }
 
   const db = getFirestore();
-  await db.doc(`users/${uid}/devices/${deviceId}`).update({
-    lastActiveAt: FieldValue.serverTimestamp(),
-  });
+  // Use merge=true to avoid failing if the doc doesn't exist yet.
+  await db.doc(`users/${uid}/devices/${deviceId}`).set(
+    {
+      lastActiveAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
 
   return { success: true };
 });
@@ -483,19 +783,6 @@ function isValidIANATimezone(tz: string): boolean {
   } catch {
     return false;
   }
-}
-
-function getTimezoneOffsetMinutes(ianaTimezone: string): number {
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: ianaTimezone,
-    timeZoneName: "shortOffset",
-  });
-  // Parse offset from formatted string (e.g., "GMT-5" -> -300)
-  const parts = formatter.formatToParts(now);
-  const tzPart = parts.find(p => p.type === "timeZoneName")?.value || "";
-  // ... parsing logic
-  return offsetMinutes;
 }
 ```
 
@@ -511,17 +798,20 @@ HttpsCallable _deviceCallable = AppConfigBase.firebaseFunctionCallable('deviceRe
 Future<Either<RepositoryFailure, bool>> registerDevice() async {
   try {
     final deviceId = await getDeviceId();
-    final timezone = await FlutterTimezone.getLocalTimezone();
+    final timezone = (await FlutterTimezone.getLocalTimezone()).identifier;
+    final offsetMinutes = DateTime.now().timeZoneOffset.inMinutes;
     final packageInfo = await PackageInfo.fromPlatform();
 
     final result = await _deviceCallable.call({
       'deviceId': deviceId,
       'timezone': timezone,
+      'timezoneOffsetMinutes': offsetMinutes,
       'platform': Platform.operatingSystem,
       'appVersion': packageInfo.version,
     });
 
     _cachedTimezone = timezone;
+    _cachedOffsetMinutes = offsetMinutes;
     return right(result.data['timezoneChanged'] as bool);
   } catch (e) {
     loge(e);

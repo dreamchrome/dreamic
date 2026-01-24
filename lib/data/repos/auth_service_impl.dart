@@ -293,9 +293,9 @@ class AuthServiceImpl implements AuthServiceInt {
         try {
           await Future.wait(
             _onAboutToLogOutCallbacks.map((callback) => callback().catchError((e) {
-              logw('onAboutToLogOut callback failed: $e');
-              // Return null to allow other callbacks to complete
-            })),
+                  logw('onAboutToLogOut callback failed: $e');
+                  // Return null to allow other callbacks to complete
+                })),
           ).timeout(
             timeout,
             onTimeout: () {
