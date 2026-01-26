@@ -46,7 +46,7 @@ users/{uid}/devices/{deviceId}
   ├── fcmTokenUpdatedAt: Timestamp? // Last time the token field was updated (server timestamp)
   ├── createdAt: Timestamp          // When device was first registered
   ├── updatedAt: Timestamp          // Last time this device doc was updated
-  ├── platform: string              // "ios", "android", "web"
+  ├── platform: string              // "ios", "android", "web", "macos", "windows", "linux"
   ├── appVersion: string            // App version on this device
   └── deviceInfo: map (optional)    // Additional device metadata
       ├── model: string
@@ -71,6 +71,11 @@ Active window (v1):
 Robustness rule (token rotation / stale mappings):
 - Token updates are written by overwriting `fcmToken` on the *same* device doc.
 - To prevent a token from lingering on multiple device docs due to offline failures, the backend should (best-effort) enforce uniqueness by clearing the same `fcmToken` from any other device docs found via `collectionGroup('devices').where('fcmToken', '==', token)` (rare path; runs only on token update).
+
+Notes (v1):
+- This uniqueness cleanup may require a Firestore collection group index on the `fcmToken` field for the `devices` subcollection.
+- It is safe in practice because FCM tokens are high-entropy secrets, but it is still a cross-user write. Consuming apps that want stricter isolation can scope the cleanup to the current user only (at the cost of weaker cross-account leakage protection on shared devices).
+- Consider enabling App Check on callable functions in consuming apps to reduce abuse.
 ```
 
 ### Device ID Strategy
@@ -288,11 +293,11 @@ Tuning guidance for consuming apps (especially if backend relies on `lastActiveA
 - Keep timezone/offset sync much less frequent when unchanged (e.g., 48h) unless your backend makes near-real-time decisions from `timezoneOffsetMinutes`.
 - When in doubt, prefer conservative writes (battery/network) and let backend logic tolerate staleness by widening candidate queries and validating by IANA timezone at send-time.
 
-Suggested Remote Config keys (names TBD; these are placeholders):
-- `deviceTimezoneUnchangedSyncMinMinutes` (default: 2880)
-- `deviceTimezoneUnchangedSyncMaxMinutes` (default: 2880)
-- `deviceTimezoneChangeDebounceMinutes` (default: 10)
-- `deviceTouchThrottleMinutes` (default: 60)
+Suggested Remote Config keys (v1):
+- `dreamic_device_timezone_unchanged_sync_min_minutes` (default: 2880)
+- `dreamic_device_timezone_unchanged_sync_max_minutes` (default: 2880)
+- `dreamic_device_timezone_change_debounce_minutes` (default: 10)
+- `dreamic_device_touch_throttle_minutes` (default: 60)
 
 ### Timezone / Offset Change Detection (DST-safe)
 
@@ -306,7 +311,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
   @override
   Future<Either<RepositoryFailure, bool>> updateTimezoneOrOffsetIfChanged() async {
     // Fast local checks (no network)
-    final currentTimezone = (await FlutterTimezone.getLocalTimezone()).identifier;
+    final currentTimezone = await FlutterTimezone.getLocalTimezone();
     final currentOffsetMinutes = DateTime.now().timeZoneOffset.inMinutes;
 
     // Throttle server writes to avoid resume spam.
@@ -427,7 +432,7 @@ This ensures:
 - token + timezone + activity updates can be **coalesced** into a single backend call when they happen close together (common on app start/login).
 
 Recommended implementation approach (plan-only):
-- Provide a single backend callable (name TBD) like `deviceAction` that upserts `users/{uid}/devices/{deviceId}` and uses an `action` parameter to determine required fields and behavior.
+- Provide a single backend callable `deviceAction` that upserts `users/{uid}/devices/{deviceId}` and uses an `action` parameter to determine required fields and behavior.
 - The callable accepts optional fields so callers can send “what they know now” without requiring multiple calls:
   - required: `action`, `deviceId`
   - optional: `timezone`, `timezoneOffsetMinutes`, `platform`, `appVersion`, `deviceInfo`
@@ -453,7 +458,7 @@ users/{uid}/devices/{deviceId}
   ├── timezone: string
   ├── timezoneOffsetMinutes: int
   ├── lastActiveAt: Timestamp
-  ├── platform: string
+  ├── platform: string              // "ios", "android", "web", "macos", "windows", "linux"
   ├── fcmToken: string?             // nullable when notifications are unavailable/disabled
   ├── fcmTokenUpdatedAt: Timestamp?
   └── ... (minimal device metadata)
@@ -595,7 +600,7 @@ export type LocalTimeWindowQueryOptions = {
   nowUtc?: Date;                 // default: new Date()
   windowMinutes: number;         // e.g. 15
   offsetQueryBufferMinutes?: number; // default: 60 (DST-safe widening)
-  platforms?: Array<'ios' | 'android' | 'web'>;
+  platforms?: Array<'ios' | 'android' | 'web' | 'macos' | 'windows' | 'linux'>;
 };
 
 export type DeviceDoc = {
@@ -888,6 +893,31 @@ Include a comment in each scaffolding file:
 
 None.
 
+---
+
+## Implementation Checklist (v1)
+
+Flutter package (dreamic):
+- Define `DeviceServiceInt` + `DeviceServiceImpl` APIs: `connectToAuthService()`, `registerDevice()`, `touchDevice()`, `updateTimezoneOrOffsetIfChanged()`, `updateFcmToken(fcmToken: ...)`, `unregisterDevice()`.
+- Ensure `deviceId` is generated once and persisted (SharedPreferences; web best-effort storage).
+- Wire throttling/config via `AppConfigBase` (and optional Remote Config) using the agreed keys.
+- Ensure `updateFcmToken()` is safe to call before/after `registerDevice()` (server merge semantics).
+
+Consuming app Firebase Functions:
+- Copy `scaffolding/firebase_functions/device/*` into `functions/src/device/*`, export from `index.ts`, install `luxon` (if using the recommended timezone helpers), and deploy.
+- Add required Firestore indexes if needed by your scheduled jobs:
+  - `collectionGroup('devices')` where `timezoneOffsetMinutes` range queried (single-field index is often enough, but platform/lastActiveAt filters may require composite indexes depending on query shape).
+  - `collectionGroup('devices')` where `fcmToken == token` (for uniqueness cleanup).
+
+Security/hardening (consuming apps):
+- Keep client writes denied for `users/{uid}/devices/{deviceId}` (Functions-only writes).
+- Consider enforcing App Check on callables.
+- Treat invalid/empty timezone strings as data-quality issues: skip device / log, don’t fail the whole batch.
+
+Testing guidance:
+- Unit test local-time window math (midnight wrap, DST transitions, half-hour offsets).
+- Smoke test flows: first login, token granted later, token rotation, logout offline, account switch on same device.
+
 ### Options (scaffolding)
 
 1. Test scaffolding (decision):
@@ -932,7 +962,7 @@ Contents should include:
 
 These are the callable functions that the Flutter `DeviceService` will invoke. They are provided in scaffolding for consuming apps to copy into their Firebase Functions.
 
-### File: `scaffoldizng/firebase_functions/device/device_callable.ts`
+### File: `scaffolding/firebase_functions/device/device_callable.ts`
 
 ```typescript
 import { onCall, HttpsError } from "firebase-functions/v2/https";
@@ -945,7 +975,8 @@ interface DeviceActionRequest {
   deviceId: string;
   timezone?: string;              // IANA format, e.g., "America/New_York"
   timezoneOffsetMinutes?: number; // Client computed: DateTime.now().timeZoneOffset.inMinutes
-  platform?: "ios" | "android" | "web";
+  // NOTE: Flutter can run on desktop; keep the schema flexible.
+  platform?: "ios" | "android" | "web" | "macos" | "windows" | "linux";
   appVersion?: string;
   fcmToken?: string | null;
   deviceInfo?: {
@@ -1079,6 +1110,7 @@ export const deviceAction = onCall<DeviceActionRequest>(async (request) => {
             .get();
 
           const batch = db.batch();
+          let hasWrites = false;
           for (const doc of duplicates.docs) {
             if (doc.ref.path !== deviceRef.path) {
               batch.set(
@@ -1090,9 +1122,10 @@ export const deviceAction = onCall<DeviceActionRequest>(async (request) => {
                 },
                 { merge: true },
               );
+              hasWrites = true;
             }
           }
-          if (!batch.isEmpty) {
+          if (hasWrites) {
             await batch.commit();
           }
         } catch {
@@ -1148,7 +1181,7 @@ HttpsCallable _deviceCallable = AppConfigBase.firebaseFunctionCallable(
 Future<Either<RepositoryFailure, bool>> registerDevice() async {
   try {
     final deviceId = await getDeviceId();
-    final timezone = (await FlutterTimezone.getLocalTimezone()).identifier;
+    final timezone = await FlutterTimezone.getLocalTimezone();
     final offsetMinutes = DateTime.now().timeZoneOffset.inMinutes;
     final packageInfo = await PackageInfo.fromPlatform();
 
@@ -1157,6 +1190,9 @@ Future<Either<RepositoryFailure, bool>> registerDevice() async {
       'deviceId': deviceId,
       'timezone': timezone,
       'timezoneOffsetMinutes': offsetMinutes,
+      // Recommended mapping (v1):
+      // - web: "web"
+      // - mobile/desktop: Platform.operatingSystem ("ios", "android", "macos", ...)
       'platform': Platform.operatingSystem,
       'appVersion': packageInfo.version,
     });
