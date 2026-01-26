@@ -60,8 +60,13 @@ Notes:
 
 Definitions (v1):
 - **Device doc**: one document per app install/profile (UUID `deviceId` persisted locally).
-- **Deliverable endpoint**: a device doc with a non-null `fcmToken` and `lastActiveAt` within an “active window” (e.g., 30–90 days).
+- **Deliverable endpoint**: a device doc with a non-null `fcmToken` and `lastActiveAt` within an “active window”.
 - **Active device** (per user): the deliverable endpoint with the greatest `lastActiveAt`.
+
+Active window (v1):
+- Default: **60 days** (industry‑typical), configurable by consuming apps.
+- Purpose: used by backend queries/selection to decide which devices are eligible for delivery.
+- Note: this does **not** prune or delete device docs; pruning is handled separately (e.g., scheduled cleanup).
 
 Robustness rule (token rotation / stale mappings):
 - Token updates are written by overwriting `fcmToken` on the *same* device doc.
@@ -106,7 +111,9 @@ Recommended strategy:
 Decision (v1):
 
 - **DeviceId format:** UUIDv4.
-- **Mobile/desktop persistence:** persist locally via the platform’s standard app storage.
+- **Storage strategy (shared with pending payload):**
+  - **Mobile/desktop:** SharedPreferences (or equivalent key-value store)
+  - **Web (priority order):** IndexedDB → localStorage → in-memory
 - **Web persistence (priority order):**
   1. **IndexedDB** (preferred when available)
   2. **localStorage** (fallback)
@@ -187,6 +194,7 @@ abstract class DeviceServiceInt {
   /// Gets all devices for the current user.
   ///
   /// Requires authentication; if unauthenticated, return an auth failure.
+  /// Implement via backend callable (no direct client Firestore reads by default).
   Future<Either<RepositoryFailure, List<DeviceInfo>>> getMyDevices();
 }
 ```
@@ -208,12 +216,19 @@ abstract class DeviceServiceInt {
 Notes:
 - `registerDevice()` should also set `_cachedTimezone` / `_cachedOffsetMinutes` on success.
 - `touchDevice()` should not assume the doc exists (it should be an upsert server-side).
+- `registerDevice()` updates `lastActiveAt` and should also update any in-memory touch throttle so a subsequent `touchDevice()` within the throttle window is skipped.
 - For efficiency, these actions may be coalesced into a single backend call by invoking the unified callable with `action: 'register'` and including any optional fields that are available at that moment (e.g., `fcmToken`).
 - `_cachedTimezone` / `_cachedOffsetMinutes` are in-memory only (reset on app restart); the next update check should treat missing cache as “changed”.
+- Error handling is best-effort: internal callers should not surface failures; log errors and return a success/false value while keeping pending payloads for retry.
+- Lifecycle wiring should be handled by the package (no consuming‑app setup). Use the existing `AppLifecycleService` resume stream to trigger `updateTimezoneOrOffsetIfChanged()` and `touchDevice()` based on throttles.
 
 #### Offline / pending sync (v1)
 
-Device sync is best-effort and must never block UI flows. To ensure eventual consistency across flaky networks, persist a single **pending upsert payload** locally (overwrite/merge in place; not a queue):
+Device sync is best-effort and must never block UI flows. To ensure eventual consistency across flaky networks, persist a single **pending upsert payload** locally (overwrite/merge in place; not a queue).
+
+Storage strategy (same as deviceId):
+- **Mobile/desktop:** SharedPreferences (or equivalent key-value store)
+- **Web:** IndexedDB → localStorage → in-memory fallback
 
 - Payload (fields optional unless noted):
   - required: `deviceId`
@@ -259,6 +274,7 @@ Decision (v1 defaults; all should be configurable by consuming apps):
 
 Configuration approach (plan-only):
 
+- Expose settings via `AppConfigBase` with standard precedence: default → env (`--dart-define`) → Remote Config.
 - Add Remote Config / `AppConfigBase`-exposed settings for these values so consuming apps can tune based on:
   - how frequently the app resumes
   - whether backend jobs rely on `lastActiveAt` freshness
@@ -451,7 +467,7 @@ Ownership rules (v1):
 Robustness rules (v1):
 - Token rotation is handled by overwriting `devices/{deviceId}.fcmToken`.
 - Backend scheduled jobs MUST read the token from the chosen active device doc at send time (no stale token lists).
-- On token update, backend should (best-effort) enforce “token appears on at most one device doc” using a `collectionGroup('devices')` equality query and clearing stale references.
+- On token update, backend should (best-effort) enforce “token appears on at most one device doc” using a `collectionGroup('devices')` equality query and clearing stale references (included in scaffolding).
 
 #### Network call minimization (v1)
 
@@ -471,6 +487,8 @@ On logout, both “stop sending pushes for this user” and “stop considering 
 Decision (v1): use the existing AuthService “about-to-logout” hook to trigger a single coordinated cleanup step:
 - `DeviceService.unregisterDevice()` deletes `users/{uid}/devices/{deviceId}` (best-effort).
 - `NotificationService` deletes the local FCM token (best-effort) so that even if backend cleanup fails, any remaining server-side sends to that token will start failing.
+
+Note: No separate “clear token” step is required on logout since deleting the device doc removes the token server-side.
 
 Constraint: this cleanup is **best-effort** and **timeboxed**; it must never block logout or make logout fail.
 
@@ -767,6 +785,8 @@ lib/data/
 │   └── device_service_impl.dart   // Implementation
 ```
 
+Note: keep these paths as-is; NotificationService is an exception with its own folder.
+
 ---
 
 ## Dependencies
@@ -809,7 +829,7 @@ The DeviceService requires both Flutter code (in this package) and Firebase Func
 
 Recommended Firestore rules guidance for consuming apps:
 - Deny client writes to `users/{uid}/devices/{deviceId}`.
-- Allow reads only if you want client UI to list devices (or expose a callable to read instead).
+- Allow reads only if you want client UI to list devices (otherwise expose a callable to read instead; preferred).
 
 ### Scaffolding Structure
 
@@ -880,7 +900,7 @@ None.
 
 3. Scaffolding change communication (decision):
 
-- Add a scaffolding-specific `CHANGELOG.md` plus `@packageVersion` headers in each template file and an “Upgrade notes” section in the scaffolding README.
+- This is part of the process (required): add a scaffolding-specific `CHANGELOG.md`, include `@packageVersion` headers in each template file, and maintain an “Upgrade notes” section in the scaffolding README so consumers know when to recopy backend functions.
 
 ---
 
@@ -910,15 +930,15 @@ Contents should include:
 
 ## Firebase Callable Functions (Client-Facing)
 
-These are the callable functions that the Flutter `DeviceService` will invoke. They should be included in consuming apps' Firebase Functions.
+These are the callable functions that the Flutter `DeviceService` will invoke. They are provided in scaffolding for consuming apps to copy into their Firebase Functions.
 
-### File: `docs/examples/firebase_functions/device_callable.ts`
+### File: `scaffoldizng/firebase_functions/device/device_callable.ts`
 
 ```typescript
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
-type DeviceAction = "register" | "touch" | "unregister" | "updateToken";
+type DeviceAction = "register" | "touch" | "unregister" | "updateToken" | "getMyDevices";
 
 interface DeviceActionRequest {
   action: DeviceAction;
@@ -939,6 +959,7 @@ interface DeviceActionResponse {
   timezoneChanged?: boolean;
   timezoneOffsetChanged?: boolean;
   previousTimezone?: string;
+  devices?: Array<Record<string, unknown>>;
 }
 
 /**
@@ -976,6 +997,7 @@ export const deviceAction = onCall<DeviceActionRequest>(async (request) => {
         throw new HttpsError("invalid-argument", "Missing required fields for register");
       }
       if (!isValidIANATimezone(timezone)) {
+        console.error(`Invalid IANA timezone: ${timezone}`);
         throw new HttpsError("invalid-argument", "Invalid timezone format");
       }
       if (!Number.isFinite(timezoneOffsetMinutes) || Math.abs(timezoneOffsetMinutes) > 14 * 60) {
@@ -1047,12 +1069,53 @@ export const deviceAction = onCall<DeviceActionRequest>(async (request) => {
         },
         { merge: true },
       );
+
+      // Best-effort uniqueness cleanup: clear this token from other device docs.
+      if (fcmToken) {
+        try {
+          const duplicates = await db
+            .collectionGroup("devices")
+            .where("fcmToken", "==", fcmToken)
+            .get();
+
+          const batch = db.batch();
+          for (const doc of duplicates.docs) {
+            if (doc.ref.path !== deviceRef.path) {
+              batch.set(
+                doc.ref,
+                {
+                  fcmToken: null,
+                  fcmTokenUpdatedAt: FieldValue.serverTimestamp(),
+                  updatedAt: FieldValue.serverTimestamp(),
+                },
+                { merge: true },
+              );
+            }
+          }
+          if (!batch.isEmpty) {
+            await batch.commit();
+          }
+        } catch {
+          // Ignore cleanup failures; the main update already succeeded.
+        }
+      }
       return { success: true };
     }
 
     case "unregister": {
       await deviceRef.delete();
       return { success: true };
+    }
+
+    case "getMyDevices": {
+      const snapshot = await db
+        .collection(`users/${uid}/devices`)
+        .orderBy("lastActiveAt", "desc")
+        .get();
+      return {
+        success: true,
+        devices: snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+      };
     }
 
     default:
@@ -1112,9 +1175,9 @@ Future<Either<RepositoryFailure, bool>> registerDevice() async {
 
 ## Example Firebase Functions (Backend Use)
 
-Create example Cloud Functions to demonstrate backend usage of device data. These serve as templates for consuming apps.
+Create example Cloud Functions to demonstrate backend usage of device data. These are provided as scaffolding templates for consuming apps.
 
-### File: `docs/examples/firebase_functions/device_functions.ts`
+### File: `scaffolding/firebase_functions/device/device_functions.ts`
 
 ```typescript
 // Example functions to include:
