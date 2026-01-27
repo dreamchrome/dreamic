@@ -14,6 +14,7 @@ import '../app/helpers/app_lifecycle_service.dart';
 import '../data/models/notification_payload.dart';
 import '../data/models/notification_permission_status.dart';
 import '../data/repos/auth_service_int.dart';
+import '../data/repos/device_service_int.dart';
 import 'package:get_it/get_it.dart';
 import '../utils/logger.dart';
 import 'notification_channel_manager.dart';
@@ -879,9 +880,13 @@ class NotificationService {
 
   /// Connects to an auth service to automatically manage FCM tokens on login/logout.
   ///
+  /// ## Login Behavior
+  ///
   /// When the user logs in:
   /// - If [AppConfigBase.fcmAutoInitialize] is true: requests permission and initializes FCM
   /// - If [AppConfigBase.fcmAutoInitialize] is false: only initializes if permission is already granted
+  ///
+  /// ## Logout Behavior
   ///
   /// When the user logs out:
   /// - Backend unregistration happens automatically via `onAboutToLogOut` callback
@@ -889,15 +894,45 @@ class NotificationService {
   /// - Then performs local token cleanup (stops listener, deletes Firebase token, clears cache)
   /// - Manual [preLogoutCleanup] call is no longer needed for backend cleanup
   ///
+  /// ## DeviceService Integration
+  ///
+  /// When [DeviceServiceInt] is registered in GetIt, token changes are automatically
+  /// delegated to [DeviceServiceInt.updateFcmToken]. This ensures:
+  /// - Single canonical device document per install/profile
+  /// - Token stored alongside timezone and activity data
+  /// - Token uniqueness enforcement across device docs
+  ///
+  /// **Recommended setup for apps using both services:**
+  /// ```dart
+  /// // 1. Register services in GetIt
+  /// GetIt.I.registerSingleton<DeviceServiceInt>(DeviceServiceImpl());
+  ///
+  /// // 2. Connect DeviceService first (handles device doc lifecycle)
+  /// await deviceService.connectToAuthService();
+  ///
+  /// // 3. Connect NotificationService (auto-delegates to DeviceService)
+  /// await notificationService.connectToAuthService();
+  /// ```
+  ///
+  /// If DeviceService is not registered, falls back to direct Firebase callable.
+  ///
+  /// ## Parameters
+  ///
   /// [authService] is the auth service to connect to. If null, attempts to
   /// resolve from GetIt (guarded - logs and skips if not registered).
   ///
   /// [onTokenChanged] callback for syncing tokens to your backend.
-  /// If not provided, uses the default Firebase callable function configured
-  /// in [AppConfigBase.notificationsUpdateFcmTokenFunction].
+  /// If not provided and DeviceService is registered, uses DeviceService.
+  /// Otherwise, uses the Firebase callable configured in
+  /// [AppConfigBase.notificationsUpdateFcmTokenFunction].
   ///
-  /// Example:
+  /// ## Example
+  ///
   /// ```dart
+  /// // Standard setup (uses DeviceService if available)
+  /// await notificationService.connectToAuthService();
+  ///
+  /// // Custom token handling
   /// await notificationService.connectToAuthService(
   ///   onTokenChanged: (newToken, oldToken) async {
   ///     await myBackendService.updateFcmToken(newToken, oldToken);
@@ -1019,8 +1054,51 @@ class NotificationService {
     }
   }
 
-  /// Default token changed callback using Firebase callable functions.
+  /// Default token changed callback that delegates to DeviceService when available.
+  ///
+  /// ## Integration Pattern
+  ///
+  /// When DeviceService is registered in GetIt, token changes are automatically
+  /// routed through [DeviceServiceInt.updateFcmToken], which ensures:
+  /// - Single canonical device document per install/profile
+  /// - Token uniqueness enforcement (cleared from other device docs)
+  /// - Coalesced updates with timezone and activity tracking
+  ///
+  /// If DeviceService is not available (e.g., consuming app doesn't use it),
+  /// falls back to direct Firebase callable function.
+  ///
+  /// ## Recommended Setup
+  ///
+  /// For apps using both DeviceService and NotificationService:
+  /// ```dart
+  /// // 1. Register DeviceServiceImpl in GetIt
+  /// GetIt.I.registerSingleton<DeviceServiceInt>(DeviceServiceImpl());
+  ///
+  /// // 2. Connect DeviceService to auth (handles device doc lifecycle)
+  /// await deviceService.connectToAuthService();
+  ///
+  /// // 3. Connect NotificationService (will auto-delegate to DeviceService)
+  /// await notificationService.connectToAuthService();
+  /// ```
   Future<void> _defaultTokenChangedCallback(String? newToken, String? oldToken) async {
+    // Try to use DeviceService for token persistence (preferred path)
+    // This ensures token is stored in the canonical device document
+    try {
+      if (GetIt.I.isRegistered<DeviceServiceInt>()) {
+        final deviceService = GetIt.I.get<DeviceServiceInt>();
+        final result = await deviceService.updateFcmToken(fcmToken: newToken);
+        result.fold(
+          (failure) => logw('FCM token update via DeviceService failed: $failure'),
+          (_) => logd('FCM token synced via DeviceService: '
+              '${newToken != null ? 'registered' : 'unregistered'}'),
+        );
+        return;
+      }
+    } catch (e) {
+      logd('DeviceService not available, falling back to direct callable: $e');
+    }
+
+    // Fallback: Use direct Firebase callable (legacy path or DeviceService not configured)
     try {
       final functionName = AppConfigBase.notificationsUpdateFcmTokenUseGrouped
           ? AppConfigBase.notificationsUpdateFcmTokenGroupFunction!
