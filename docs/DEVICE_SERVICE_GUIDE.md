@@ -499,22 +499,91 @@ And create any missing indexes. See `scaffolding/firebase_functions/device/READM
 
 ## Migration from Existing Implementation
 
-If your app currently passes timezone during auth:
+### Background
 
-1. Add DeviceService without removing existing code
-2. Call `connectToAuthService()` to enable parallel tracking
-3. Verify device documents are being created
-4. Deprecate old timezone passing in auth callables
-5. Remove old SharedPreferences timezone storage
+Prior to DeviceService (v0.4.0), timezone was handled by:
+- Passing timezone in auth callables (`loginAnonymously`, `accessCodeCheck`)
+- A SharedPreferences key `dreamic_timezone` (defined but never actively used)
+
+### Current Migration Status (v0.4.0+)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `sharedPrefKeyTimezone` constant | **Deprecated** | Marked with `@Deprecated`, will be removed in future version |
+| Timezone in auth callables | **Kept for redundancy** | Still passed but backend should migrate to device docs |
+| DeviceService tracking | **Active** | Primary source of truth for timezone data |
+
+### Migration Steps for Consuming Apps
+
+**Step 1: Enable DeviceService (parallel operation)**
 
 ```dart
-// Phase 1: Run both in parallel
+// In your app initialization
+final deviceService = DeviceServiceImpl();
+GetIt.instance.registerSingleton<DeviceServiceInt>(deviceService);
 await deviceService.connectToAuthService();
-await authService.loginWithTimezone(timezone); // Keep existing
 
-// Phase 2: After verification, remove old code
-await deviceService.connectToAuthService();
-await authService.login(); // Remove timezone passing
+// Existing auth flows continue to work unchanged
+```
+
+**Step 2: Update backend to read from device docs**
+
+Migrate backend scheduled jobs and queries to use the new device collection:
+
+```typescript
+// OLD: Reading timezone from user document or auth context
+const userTimezone = userData.timezone;
+
+// NEW: Reading from device collection
+const devices = await db.collection(`users/${uid}/devices`)
+  .orderBy('lastActiveAt', 'desc')
+  .limit(1)
+  .get();
+const timezone = devices.docs[0]?.data().timezone;
+```
+
+**Step 3: Verify data consistency**
+
+Run for a release cycle with both systems active to ensure:
+- Device documents are being created for all users
+- Timezone values match expected values
+- Backend jobs work with the new data source
+
+**Step 4: Remove legacy code (future)**
+
+Once verification is complete and DeviceService is stable:
+- Remove timezone parameter from auth callables (backend)
+- The `sharedPrefKeyTimezone` constant will be removed in a future major version
+
+### What Happens to Existing SharedPreferences Data
+
+The `dreamic_timezone` key was defined but never actively written to by the Dreamic package. The cleanup call in sign-out remains for safety but is effectively a no-op for most installations.
+
+If your consuming app was writing to this key directly:
+1. Migrate that data to DeviceService by calling `registerDevice()` on first launch
+2. Remove your custom write logic
+3. The old key cleanup in sign-out will handle any residual data
+
+### Backend Compatibility
+
+During migration, your backend can support both old and new data sources:
+
+```typescript
+async function getUserTimezone(uid: string): Promise<string | null> {
+  // Try new device-based timezone first
+  const devices = await db.collection(`users/${uid}/devices`)
+    .orderBy('lastActiveAt', 'desc')
+    .limit(1)
+    .get();
+
+  if (!devices.empty) {
+    return devices.docs[0].data().timezone;
+  }
+
+  // Fallback to legacy user document field (if applicable)
+  const user = await db.doc(`users/${uid}`).get();
+  return user.data()?.timezone ?? null;
+}
 ```
 
 ## API Reference
@@ -541,6 +610,99 @@ A: The service uses `AppConfigBase.firebaseFunctionCallable()` which respects yo
 
 **Q: Can I add custom fields to the device document?**
 A: Yes. Extend the `deviceInfo` map in your backend callable and send additional data in the request.
+
+## Verification Checklist
+
+Use this checklist to verify the DeviceService implementation is working correctly in your app.
+
+### Core Functionality
+
+| Criterion | How to Verify | Expected Result |
+|-----------|---------------|-----------------|
+| **Device timezone tracked in Firestore** | Login, check Firebase Console: `users/{uid}/devices/{deviceId}` | Document exists with `timezone` field (e.g., "America/New_York") |
+| **Timezone offset tracked** | Check device document | `timezoneOffsetMinutes` field present (e.g., -300 for EST) |
+| **Timezone updates on travel** | Change device timezone in settings, resume app | `timezone` field updates within 10 minutes |
+| **DST offset updates** | Test around DST transition or mock offset change | `timezoneOffsetMinutes` changes even if `timezone` is same |
+| **Multi-device support** | Login on two devices, check Firestore | Two documents under `users/{uid}/devices/` |
+| **Works without notifications** | Deny notification permission, login | Device document created, `fcmToken` is null |
+
+### Lifecycle Integration
+
+| Event | How to Test | Expected Behavior |
+|-------|-------------|-------------------|
+| **Login** | Sign in with new user | Device document created |
+| **App resume** | Background app 2+ minutes, resume | `lastActiveAt` updated (check throttle) |
+| **Auth refresh** | Wait for token refresh or force it | Document `updatedAt` updated |
+| **Logout** | Sign out | Device document deleted |
+| **Account switch** | Logout User A, login User B | User A doc deleted, User B doc created |
+
+### Offline Resilience
+
+| Scenario | How to Test | Expected Behavior |
+|----------|-------------|-------------------|
+| **Offline registration** | Enable airplane mode, login | No crash; pending payload stored |
+| **Offline recovery** | Disable airplane mode, resume app | Device document created from pending |
+| **Token while offline** | Get FCM token while offline | Token stored in pending, synced on connectivity |
+
+### Performance Verification
+
+| Metric | How to Verify | Expected Result |
+|--------|---------------|-----------------|
+| **Throttle: unchanged timezone** | Resume app multiple times within 1 hour | Only 1 backend call (check Functions logs) |
+| **Throttle: touch** | Resume app multiple times within 1 hour | At most 1 touch call per hour |
+| **No resume spam** | Monitor Firestore writes during heavy app switching | Writes stay within throttle limits |
+
+### Backend Query Verification
+
+Test these in your Firebase console or Cloud Functions:
+
+```javascript
+// Verify timezone-based queries work
+const db = admin.firestore();
+
+// 1. Query by timezone offset range
+const devices = await db.collectionGroup('devices')
+  .where('timezoneOffsetMinutes', '>=', -360)
+  .where('timezoneOffsetMinutes', '<=', -240)
+  .get();
+console.log(`Found ${devices.size} devices in UTC-6 to UTC-4 range`);
+
+// 2. Query active devices
+const sixtyDaysAgo = new Date();
+sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+const activeDevices = await db.collectionGroup('devices')
+  .where('lastActiveAt', '>', sixtyDaysAgo)
+  .get();
+console.log(`Found ${activeDevices.size} active devices`);
+
+// 3. Query devices with FCM tokens
+const pushableDevices = await db.collectionGroup('devices')
+  .where('fcmToken', '!=', null)
+  .get();
+console.log(`Found ${pushableDevices.size} devices with push tokens`);
+```
+
+### Manual Testing Script
+
+For thorough verification, run through this sequence:
+
+```
+1. [ ] Clean install app (or clear app data)
+2. [ ] Login - verify device doc created with correct timezone
+3. [ ] Background app for 2 minutes
+4. [ ] Resume app - verify lastActiveAt updated
+5. [ ] Grant notification permission - verify fcmToken populated
+6. [ ] Background app for 5 seconds
+7. [ ] Resume app - verify no backend call (throttled)
+8. [ ] Change device timezone in system settings
+9. [ ] Resume app - verify timezone field updated
+10. [ ] Logout - verify device doc deleted
+11. [ ] Login with different account - verify new doc created
+12. [ ] Enable airplane mode
+13. [ ] Resume app - verify no crash, pending stored
+14. [ ] Disable airplane mode
+15. [ ] Resume app - verify pending flushed to backend
+```
 
 ## Support
 

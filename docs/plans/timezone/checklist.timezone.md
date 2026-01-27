@@ -288,22 +288,50 @@ See [plan.timezone.md](./plan.timezone.md) for full details.
 
 ---
 
-## Phase 9: Cleanup & Migration
+## Phase 9: Cleanup & Migration ✅
 
-### 9.1 Migration from Current Implementation
-- [ ] Keep existing timezone passing in auth callables (for redundancy)
-- [ ] Add `registerDevice()` call in parallel with existing flows
-- [ ] Deprecate old timezone SharedPreferences storage (with warning)
-- [ ] Plan removal of deprecated code for future version
+### 9.1 Migration from Current Implementation ✅
+- [x] Keep existing timezone passing in auth callables (for redundancy)
+  - Timezone is still passed in `loginAnonymously` and `accessCodeCheck` in `auth_service_impl.dart`
+  - This is intentional for backend redundancy during migration
+- [x] Add `registerDevice()` call in parallel with existing flows
+  - `DeviceService.connectToAuthService()` automatically wires `registerDevice()` to auth events
+  - No changes needed in consuming apps beyond calling `connectToAuthService()`
+- [x] Deprecate old timezone SharedPreferences storage (with warning)
+  - Added `@Deprecated` annotation to `sharedPrefKeyTimezone` constant in `auth_service_impl.dart`
+  - Added comprehensive migration documentation in dartdoc comment
+  - Added `// ignore: deprecated_member_use_from_same_package` comment at usage site with TODO for removal
+- [x] Plan removal of deprecated code for future version
+  - Added TODO comment targeting removal after v0.4.0
+  - Documented in DEVICE_SERVICE_GUIDE.md migration section
 
-### 9.2 Final Verification
-- [ ] Verify success criteria:
-  - [ ] Device timezone accurately tracked in Firestore
-  - [ ] Timezone updates on travel
-  - [ ] Multi-device users have separate records
-  - [ ] Backend can query by timezone
-  - [ ] Works independently of notification permissions
-  - [ ] Minimal battery/network impact
+### 9.2 Final Verification ✅
+- [x] Verify success criteria:
+  - [x] Device timezone accurately tracked in Firestore
+    - Verified via unit tests in `device_service_integration_test.dart`
+    - Manual verification checklist added to DEVICE_SERVICE_GUIDE.md
+  - [x] Timezone updates on travel
+    - Implemented in `updateTimezoneOrOffsetIfChanged()` with change detection
+    - Tested in `throttling_logic_test.dart`
+  - [x] Multi-device users have separate records
+    - Each device gets unique UUIDv4 `deviceId`
+    - Stored under `users/{uid}/devices/{deviceId}`
+  - [x] Backend can query by timezone
+    - `timezoneOffsetMinutes` field enables indexed queries
+    - Backend scaffolding provides `queryDeviceCandidatesByLocalTime()` helper
+    - Verified in `device_time_queries.test.ts`
+  - [x] Works independently of notification permissions
+    - `fcmToken` is nullable; device doc created regardless of permission
+    - Tested in integration tests
+  - [x] Minimal battery/network impact
+    - Throttling implemented: 48h unchanged, 10m change debounce, 60m touch
+    - Pending payload system prevents unnecessary retries
+    - Verified in `throttling_logic_test.dart`
+
+### 9.3 Documentation Updates ✅
+- [x] Updated `DEVICE_SERVICE_GUIDE.md` with comprehensive migration section
+- [x] Added verification checklist to `DEVICE_SERVICE_GUIDE.md`
+- [x] Added manual testing script for thorough verification
 
 ---
 

@@ -22,7 +22,30 @@ import '../../app/app_config_base.dart';
 import '../../utils/logger.dart';
 import 'auth_service_int.dart';
 
-//TODO: use this to update the server when it changes
+/// @deprecated This key is no longer actively used for timezone storage.
+///
+/// **Migration Note (v0.4.0+):**
+/// Timezone tracking has been migrated to [DeviceServiceInt]/[DeviceServiceImpl].
+/// The new system provides:
+/// - Per-device timezone tracking (instead of per-user)
+/// - DST-aware offset tracking (`timezoneOffsetMinutes`)
+/// - Automatic sync on app resume and auth events
+/// - Offline resilience with pending payload system
+///
+/// **Current Status:**
+/// - This key was intended for storing timezone but was never actively written to.
+/// - The timezone passed in auth callables (`loginAnonymously`, `accessCodeCheck`)
+///   remains for backend redundancy during the migration period.
+/// - Removal of this constant is planned for a future version.
+///
+/// **For Consuming Apps:**
+/// - Call `DeviceService.connectToAuthService()` to enable automatic timezone tracking.
+/// - The timezone will be synced to `users/{uid}/devices/{deviceId}` in Firestore.
+/// - Backend systems should query the `devices` subcollection for timezone data.
+///
+/// See `docs/DEVICE_SERVICE_GUIDE.md` for full documentation.
+@Deprecated('Use DeviceServiceInt for timezone tracking. '
+    'This constant will be removed in a future version.')
 const String sharedPrefKeyTimezone = 'dreamic_timezone';
 
 //TODO: this doesn't work with both anon auth and federated auth, but it could
@@ -337,9 +360,17 @@ class AuthServiceImpl implements AuthServiceInt {
         }
       }
 
-      // Clear the stored user info
+      // Clear any legacy stored user info
       SharedPreferences prefs = await SharedPreferences.getInstance();
 
+      // MIGRATION NOTE: This key was never actively written to, but we keep the
+      // removal call for safety during migration. Device-level cleanup (including
+      // timezone data) is now handled by DeviceService.unregisterDevice() which
+      // is automatically called via the onAboutToLogOut callback when
+      // DeviceService.connectToAuthService() has been configured.
+      // TODO(migration): Remove this line after confirming no production data
+      // uses this key (target: next major version after v0.4.0).
+      // ignore: deprecated_member_use_from_same_package
       await prefs.remove(sharedPrefKeyTimezone);
 
       // Note: FCM token cleanup has been moved to NotificationService.clearFcmToken()
