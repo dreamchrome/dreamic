@@ -55,7 +55,7 @@ typedef ForegroundMessageCallback = Future<void> Function(
 
 /// Callback type for error handling.
 typedef NotificationErrorCallback = void Function(
-  String error,
+  Object error,
   StackTrace? stackTrace,
 );
 
@@ -373,7 +373,7 @@ class NotificationService {
       // stored above for manual connection later via connectToAuthService()
     } catch (e, stackTrace) {
       loge(e, 'Failed to initialize NotificationService', stackTrace);
-      _onError?.call('Failed to initialize NotificationService: $e', stackTrace);
+      _onError?.call(e, stackTrace);
       rethrow;
     }
   }
@@ -450,7 +450,7 @@ class NotificationService {
       }
     } catch (e, stackTrace) {
       loge(e, 'Error checking initial message', stackTrace);
-      _onError?.call('Error checking initial message: $e', stackTrace);
+      _onError?.call(e, stackTrace);
     }
   }
 
@@ -472,7 +472,7 @@ class NotificationService {
       }
     } catch (e, stackTrace) {
       loge(e, 'Error handling foreground message', stackTrace);
-      _onError?.call('Error handling foreground message: $e', stackTrace);
+      _onError?.call(e, stackTrace);
     }
   }
 
@@ -488,7 +488,7 @@ class NotificationService {
       }
     } catch (e, stackTrace) {
       loge(e, 'Error handling message opened app', stackTrace);
-      _onError?.call('Error handling message opened app: $e', stackTrace);
+      _onError?.call(e, stackTrace);
     }
   }
 
@@ -522,7 +522,7 @@ class NotificationService {
       }
     } catch (e, stackTrace) {
       loge(e, 'Error handling notification tap', stackTrace);
-      _onError?.call('Error handling notification tap: $e', stackTrace);
+      _onError?.call(e, stackTrace);
     }
   }
 
@@ -639,7 +639,7 @@ class NotificationService {
       return id;
     } catch (e, stackTrace) {
       loge(e, 'Error showing notification', stackTrace);
-      _onError?.call('Error showing notification: $e', stackTrace);
+      _onError?.call(e, stackTrace);
       rethrow;
     }
   }
@@ -655,7 +655,7 @@ class NotificationService {
       logi('Cancelled notification: $id');
     } catch (e, stackTrace) {
       loge(e, 'Error cancelling notification', stackTrace);
-      _onError?.call('Error cancelling notification: $e', stackTrace);
+      _onError?.call(e, stackTrace);
     }
   }
 
@@ -670,7 +670,7 @@ class NotificationService {
       logi('Cancelled all notifications');
     } catch (e, stackTrace) {
       loge(e, 'Error cancelling all notifications', stackTrace);
-      _onError?.call('Error cancelling all notifications: $e', stackTrace);
+      _onError?.call(e, stackTrace);
     }
   }
 
@@ -714,7 +714,7 @@ class NotificationService {
       return activeNotifications;
     } catch (e, stackTrace) {
       loge(e, 'Error getting active notifications', stackTrace);
-      _onError?.call('Error getting active notifications: $e', stackTrace);
+      _onError?.call(e, stackTrace);
       return [];
     }
   }
@@ -752,7 +752,7 @@ class NotificationService {
       return status;
     } catch (e, stackTrace) {
       loge(e, 'Error getting permission status', stackTrace);
-      _onError?.call('Error getting permission status: $e', stackTrace);
+      _onError?.call(e, stackTrace);
       // Return denied as safe default - don't assume we have permission
       return NotificationPermissionStatus.denied;
     }
@@ -809,7 +809,7 @@ class NotificationService {
       return status;
     } catch (e, stackTrace) {
       loge(e, 'Error requesting permissions', stackTrace);
-      _onError?.call('Error requesting permissions: $e', stackTrace);
+      _onError?.call(e, stackTrace);
       return NotificationPermissionStatus.denied;
     }
   }
@@ -826,7 +826,7 @@ class NotificationService {
       logi('Opened system settings');
     } catch (e, stackTrace) {
       loge(e, 'Error opening system settings', stackTrace);
-      _onError?.call('Error opening system settings: $e', stackTrace);
+      _onError?.call(e, stackTrace);
     }
   }
 
@@ -865,7 +865,7 @@ class NotificationService {
       return opened;
     } catch (e, stackTrace) {
       loge(e, 'Error opening notification settings', stackTrace);
-      _onError?.call('Error opening notification settings: $e', stackTrace);
+      _onError?.call(e, stackTrace);
       return false;
     }
   }
@@ -942,7 +942,7 @@ class NotificationService {
       }
     } catch (e, stackTrace) {
       loge(e, 'initializeNotifications failed', stackTrace);
-      _onError?.call('initializeNotifications failed: $e', stackTrace);
+      _onError?.call(e, stackTrace);
       return NotificationInitResult.error;
     }
   }
@@ -1661,7 +1661,7 @@ class NotificationService {
       }
     } catch (e, stackTrace) {
       loge(e, 'Error in runNotificationPermissionFlow', stackTrace);
-      _onError?.call('Error in runNotificationPermissionFlow: $e', stackTrace);
+      _onError?.call(e, stackTrace);
       return NotificationFlowResult.error;
     }
   }
@@ -2088,7 +2088,7 @@ class NotificationService {
       logi('Badge count updated to: $count');
     } catch (e, stackTrace) {
       loge(e, 'Failed to update badge count', stackTrace);
-      _onError?.call('Failed to update badge count: $e', stackTrace);
+      _onError?.call(e, stackTrace);
     }
   }
 
