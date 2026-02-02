@@ -37,6 +37,7 @@ export 'presentation/helpers/adaptive_icons.dart';
 export 'versioning/app_version_update_service.dart';
 export 'app/helpers/app_lifecycle_service.dart';
 export 'app/helpers/app_remote_config_init.dart';
+export 'app/helpers/app_version_handler.dart';
 export 'test_debugging/debug_remote_config_web.dart';
 export 'error_reporting/error_reporter_interface.dart';
 export 'app/helpers/app_errorhandling_init.dart';
