@@ -42,6 +42,21 @@ abstract class ErrorReporter {
   void recordFlutterError(FlutterErrorDetails details);
 }
 
+/// Optional interface for error reporters that support user context.
+///
+/// This allows Dreamic to automatically set/clear the current user in an error
+/// reporting service (e.g., Sentry) without Dreamic depending on that SDK.
+///
+/// If your reporter supports this, implement this interface in your consuming
+/// app and Dreamic services (like `AuthServiceImpl`) can wire it up.
+abstract interface class ErrorReporterUserContext {
+  /// Set the current user for error reports.
+  void setUser(String userId, {String? email, String? username});
+
+  /// Clear the current user (e.g., on logout).
+  void clearUser();
+}
+
 /// Configuration for error reporting
 class ErrorReportingConfig {
   /// Custom error reporter implementation (e.g., Sentry)

@@ -56,6 +56,10 @@ export 'data/models/notification_payload.dart';
 export 'data/models/notification_action.dart';
 export 'data/models/notification_permission_status.dart';
 
+// Device Models
+export 'data/models/device_platform.dart';
+export 'data/models/device_info.dart';
+
 // URL Opener
 export 'presentation/helpers/url_opener/url_opener.dart';
 
@@ -76,6 +80,9 @@ export 'data/repos/auth_service_int.dart';
 export 'data/repos/auth_service_impl.dart';
 export 'data/repos/remote_config_repo_int.dart';
 export 'data/repos/remote_config_repo_liveimple.dart';
+export 'data/repos/device_service_int.dart';
+export 'data/repos/device_service_impl.dart';
+export 'data/repos/dreamic_services.dart';
 
 // Utilities
 export 'utils/logger.dart';

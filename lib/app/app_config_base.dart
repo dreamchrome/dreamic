@@ -104,6 +104,14 @@ class AppConfigBase {
     'notificationAskAgainDays': 7,
     'notificationAskAgainMultiplier': 3.0,
     'notificationMaxAskCount': 3,
+    // Device service configuration (timezone tracking and device registration)
+    // Keys use dreamic_ prefix for Remote Config namespacing
+    'dreamic_device_timezone_unchanged_sync_min_minutes': 2880, // 48 hours
+    'dreamic_device_timezone_unchanged_sync_max_minutes': 2880, // 48 hours
+    'dreamic_device_timezone_change_debounce_minutes': 10,
+    'dreamic_device_touch_throttle_minutes': 60,
+    // Device pending payload backoff (offline retry interval)
+    'dreamic_device_pending_backoff_minutes': 15,
   };
 
   static set minimumAppVersionRequiredAppleDefault(String value) =>
@@ -139,6 +147,16 @@ class AppConfigBase {
       defaultRemoteConfig['notificationAskAgainMultiplier'] = value;
   static set notificationMaxAskCountDefault(int value) =>
       defaultRemoteConfig['notificationMaxAskCount'] = value;
+  static set deviceTimezoneUnchangedSyncMinMinutesDefault(int value) =>
+      defaultRemoteConfig['dreamic_device_timezone_unchanged_sync_min_minutes'] = value;
+  static set deviceTimezoneUnchangedSyncMaxMinutesDefault(int value) =>
+      defaultRemoteConfig['dreamic_device_timezone_unchanged_sync_max_minutes'] = value;
+  static set deviceTimezoneChangeDebounceMinutesDefault(int value) =>
+      defaultRemoteConfig['dreamic_device_timezone_change_debounce_minutes'] = value;
+  static set deviceTouchThrottleMinutesDefault(int value) =>
+      defaultRemoteConfig['dreamic_device_touch_throttle_minutes'] = value;
+  static set devicePendingBackoffMinutesDefault(int value) =>
+      defaultRemoteConfig['dreamic_device_pending_backoff_minutes'] = value;
 
   static String get minimumAppVersionRequiredApple {
     const envValue = String.fromEnvironment('minimumAppVersionRequiredApple');
@@ -429,6 +447,168 @@ class AppConfigBase {
         return remoteValue;
       } else {
         return defaultRemoteConfig['notificationMaxAskCount'] as int;
+      }
+    }
+  }
+
+  //
+  // Device Service Configuration (Timezone Tracking)
+  //
+
+  /// Minimum interval in minutes between timezone sync attempts when timezone/offset is unchanged.
+  ///
+  /// This throttle prevents unnecessary writes on frequent app resume events.
+  /// The device will not attempt to sync timezone data more often than this interval
+  /// unless the timezone or offset actually changed.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.deviceTimezoneUnchangedSyncMinMinutesDefault = 1440` (24 hours)
+  /// - Build flag: `--dart-define dreamic_device_timezone_unchanged_sync_min_minutes=1440`
+  /// - Firebase Remote Config: `dreamic_device_timezone_unchanged_sync_min_minutes`
+  ///
+  /// Default: 2880 (48 hours)
+  static int get deviceTimezoneUnchangedSyncMinMinutes {
+    const envValue = int.fromEnvironment(
+      'dreamic_device_timezone_unchanged_sync_min_minutes',
+      defaultValue: -1,
+    );
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue =
+          g<RemoteConfigRepoInt>().getInt('dreamic_device_timezone_unchanged_sync_min_minutes');
+      if (remoteValue > 0) {
+        return remoteValue;
+      } else {
+        return defaultRemoteConfig['dreamic_device_timezone_unchanged_sync_min_minutes'] as int;
+      }
+    }
+  }
+
+  /// Maximum interval in minutes for forced timezone refresh even when unchanged.
+  ///
+  /// This ensures timezone offset data is refreshed periodically to catch DST transitions
+  /// if the app wasn't opened near the transition time. The offset can change even when
+  /// the IANA timezone string remains the same.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.deviceTimezoneUnchangedSyncMaxMinutesDefault = 1440` (24 hours)
+  /// - Build flag: `--dart-define dreamic_device_timezone_unchanged_sync_max_minutes=1440`
+  /// - Firebase Remote Config: `dreamic_device_timezone_unchanged_sync_max_minutes`
+  ///
+  /// Default: 2880 (48 hours)
+  static int get deviceTimezoneUnchangedSyncMaxMinutes {
+    const envValue = int.fromEnvironment(
+      'dreamic_device_timezone_unchanged_sync_max_minutes',
+      defaultValue: -1,
+    );
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue =
+          g<RemoteConfigRepoInt>().getInt('dreamic_device_timezone_unchanged_sync_max_minutes');
+      if (remoteValue > 0) {
+        return remoteValue;
+      } else {
+        return defaultRemoteConfig['dreamic_device_timezone_unchanged_sync_max_minutes'] as int;
+      }
+    }
+  }
+
+  /// Debounce interval in minutes when timezone/offset has changed.
+  ///
+  /// When the device detects a timezone or offset change, it will wait at least this long
+  /// before syncing another change. This prevents rapid flapping when users are near
+  /// timezone boundaries or experiencing network issues.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.deviceTimezoneChangeDebounceMinutesDefault = 5`
+  /// - Build flag: `--dart-define dreamic_device_timezone_change_debounce_minutes=5`
+  /// - Firebase Remote Config: `dreamic_device_timezone_change_debounce_minutes`
+  ///
+  /// Default: 10
+  static int get deviceTimezoneChangeDebounceMinutes {
+    const envValue = int.fromEnvironment(
+      'dreamic_device_timezone_change_debounce_minutes',
+      defaultValue: -1,
+    );
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue =
+          g<RemoteConfigRepoInt>().getInt('dreamic_device_timezone_change_debounce_minutes');
+      if (remoteValue > 0) {
+        return remoteValue;
+      } else {
+        return defaultRemoteConfig['dreamic_device_timezone_change_debounce_minutes'] as int;
+      }
+    }
+  }
+
+  /// Throttle interval in minutes for touchDevice() calls.
+  ///
+  /// The device will not update its lastActiveAt timestamp more often than this interval.
+  /// This reduces unnecessary writes while still keeping the device's activity status
+  /// reasonably fresh for backend scheduled jobs.
+  ///
+  /// Tuning guidance: If backend scheduled jobs filter by "active in last X hours",
+  /// set this throttle small enough that typical users will refresh during that window.
+  /// Example: For "active in last 24h" filtering, a 60-minute throttle is fine.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.deviceTouchThrottleMinutesDefault = 30`
+  /// - Build flag: `--dart-define dreamic_device_touch_throttle_minutes=30`
+  /// - Firebase Remote Config: `dreamic_device_touch_throttle_minutes`
+  ///
+  /// Default: 60
+  static int get deviceTouchThrottleMinutes {
+    const envValue = int.fromEnvironment(
+      'dreamic_device_touch_throttle_minutes',
+      defaultValue: -1,
+    );
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue =
+          g<RemoteConfigRepoInt>().getInt('dreamic_device_touch_throttle_minutes');
+      if (remoteValue > 0) {
+        return remoteValue;
+      } else {
+        return defaultRemoteConfig['dreamic_device_touch_throttle_minutes'] as int;
+      }
+    }
+  }
+
+  /// Backoff interval in minutes between pending payload flush attempts.
+  ///
+  /// When a device sync operation fails (network error, offline), the pending
+  /// payload is stored locally. This interval controls how long to wait before
+  /// retrying after a failed attempt.
+  ///
+  /// The backoff is bypassed when the timezone, offset, or FCM token actually
+  /// changes (except when within the change-debounce window), ensuring important
+  /// updates are synced promptly while avoiding spam during prolonged offline periods.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.devicePendingBackoffMinutesDefault = 10`
+  /// - Build flag: `--dart-define dreamic_device_pending_backoff_minutes=10`
+  /// - Firebase Remote Config: `dreamic_device_pending_backoff_minutes`
+  ///
+  /// Default: 15
+  static int get devicePendingBackoffMinutes {
+    const envValue = int.fromEnvironment(
+      'dreamic_device_pending_backoff_minutes',
+      defaultValue: -1,
+    );
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue =
+          g<RemoteConfigRepoInt>().getInt('dreamic_device_pending_backoff_minutes');
+      if (remoteValue > 0) {
+        return remoteValue;
+      } else {
+        return defaultRemoteConfig['dreamic_device_pending_backoff_minutes'] as int;
       }
     }
   }
@@ -909,6 +1089,35 @@ class AppConfigBase {
             ? const String.fromEnvironment('AUTH_MAIN_CALLABLE_FUNCTION', defaultValue: '')
             : (_authMainCallableFunctionDefault ?? 'authMainCallable');
     return _authMainCallableFunction!;
+  }
+
+  // --- deviceAction ---
+  // Unified callable for device operations (register, touch, updateToken, unregister, getMyDevices)
+  // Used by DeviceService for timezone tracking and device registration.
+  static String? _deviceActionFunctionDefault;
+  static set deviceActionFunctionDefault(String value) => _deviceActionFunctionDefault = value;
+  static String? _deviceActionFunction;
+
+  /// The Firebase callable function name for device operations.
+  ///
+  /// This is the unified callable that handles all device-related actions:
+  /// - `register`: Register/update device with timezone, platform, app version
+  /// - `touch`: Update lastActiveAt timestamp
+  /// - `updateToken`: Update FCM token on the device document
+  /// - `unregister`: Delete device document on logout
+  /// - `getMyDevices`: Retrieve all devices for the current user
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.deviceActionFunctionDefault = 'myDeviceFunction'`
+  /// - Build flag: `--dart-define DEVICE_ACTION_FUNCTION=myDeviceFunction`
+  ///
+  /// Default: `'deviceAction'`
+  static String get deviceActionFunction {
+    _deviceActionFunction ??=
+        const String.fromEnvironment('DEVICE_ACTION_FUNCTION', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('DEVICE_ACTION_FUNCTION', defaultValue: '')
+            : (_deviceActionFunctionDefault ?? 'deviceAction');
+    return _deviceActionFunction!;
   }
 
   // --- devOnlyDevSignIn ---

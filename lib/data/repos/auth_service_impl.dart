@@ -22,66 +22,104 @@ import '../../app/app_config_base.dart';
 import '../../utils/logger.dart';
 import 'auth_service_int.dart';
 
-//TODO: use this to update the server when it changes
+/// @deprecated This key is no longer actively used for timezone storage.
+///
+/// **Migration Note (v0.4.0+):**
+/// Timezone tracking has been migrated to [DeviceServiceInt]/[DeviceServiceImpl].
+/// The new system provides:
+/// - Per-device timezone tracking (instead of per-user)
+/// - DST-aware offset tracking (`timezoneOffsetMinutes`)
+/// - Automatic sync on app resume and auth events
+/// - Offline resilience with pending payload system
+///
+/// **Current Status:**
+/// - This key was intended for storing timezone but was never actively written to.
+/// - The timezone passed in auth callables (`loginAnonymously`, `accessCodeCheck`)
+///   remains for backend redundancy during the migration period.
+/// - Removal of this constant is planned for a future version.
+///
+/// **For Consuming Apps:**
+/// - Call `DeviceService.connectToAuthService()` to enable automatic timezone tracking.
+/// - The timezone will be synced to `users/{uid}/devices/{deviceId}` in Firestore.
+/// - Backend systems should query the `devices` subcollection for timezone data.
+///
+/// See `docs/DEVICE_SERVICE_GUIDE.md` for full documentation.
+@Deprecated('Use DeviceServiceInt for timezone tracking. '
+    'This constant will be removed in a future version.')
 const String sharedPrefKeyTimezone = 'dreamic_timezone';
 
 //TODO: this doesn't work with both anon auth and federated auth, but it could
 
 class AuthServiceImpl implements AuthServiceInt {
-  /// List of callbacks invoked when user authenticates.
-  final List<Future<void> Function(String? uid)> _onAuthenticatedCallbacks = [];
+  /// Callbacks invoked when user authenticates, grouped by priority.
+  ///
+  /// Higher priority values execute first. Callbacks at the same priority
+  /// execute in parallel.
+  final Map<int, List<Future<void> Function(String? uid)>>
+      _onAuthenticatedByPriority = {};
 
-  /// List of callbacks invoked when user data is refreshed.
-  final List<Future<void> Function()> _onRefreshedCallbacks = [];
+  /// Callbacks invoked AFTER logout is complete, grouped by priority.
+  ///
+  /// Higher priority values execute first. Callbacks at the same priority
+  /// execute in parallel.
+  final Map<int, List<Future<void> Function()>> _onLoggedOutByPriority = {};
 
-  /// List of callbacks invoked AFTER logout is complete.
-  final List<Future<void> Function()> _onLoggedOutCallbacks = [];
-
-  /// List of callbacks invoked BEFORE signing out, while still authenticated.
+  /// Callbacks invoked BEFORE signing out, while still authenticated.
   ///
   /// Use [addOnAboutToLogOutCallback] to register callbacks for cleanup tasks
   /// that require authentication (e.g., unregistering FCM tokens from backend).
   /// Each callback is called with a timeout; failures won't block sign out.
-  final List<Future<void> Function()> _onAboutToLogOutCallbacks = [];
+  ///
+  /// Higher priority values execute first. Callbacks at the same priority
+  /// execute in parallel.
+  final Map<int, List<Future<void> Function()>> _onAboutToLogOutByPriority = {};
 
   @override
-  void addOnAuthenticatedCallback(Future<void> Function(String? uid) callback) {
-    _onAuthenticatedCallbacks.add(callback);
+  void addOnAuthenticatedCallback(
+    Future<void> Function(String? uid) callback, {
+    int priority = 0,
+  }) {
+    _onAuthenticatedByPriority.putIfAbsent(priority, () => []).add(callback);
   }
 
   @override
   bool removeOnAuthenticatedCallback(Future<void> Function(String? uid) callback) {
-    return _onAuthenticatedCallbacks.remove(callback);
+    for (final callbacks in _onAuthenticatedByPriority.values) {
+      if (callbacks.remove(callback)) return true;
+    }
+    return false;
   }
 
   @override
-  void addOnRefreshedCallback(Future<void> Function() callback) {
-    _onRefreshedCallbacks.add(callback);
-  }
-
-  @override
-  bool removeOnRefreshedCallback(Future<void> Function() callback) {
-    return _onRefreshedCallbacks.remove(callback);
-  }
-
-  @override
-  void addOnLoggedOutCallback(Future<void> Function() callback) {
-    _onLoggedOutCallbacks.add(callback);
+  void addOnLoggedOutCallback(
+    Future<void> Function() callback, {
+    int priority = 0,
+  }) {
+    _onLoggedOutByPriority.putIfAbsent(priority, () => []).add(callback);
   }
 
   @override
   bool removeOnLoggedOutCallback(Future<void> Function() callback) {
-    return _onLoggedOutCallbacks.remove(callback);
+    for (final callbacks in _onLoggedOutByPriority.values) {
+      if (callbacks.remove(callback)) return true;
+    }
+    return false;
   }
 
   @override
-  void addOnAboutToLogOutCallback(Future<void> Function() callback) {
-    _onAboutToLogOutCallbacks.add(callback);
+  void addOnAboutToLogOutCallback(
+    Future<void> Function() callback, {
+    int priority = 0,
+  }) {
+    _onAboutToLogOutByPriority.putIfAbsent(priority, () => []).add(callback);
   }
 
   @override
   bool removeOnAboutToLogOutCallback(Future<void> Function() callback) {
-    return _onAboutToLogOutCallbacks.remove(callback);
+    for (final callbacks in _onAboutToLogOutByPriority.values) {
+      if (callbacks.remove(callback)) return true;
+    }
+    return false;
   }
 
   HttpsCallable authCallable =
@@ -133,30 +171,82 @@ class AuthServiceImpl implements AuthServiceInt {
 
   AuthServiceImpl({
     required FirebaseApp firebaseApp,
+    // Single callback convenience (default priority 0)
     Future<void> Function(String? uid)? onAuthenticated,
-    Future<void> Function()? onRefreshed,
     Future<void> Function()? onLoggedOut,
     Future<void> Function()? onAboutToLogOut,
+    // List of callbacks (default priority 0)
+    List<Future<void> Function(String? uid)>? onAuthenticatedCallbacks,
+    List<Future<void> Function()>? onLoggedOutCallbacks,
+    List<Future<void> Function()>? onAboutToLogOutCallbacks,
+    // Prioritized callbacks for ordered execution
+    List<PrioritizedCallback<Future<void> Function(String? uid)>>?
+        onAuthenticatedPrioritized,
+    List<PrioritizedCallback<Future<void> Function()>>? onLoggedOutPrioritized,
+    List<PrioritizedCallback<Future<void> Function()>>?
+        onAboutToLogOutPrioritized,
   }) {
     // This can be disabled for hardcoding
     logd('Instantiated AuthServiceImpl');
     _fbAuth = fb_auth.FirebaseAuth.instanceFor(app: firebaseApp);
-    _fbAuth.authStateChanges().listen(handleAuthStateChanges);
-    _fbAuth.idTokenChanges().listen((event) => handleTokenChanges(event));
 
-    // Add constructor-provided callbacks to lists for backward compatibility
-    if (onAuthenticated != null) {
-      _onAuthenticatedCallbacks.add(onAuthenticated);
+    // IMPORTANT: Register ALL constructor-provided lifecycle callbacks BEFORE
+    // attaching auth listeners.
+    //
+    // RATIONALE:
+    // When a user is already logged in (warm start), Firebase can emit an auth
+    // state event almost immediately after `authStateChanges().listen(...)`.
+    // If callbacks are registered after listeners, the first auth event can be
+    // missed by the consuming app (race condition).
+
+    // Register prioritized callbacks first (explicit priority)
+    if (onAuthenticatedPrioritized != null) {
+      for (final pc in onAuthenticatedPrioritized) {
+        addOnAuthenticatedCallback(pc.callback, priority: pc.priority);
+      }
     }
-    if (onRefreshed != null) {
-      _onRefreshedCallbacks.add(onRefreshed);
+    if (onLoggedOutPrioritized != null) {
+      for (final pc in onLoggedOutPrioritized) {
+        addOnLoggedOutCallback(pc.callback, priority: pc.priority);
+      }
+    }
+    if (onAboutToLogOutPrioritized != null) {
+      for (final pc in onAboutToLogOutPrioritized) {
+        addOnAboutToLogOutCallback(pc.callback, priority: pc.priority);
+      }
+    }
+
+    // Register list callbacks (default priority 0)
+    if (onAuthenticatedCallbacks != null) {
+      for (final callback in onAuthenticatedCallbacks) {
+        addOnAuthenticatedCallback(callback);
+      }
+    }
+    if (onLoggedOutCallbacks != null) {
+      for (final callback in onLoggedOutCallbacks) {
+        addOnLoggedOutCallback(callback);
+      }
+    }
+    if (onAboutToLogOutCallbacks != null) {
+      for (final callback in onAboutToLogOutCallbacks) {
+        addOnAboutToLogOutCallback(callback);
+      }
+    }
+
+    // Register single callbacks (default priority 0)
+    if (onAuthenticated != null) {
+      addOnAuthenticatedCallback(onAuthenticated);
     }
     if (onLoggedOut != null) {
-      _onLoggedOutCallbacks.add(onLoggedOut);
+      addOnLoggedOutCallback(onLoggedOut);
     }
     if (onAboutToLogOut != null) {
-      _onAboutToLogOutCallbacks.add(onAboutToLogOut);
+      addOnAboutToLogOutCallback(onAboutToLogOut);
     }
+
+    // Attach listeners AFTER callbacks are registered.
+    _fbAuth.authStateChanges().listen(handleAuthStateChanges);
+    _fbAuth.idTokenChanges().listen((event) => handleTokenChanges(event));
 
     // For debuggin
     if (AppConfigBase.signoutOnReload) {
@@ -168,6 +258,114 @@ class AuthServiceImpl implements AuthServiceInt {
   // Add dispose method to clean up the stream controller
   void dispose() {
     _isLoggedInStreamController.close();
+  }
+
+  /// Executes callbacks grouped by priority.
+  ///
+  /// Higher priority values execute first. Callbacks at the same priority
+  /// execute in parallel via `Future.wait`. Different priorities execute
+  /// sequentially.
+  ///
+  /// [callbacksByPriority] is the map of priority -> callbacks.
+  /// [argument] is passed to each callback.
+  /// [timeout] is the global timeout for all callbacks (not per-priority).
+  /// [callbackType] is used for logging (e.g., "onAuthenticated").
+  Future<void> _executeCallbacksByPriority<T>(
+    Map<int, List<Future<void> Function(T)>> callbacksByPriority,
+    T argument,
+    Duration timeout,
+    String callbackType,
+  ) async {
+    if (callbacksByPriority.isEmpty) return;
+
+    // Sort priorities descending (higher runs first)
+    final priorities = callbacksByPriority.keys.toList()
+      ..sort((a, b) => b.compareTo(a));
+
+    final stopwatch = Stopwatch()..start();
+
+    for (final priority in priorities) {
+      // Check if global timeout exceeded
+      if (stopwatch.elapsed >= timeout) {
+        // Log as ERROR - timeout means cleanup may be incomplete
+        loge('$callbackType callbacks: global timeout exceeded after '
+            '${stopwatch.elapsed}, skipping remaining priorities. '
+            'Backend cleanup may be required.');
+        break;
+      }
+
+      final callbacks = callbacksByPriority[priority] ?? [];
+      if (callbacks.isEmpty) continue;
+
+      final remainingTime = timeout - stopwatch.elapsed;
+
+      // Execute all callbacks at this priority level in parallel
+      try {
+        await Future.wait(
+          callbacks.map((cb) => cb(argument).catchError((e) {
+                logw('$callbackType callback (priority $priority) failed: $e');
+              })),
+        ).timeout(remainingTime, onTimeout: () {
+          // Log as ERROR - timeout means cleanup may be incomplete
+          loge('$callbackType callbacks (priority $priority) timed out after '
+              '$remainingTime. Backend cleanup may be required.');
+          return [];
+        });
+      } catch (e) {
+        logw('$callbackType callbacks (priority $priority) error: $e');
+      }
+    }
+  }
+
+  /// Executes void callbacks grouped by priority (no argument version).
+  ///
+  /// Higher priority values execute first. Callbacks at the same priority
+  /// execute in parallel via `Future.wait`. Different priorities execute
+  /// sequentially.
+  Future<void> _executeVoidCallbacksByPriority(
+    Map<int, List<Future<void> Function()>> callbacksByPriority,
+    Duration timeout,
+    String callbackType,
+  ) async {
+    if (callbacksByPriority.isEmpty) return;
+
+    // Sort priorities descending (higher runs first)
+    final priorities = callbacksByPriority.keys.toList()
+      ..sort((a, b) => b.compareTo(a));
+
+    final stopwatch = Stopwatch()..start();
+
+    for (final priority in priorities) {
+      // Check if global timeout exceeded
+      if (stopwatch.elapsed >= timeout) {
+        // Log as ERROR - timeout means cleanup may be incomplete
+        loge('$callbackType callbacks: global timeout exceeded after '
+            '${stopwatch.elapsed}, skipping remaining priorities. '
+            'Backend cleanup may be required.');
+        break;
+      }
+
+      final callbacks = callbacksByPriority[priority] ?? [];
+      if (callbacks.isEmpty) continue;
+
+      final remainingTime = timeout - stopwatch.elapsed;
+
+      // Execute all callbacks at this priority level in parallel
+      try {
+        await Future.wait(
+          callbacks.map((cb) => cb().catchError((e) {
+                logw('$callbackType callback (priority $priority) failed: $e');
+              })),
+        ).timeout(remainingTime, onTimeout: () {
+          // Log as ERROR - timeout means cleanup may be incomplete
+          loge('$callbackType callbacks (priority $priority) timed out after '
+              '$remainingTime. Backend cleanup may be required.');
+          return [];
+        });
+      } catch (e) {
+        logw('$callbackType callbacks (priority $priority) error: $e');
+      }
+    }
   }
 
   // Update auth state change handler to complete the completer
@@ -203,14 +401,15 @@ class AuthServiceImpl implements AuthServiceInt {
         _authStateCompleter!.complete(true);
       }
 
-      // Call all onAuthenticated callbacks
-      for (final callback in _onAuthenticatedCallbacks) {
-        try {
-          await callback(fbUser.uid);
-        } catch (e) {
-          logw('onAuthenticated callback failed: $e');
-        }
-      }
+      // Call all onAuthenticated callbacks by priority
+      // Using a generous timeout for auth callbacks since they may need to make
+      // network calls (e.g., device registration)
+      await _executeCallbacksByPriority<String?>(
+        _onAuthenticatedByPriority,
+        fbUser.uid,
+        const Duration(seconds: 30),
+        'onAuthenticated',
+      );
     }
   }
 
@@ -288,25 +487,13 @@ class AuthServiceImpl implements AuthServiceInt {
     try {
       // Call all onAboutToLogOut callbacks while still authenticated (before Firebase signOut)
       // This allows cleanup tasks like FCM token unregistration that require auth
-      if (useFbAuthAlso && _onAboutToLogOutCallbacks.isNotEmpty) {
+      if (useFbAuthAlso && _onAboutToLogOutByPriority.isNotEmpty) {
         final timeout = Duration(milliseconds: AppConfigBase.timeoutForAboutToLogOutCallbackMill);
-        try {
-          await Future.wait(
-            _onAboutToLogOutCallbacks.map((callback) => callback().catchError((e) {
-                  logw('onAboutToLogOut callback failed: $e');
-                  // Return null to allow other callbacks to complete
-                })),
-          ).timeout(
-            timeout,
-            onTimeout: () {
-              logw('onAboutToLogOut callbacks timed out after $timeout');
-              return []; // Return empty list on timeout
-            },
-          );
-        } catch (e) {
-          logw('onAboutToLogOut callbacks failed: $e');
-          // Continue with sign out even if callbacks fail
-        }
+        await _executeVoidCallbacksByPriority(
+          _onAboutToLogOutByPriority,
+          timeout,
+          'onAboutToLogOut',
+        );
       }
 
       if (useFbAuthAlso) {
@@ -314,13 +501,12 @@ class AuthServiceImpl implements AuthServiceInt {
       }
 
       // Call all onLoggedOut callbacks (after sign out is complete)
-      for (final callback in _onLoggedOutCallbacks) {
-        try {
-          await callback();
-        } catch (e) {
-          logw('onLoggedOut callback failed: $e');
-        }
-      }
+      // Using a generous timeout for post-logout callbacks
+      await _executeVoidCallbacksByPriority(
+        _onLoggedOutByPriority,
+        const Duration(seconds: 30),
+        'onLoggedOut',
+      );
 
       // Clear the cookie on the server if using federated auth
       if (AppConfigBase.useCookieFederatedAuth) {
@@ -337,9 +523,17 @@ class AuthServiceImpl implements AuthServiceInt {
         }
       }
 
-      // Clear the stored user info
+      // Clear any legacy stored user info
       SharedPreferences prefs = await SharedPreferences.getInstance();
 
+      // MIGRATION NOTE: This key was never actively written to, but we keep the
+      // removal call for safety during migration. Device-level cleanup (including
+      // timezone data) is now handled by DeviceService.unregisterDevice() which
+      // is automatically called via the onAboutToLogOut callback when
+      // DeviceService.connectToAuthService() has been configured.
+      // TODO(migration): Remove this line after confirming no production data
+      // uses this key (target: next major version after v0.4.0).
+      // ignore: deprecated_member_use_from_same_package
       await prefs.remove(sharedPrefKeyTimezone);
 
       // Note: FCM token cleanup has been moved to NotificationService.clearFcmToken()

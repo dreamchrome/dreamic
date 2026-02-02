@@ -14,6 +14,7 @@ import '../app/helpers/app_lifecycle_service.dart';
 import '../data/models/notification_payload.dart';
 import '../data/models/notification_permission_status.dart';
 import '../data/repos/auth_service_int.dart';
+import '../data/repos/device_service_int.dart';
 import 'package:get_it/get_it.dart';
 import '../utils/logger.dart';
 import 'notification_channel_manager.dart';
@@ -67,6 +68,27 @@ typedef NotificationErrorCallback = void Function(
 /// - Notification routing and deep linking
 /// - Badge count management
 /// - Rich notifications (images, actions)
+///
+/// ## Separation of Concerns (DeviceService Integration)
+///
+/// NotificationService owns the **FCM token lifecycle**:
+/// - Token acquisition (initial fetch from Firebase Messaging)
+/// - Token refresh (listening to Firebase token refresh events)
+/// - Token caching (in-memory and SharedPreferences)
+/// - Local notification state and permission prompting
+///
+/// NotificationService does **NOT** own backend persistence. When
+/// [DeviceServiceInt] is registered in GetIt, token changes are delegated
+/// to [DeviceServiceInt.persistFcmToken] for Firestore writes.
+///
+/// **Critical: Logout Path**
+///
+/// On logout, NotificationService performs **local cleanup only** (clear
+/// cached token, stop listeners, delete Firebase token). Backend cleanup
+/// is owned by DeviceService, which deletes the device doc via its own
+/// `onAboutToLogOut` callback. NotificationService must NOT call
+/// [DeviceServiceInt.persistFcmToken] during logout to avoid racing
+/// with the device doc deletion.
 ///
 /// ## Usage
 ///
@@ -145,8 +167,17 @@ class NotificationService {
   /// Subscription to auth service login stream
   StreamSubscription<bool>? _authSubscription;
 
-  /// Reference to auth service for cleanup
-  AuthServiceInt? _connectedAuthService;
+  /// Reference to auth service.
+  ///
+  /// Set via [initialize] (race-free path) or [connectToAuthService] (legacy path).
+  AuthServiceInt? _authService;
+
+  /// Whether the service has been connected to auth service.
+  ///
+  /// This flag is set by [initialize] or [connectToAuthService] and can be
+  /// checked via [isConnectedToAuth] to determine if auth lifecycle management
+  /// is active.
+  bool _isConnectedToAuthService = false;
 
   /// Callback registered with auth service for logout cleanup
   Future<void> Function()? _aboutToLogOutCallback;
@@ -221,11 +252,28 @@ class NotificationService {
   /// - [reminderIntervalDays]: Days between permission reminders (default: 30)
   /// - [onTokenChanged]: Callback for FCM token changes. If not provided and auth service
   ///   is available, uses the default Firebase callable function implementation.
+  /// - [authService]: Pass auth service directly for race-free initialization.
+  ///   When provided, sets up auth connection immediately without using GetIt.
+  ///   This is the recommended approach for new code - see plan.auth-race.md.
   /// - [autoConnectAuth]: Whether to automatically connect to auth service if available
   ///   in GetIt (default: true). Set to false if you want to call [connectToAuthService]
-  ///   manually with custom configuration.
+  ///   manually with custom configuration. **Deprecated:** Use [authService] parameter instead.
   ///
-  /// Example:
+  /// ## Race-Free Initialization (Recommended)
+  ///
+  /// For race-free initialization, pass `authService` directly and set
+  /// `autoConnectAuth: false`:
+  ///
+  /// ```dart
+  /// await notificationService.initialize(
+  ///   authService: auth,
+  ///   autoConnectAuth: false,
+  ///   onNotificationTapped: (route, data) async { ... },
+  /// );
+  /// ```
+  ///
+  /// ## Legacy Initialization
+  ///
   /// ```dart
   /// await NotificationService().initialize(
   ///   onNotificationTapped: (route, data) async {
@@ -244,8 +292,26 @@ class NotificationService {
     bool showNotificationsInForeground = true,
     int reminderIntervalDays = 30,
     Future<void> Function(String? newToken, String? oldToken)? onTokenChanged,
+    // NEW: Pass auth service directly for race-free initialization
+    AuthServiceInt? authService,
+    // DEPRECATED: Use authService parameter instead
+    @Deprecated('Use authService parameter instead for race-free initialization')
     bool autoConnectAuth = true,
   }) async {
+    // CRITICAL: Set auth reference FIRST, before any await statements.
+    //
+    // The auth callback (handleAuthenticated) may fire immediately after
+    // AuthService construction via a microtask. If we await anything before
+    // setting _authService, the callback could execute while _authService
+    // is still null.
+    //
+    // See: "Critical implementation constraints" section in plan.auth-race.md
+    if (authService != null) {
+      _authService = authService;
+      _isConnectedToAuthService = true;
+      logd('NotificationService: Initialized with auth service (race-free path)');
+    }
+
     if (_initialized) {
       logi('NotificationService already initialized');
       return;
@@ -271,8 +337,17 @@ class NotificationService {
       _initialized = true;
       logi('NotificationService initialized successfully');
 
-      // Auto-wire to auth service if available and enabled
-      if (autoConnectAuth) {
+      // Store token callback if provided (used by both paths)
+      if (onTokenChanged != null) {
+        _onTokenChanged = onTokenChanged;
+      }
+
+      // Skip auto-connect if authService was provided directly (race-free path)
+      if (authService != null) {
+        logd('NotificationService: Auth service provided directly, skipping auto-connect');
+        // Token callback already stored above, auth service already set at top
+      } else if (autoConnectAuth) {
+        // Legacy path: Auto-wire to auth service if available in GetIt
         // Check if auth service is available before attempting to connect
         bool authAvailable = false;
         try {
@@ -293,10 +368,9 @@ class NotificationService {
           loge(errorMsg);
           _onError?.call(errorMsg, null);
         }
-      } else if (onTokenChanged != null) {
-        // Even without auto-connect, store the callback for later use
-        _onTokenChanged = onTokenChanged;
       }
+      // Note: If neither authService nor autoConnectAuth, token callback is still
+      // stored above for manual connection later via connectToAuthService()
     } catch (e, stackTrace) {
       loge(e, 'Failed to initialize NotificationService', stackTrace);
       _onError?.call('Failed to initialize NotificationService: $e', stackTrace);
@@ -877,11 +951,98 @@ class NotificationService {
   // Auth Integration Methods
   //
 
+  /// Whether this service is connected to auth.
+  ///
+  /// Returns true if auth service was provided via [initialize] or
+  /// [connectToAuthService] was called successfully.
+  ///
+  /// This getter is used by other services (e.g., to determine cleanup
+  /// responsibility during logout).
+  bool get isConnectedToAuth => _isConnectedToAuthService;
+
+  /// Public handler for auth state changes. Called when user authenticates.
+  ///
+  /// Can be passed to AuthService constructor for race-free initialization.
+  /// See plan.auth-race.md for usage patterns.
+  ///
+  /// Unlike DeviceService, NotificationService's [_handleLogin] doesn't actually
+  /// need [_authService] (it only uses configuration and local state). However,
+  /// the defensive warning helps surface initialization ordering issues.
+  Future<void> handleAuthenticated(String? uid) async {
+    // Defensive check - warn if called before initialize().
+    // Unlike DeviceService, NotificationService's _handleLogin() doesn't actually
+    // need _authService (it only uses configuration and local state). However,
+    // logging helps surface initialization ordering issues.
+    if (_authService == null) {
+      logw('NotificationService: handleAuthenticated called before initialize(). '
+          'Proceeding anyway (_handleLogin has no auth dependency). '
+          'This may indicate an initialization ordering issue - see Constraint 2 in plan.auth-race.md');
+    }
+
+    logd('NotificationService: handleAuthenticated called, uid=$uid');
+    await _handleLogin();
+  }
+
+  /// Public handler for pre-logout cleanup.
+  ///
+  /// Can be passed to AuthService constructor for race-free initialization.
+  /// See plan.auth-race.md for usage patterns.
+  ///
+  /// This performs backend token unregistration (unless DeviceService handles it)
+  /// and is called BEFORE Firebase signOut while still authenticated.
+  Future<void> handleAboutToLogOut() async {
+    logd('NotificationService: handleAboutToLogOut called');
+
+    // When DeviceService is registered and connected, it handles backend cleanup
+    // by deleting the device doc via its own onAboutToLogOut callback.
+    // NotificationService should not trigger a token persistence write that
+    // would race with deletion.
+    //
+    // DATA MODEL ASSUMPTION: The FCM token is stored inside the device document,
+    // not in a separate collection. Therefore, when DeviceService deletes the
+    // device document on logout, the FCM token is automatically cleaned up.
+    // If this data model changes (e.g., tokens stored separately), this logic
+    // must be revisited to ensure NotificationService performs its own cleanup.
+    if (GetIt.I.isRegistered<DeviceServiceInt>()) {
+      final deviceService = GetIt.I.get<DeviceServiceInt>();
+      if (deviceService.isConnectedToAuth) {
+        logd('NotificationService: handleAboutToLogOut - DeviceService is connected, '
+            'skipping token persistence (device doc will be deleted by DeviceService)');
+        return;
+      }
+    }
+
+    // Fallback for apps without DeviceService integration or when DeviceService
+    // is not connected - perform backend token unregistration via the custom callback
+    logd('NotificationService: handleAboutToLogOut - Performing backend token unregistration');
+    if (_onTokenChanged != null && _cachedFcmToken != null) {
+      try {
+        await _onTokenChanged!(null, _cachedFcmToken);
+        logd('NotificationService: Successfully unregistered FCM token on backend before logout');
+      } catch (e) {
+        logw('NotificationService: Failed to unregister FCM token on backend: $e');
+        // Continue with logout even if backend call fails
+      }
+    }
+  }
+
   /// Connects to an auth service to automatically manage FCM tokens on login/logout.
+  ///
+  /// **Note:** This is the legacy initialization approach. For new code, prefer
+  /// [DreamicServices.initialize] or passing [authService] directly to
+  /// [initialize] for race-free setup.
+  ///
+  /// This method may miss auth events on warm start (when user is already
+  /// logged in) because callbacks are registered after Firebase listeners
+  /// have already attached. See `docs/plans/auth-race/plan.auth-race.md`.
+  ///
+  /// ## Login Behavior
   ///
   /// When the user logs in:
   /// - If [AppConfigBase.fcmAutoInitialize] is true: requests permission and initializes FCM
   /// - If [AppConfigBase.fcmAutoInitialize] is false: only initializes if permission is already granted
+  ///
+  /// ## Logout Behavior
   ///
   /// When the user logs out:
   /// - Backend unregistration happens automatically via `onAboutToLogOut` callback
@@ -889,15 +1050,55 @@ class NotificationService {
   /// - Then performs local token cleanup (stops listener, deletes Firebase token, clears cache)
   /// - Manual [preLogoutCleanup] call is no longer needed for backend cleanup
   ///
+  /// ## DeviceService Integration
+  ///
+  /// When [DeviceServiceInt] is registered in GetIt, token changes are automatically
+  /// delegated to [DeviceServiceInt.updateFcmToken]. This ensures:
+  /// - Single canonical device document per install/profile
+  /// - Token stored alongside timezone and activity data
+  /// - Token uniqueness enforcement across device docs
+  ///
+  /// **Recommended setup (race-free):**
+  /// ```dart
+  /// // Use DreamicServices for race-free initialization
+  /// final services = await DreamicServices.initialize(
+  ///   firebaseApp: Firebase.app(),
+  ///   enableDeviceService: true,
+  ///   enableNotifications: true,
+  /// );
+  /// ```
+  ///
+  /// **Legacy setup (may miss auth events on warm start):**
+  /// ```dart
+  /// // 1. Register services in GetIt
+  /// GetIt.I.registerSingleton<DeviceServiceInt>(DeviceServiceImpl());
+  ///
+  /// // 2. Connect DeviceService first (handles device doc lifecycle)
+  /// await deviceService.connectToAuthService();
+  ///
+  /// // 3. Connect NotificationService (auto-delegates to DeviceService)
+  /// await notificationService.connectToAuthService();
+  /// ```
+  ///
+  /// If DeviceService is not registered, falls back to direct Firebase callable.
+  ///
+  /// ## Parameters
+  ///
   /// [authService] is the auth service to connect to. If null, attempts to
   /// resolve from GetIt (guarded - logs and skips if not registered).
   ///
   /// [onTokenChanged] callback for syncing tokens to your backend.
-  /// If not provided, uses the default Firebase callable function configured
-  /// in [AppConfigBase.notificationsUpdateFcmTokenFunction].
+  /// If not provided and DeviceService is registered, uses DeviceService.
+  /// Otherwise, uses the Firebase callable configured in
+  /// [AppConfigBase.notificationsUpdateFcmTokenFunction].
   ///
-  /// Example:
+  /// ## Example
+  ///
   /// ```dart
+  /// // Standard setup (uses DeviceService if available)
+  /// await notificationService.connectToAuthService();
+  ///
+  /// // Custom token handling
   /// await notificationService.connectToAuthService(
   ///   onTokenChanged: (newToken, oldToken) async {
   ///     await myBackendService.updateFcmToken(newToken, oldToken);
@@ -932,16 +1133,28 @@ class NotificationService {
     }
 
     // Remove any previously registered callback
-    if (_aboutToLogOutCallback != null && _connectedAuthService != null) {
-      _connectedAuthService!.removeOnAboutToLogOutCallback(_aboutToLogOutCallback!);
+    if (_aboutToLogOutCallback != null && _authService != null) {
+      _authService!.removeOnAboutToLogOutCallback(_aboutToLogOutCallback!);
     }
 
     // Store reference to auth service for cleanup
-    _connectedAuthService = auth;
+    _authService = auth;
+    _isConnectedToAuthService = true;
 
-    // Register onAboutToLogOut callback for backend token unregistration
+    // Register onAboutToLogOut callback
     // This is called BEFORE Firebase signOut while still authenticated
     _aboutToLogOutCallback = () async {
+      // When DeviceService is registered, it handles backend cleanup by deleting
+      // the device doc via its own onAboutToLogOut callback. NotificationService
+      // should not trigger a token persistence write that would race with deletion.
+      if (GetIt.I.isRegistered<DeviceServiceInt>()) {
+        logd('onAboutToLogOut: DeviceService registered, skipping token persistence '
+            '(device doc will be deleted by DeviceService)');
+        return;
+      }
+
+      // Fallback for apps without DeviceService integration - perform backend
+      // token unregistration via the custom callback
       logd('onAboutToLogOut: Performing backend token unregistration');
       if (_onTokenChanged != null && _cachedFcmToken != null) {
         try {
@@ -1019,30 +1232,59 @@ class NotificationService {
     }
   }
 
-  /// Default token changed callback using Firebase callable functions.
+  /// Default token changed callback that delegates to DeviceService when available.
+  ///
+  /// ## Integration Pattern
+  ///
+  /// When DeviceService is registered in GetIt, token changes are automatically
+  /// routed through [DeviceServiceInt.updateFcmToken], which ensures:
+  /// - Single canonical device document per install/profile
+  /// - Token uniqueness enforcement (cleared from other device docs)
+  /// - Coalesced updates with timezone and activity tracking
+  ///
+  /// If DeviceService is not available (e.g., consuming app doesn't use it),
+  /// falls back to direct Firebase callable function.
+  ///
+  /// ## Recommended Setup
+  ///
+  /// For apps using both DeviceService and NotificationService:
+  /// ```dart
+  /// // 1. Register DeviceServiceImpl in GetIt
+  /// GetIt.I.registerSingleton<DeviceServiceInt>(DeviceServiceImpl());
+  ///
+  /// // 2. Connect DeviceService to auth (handles device doc lifecycle)
+  /// await deviceService.connectToAuthService();
+  ///
+  /// // 3. Connect NotificationService (will auto-delegate to DeviceService)
+  /// await notificationService.connectToAuthService();
+  /// ```
   Future<void> _defaultTokenChangedCallback(String? newToken, String? oldToken) async {
+    // DeviceService is required for token persistence. If not registered,
+    // this is an integration bug - log error and skip backend persistence.
+    if (!GetIt.I.isRegistered<DeviceServiceInt>()) {
+      loge(
+        'DeviceService not registered during token event',
+        'Token: ${newToken != null ? 'present' : 'null'}. '
+        'This is an integration bug - DeviceService should be registered before '
+        'NotificationService processes token events.',
+        StackTrace.current,
+      );
+      // Skip backend persistence but continue with local notification handling
+      return;
+    }
+
+    // Use DeviceService for token persistence
+    // This ensures token is stored in the canonical device document
     try {
-      final functionName = AppConfigBase.notificationsUpdateFcmTokenUseGrouped
-          ? AppConfigBase.notificationsUpdateFcmTokenGroupFunction!
-          : AppConfigBase.notificationsUpdateFcmTokenFunction;
-
-      final callable = AppConfigBase.firebaseFunctionCallable(functionName);
-
-      final data = <String, dynamic>{
-        if (newToken != null) 'fcmToken': newToken,
-        if (oldToken != null) 'oldFcmToken': oldToken,
-      };
-
-      // Add action parameter if using grouped style
-      if (AppConfigBase.notificationsUpdateFcmTokenUseGrouped) {
-        data['action'] = AppConfigBase.notificationsUpdateFcmTokenAction;
-      }
-
-      await callable.call(data);
-      logd(
-          'FCM token synced via default callable: ${newToken != null ? 'registered' : 'unregistered'}');
-    } catch (e) {
-      loge(e, 'Failed to sync FCM token via default callable');
+      final deviceService = GetIt.I.get<DeviceServiceInt>();
+      final result = await deviceService.persistFcmToken(fcmToken: newToken);
+      result.fold(
+        (failure) => logw('FCM token persistence via DeviceService failed: $failure'),
+        (_) => logd('FCM token persisted via DeviceService: '
+            '${newToken != null ? 'registered' : 'cleared'}'),
+      );
+    } catch (e, stackTrace) {
+      loge(e, 'Unexpected error during FCM token persistence', stackTrace);
       // Don't rethrow - token sync failure shouldn't block other operations
     }
   }
@@ -1083,7 +1325,12 @@ class NotificationService {
     logd('Starting pre-logout cleanup');
 
     // Step 1: Best-effort backend unregister while still authenticated
-    if (_onTokenChanged != null && _cachedFcmToken != null) {
+    // Skip if DeviceService is registered - it handles cleanup by deleting the
+    // device doc via its onAboutToLogOut callback
+    if (GetIt.I.isRegistered<DeviceServiceInt>()) {
+      logd('DeviceService registered, skipping token persistence '
+          '(device doc will be deleted by DeviceService)');
+    } else if (_onTokenChanged != null && _cachedFcmToken != null) {
       try {
         await _onTokenChanged!(null, _cachedFcmToken).timeout(
           timeout,

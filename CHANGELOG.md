@@ -1,3 +1,13 @@
+## 0.5.0
+
+### Added
+* `DreamicServices.initialize` for race-free, ordered service initialization (with prioritized auth/logout callbacks)
+* New Device Service foundation: stable device ID, device models (`DeviceInfo`, `DevicePlatform`), timezone/offset tracking with offline pending payload handling, and comprehensive tests
+
+### Changed
+* Auth lifecycle callbacks now support prioritized execution via `PrioritizedCallback`
+* Improved DeviceService/NotificationService coordination to avoid auth/logout race conditions
+
 ## 0.4.0
 
 ### ⚠️ Breaking Changes: FCM Token Management
