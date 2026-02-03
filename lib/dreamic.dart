@@ -88,6 +88,7 @@ export 'data/repos/dreamic_services.dart';
 // Utilities
 export 'utils/logger.dart';
 export 'utils/retry_it.dart';
+export 'utils/string_validators.dart';
 
 // Test Utilities
 export 'test_utils/mock_app_cubit.dart';
