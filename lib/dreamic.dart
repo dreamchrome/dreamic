@@ -90,5 +90,11 @@ export 'utils/logger.dart';
 export 'utils/retry_it.dart';
 export 'utils/string_validators.dart';
 
+// Navigation — Singleton Route Pattern
+export 'navigation/guards/singleton_route_guard.dart';
+export 'navigation/extensions/singleton_navigation.dart';
+export 'navigation/child_forwarder/singleton_child_forwarder.dart';
+export 'navigation/mixins/singleton_route_mixin.dart';
+
 // Test Utilities
 export 'test_utils/mock_app_cubit.dart';
