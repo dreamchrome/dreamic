@@ -23,7 +23,6 @@ class _TestChildRoute extends PageRouteInfo<void> {
 
 class _TestOtherRoute extends PageRouteInfo<void> {
   const _TestOtherRoute() : super('TestOtherRoute');
-  static const String name = 'TestOtherRoute';
 }
 
 // ---------------------------------------------------------------------------
