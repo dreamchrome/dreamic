@@ -165,3 +165,87 @@ extension SingletonNavigation on StackRouter {
     return singletonExists(route.routeName);
   }
 }
+
+/// Extension on [StackRouter] providing custom-matcher singleton navigation.
+///
+/// Use [navigateToSingletonWhere] when a route is a singleton **by value** —
+/// multiple instances of the same route type may coexist, but no two with the
+/// *same parameters* should.
+///
+/// For routes that are singletons **by identity** (only one instance should
+/// ever exist regardless of parameters), use
+/// [SingletonNavigation.navigateToSingleton] instead.
+extension SingletonNavigationAdvanced on StackRouter {
+  /// Navigates to a singleton route using custom matching logic to determine
+  /// whether an equivalent instance already exists in the stack.
+  ///
+  /// The [matcher] receives [RouteData] for each page in the root stack.
+  /// [RouteData] provides access to:
+  /// - `name` — the generated route name (e.g., `'SettingsRoute'`)
+  /// - `path` — the resolved URL path segment
+  /// - `pathParams` — path parameters as a `Parameters` map
+  /// - `queryParams` — query parameters as a `Parameters` map
+  /// - `argsAs<T>()` — typed route arguments (cast to your generated args
+  ///   class)
+  ///
+  /// If the matcher finds a match: pops to the existing instance.
+  /// If no match: creates a new stack with [route] via `replaceAll`.
+  ///
+  /// Uses `route.data` inside `popUntil` — the same access pattern used by
+  /// [SingletonNavigation.navigateToSingleton] and [SingletonRouteGuard] — to
+  /// ensure consistent behavior across all singleton navigation methods.
+  ///
+  /// Example — match by route name AND parameter value:
+  /// ```dart
+  /// await router.navigateToSingletonWhere(
+  ///   SettingsRoute(tab: SettingsTab.profile),
+  ///   matcher: (routeData) =>
+  ///     routeData.name == SettingsRoute.name &&
+  ///     routeData.argsAs<SettingsRouteArgs>().tab == SettingsTab.profile,
+  /// );
+  /// ```
+  Future<void> navigateToSingletonWhere(
+    PageRouteInfo route, {
+    required bool Function(RouteData routeData) matcher,
+  }) async {
+    try {
+      final exists = root.stack.any((page) => matcher(page.routeData));
+
+      if (exists) {
+        logd('navigateToSingletonWhere: Match found, popping to it');
+
+        try {
+          root.popUntil((r) => r.data != null && matcher(r.data!));
+
+          // Forward child routes to the existing instance if present.
+          final children = route.initialChildren;
+          if (children != null && children.isNotEmpty) {
+            logd(
+              'navigateToSingletonWhere: Forwarding ${children.length} '
+              'child route(s) to existing ${route.routeName}',
+            );
+            SingletonChildForwarder.forRoute(route.routeName)
+                .forward(children);
+          }
+        } catch (e) {
+          loge(
+            e,
+            'navigateToSingletonWhere: Error during popUntil, '
+            'falling back to replaceAll',
+          );
+          await root.replaceAll([route]);
+        }
+      } else {
+        logd('navigateToSingletonWhere: No match, creating new stack');
+        await root.replaceAll([route]);
+      }
+    } catch (e) {
+      loge(
+        e,
+        'navigateToSingletonWhere: Navigation failed for '
+        '${route.routeName} — router may be in unstable state',
+      );
+      rethrow;
+    }
+  }
+}
