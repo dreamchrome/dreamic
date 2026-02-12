@@ -1091,7 +1091,7 @@ class AppConfigBase {
     return _authMainCallableFunction!;
   }
 
-  // --- deviceAction ---
+  // --- deviceActions ---
   // Unified callable for device operations (register, touch, updateToken, unregister, getMyDevices)
   // Used by DeviceService for timezone tracking and device registration.
   static String? _deviceActionFunctionDefault;
@@ -1111,27 +1111,27 @@ class AppConfigBase {
   /// - Code: `AppConfigBase.deviceActionFunctionDefault = 'myDeviceFunction'`
   /// - Build flag: `--dart-define DEVICE_ACTION_FUNCTION=myDeviceFunction`
   ///
-  /// Default: `'deviceAction'`
+  /// Default: `'deviceActions'`
   static String get deviceActionFunction {
     _deviceActionFunction ??=
         const String.fromEnvironment('DEVICE_ACTION_FUNCTION', defaultValue: '').isNotEmpty
             ? const String.fromEnvironment('DEVICE_ACTION_FUNCTION', defaultValue: '')
-            : (_deviceActionFunctionDefault ?? 'deviceAction');
+            : (_deviceActionFunctionDefault ?? 'deviceActions');
     return _deviceActionFunction!;
   }
 
-  // --- devOnlyDevSignIn ---
-  // Dev-only sign-in function (only used in development)
-  static String? _devOnlyDevSignInFunctionDefault;
-  static set devOnlyDevSignInFunctionDefault(String value) =>
-      _devOnlyDevSignInFunctionDefault = value;
-  static String? _devOnlyDevSignInFunction;
-  static String get devOnlyDevSignInFunction {
-    _devOnlyDevSignInFunction ??=
-        const String.fromEnvironment('DEV_ONLY_DEV_SIGN_IN_FUNCTION', defaultValue: '').isNotEmpty
-            ? const String.fromEnvironment('DEV_ONLY_DEV_SIGN_IN_FUNCTION', defaultValue: '')
-            : (_devOnlyDevSignInFunctionDefault ?? 'devOnlyDevSignIn');
-    return _devOnlyDevSignInFunction!;
+  // --- devActions ---
+  // Dev-only callable for development/emulator utilities (multiplexed with action parameter)
+  static String? _devActionsFunctionDefault;
+  static set devActionsFunctionDefault(String value) =>
+      _devActionsFunctionDefault = value;
+  static String? _devActionsFunction;
+  static String get devActionsFunction {
+    _devActionsFunction ??=
+        const String.fromEnvironment('DEV_ACTIONS_FUNCTION', defaultValue: '').isNotEmpty
+            ? const String.fromEnvironment('DEV_ACTIONS_FUNCTION', defaultValue: '')
+            : (_devActionsFunctionDefault ?? 'devActions');
+    return _devActionsFunction!;
   }
 
   // static String? _appStoreAndroidUrl;

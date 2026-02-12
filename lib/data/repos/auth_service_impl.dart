@@ -1940,10 +1940,11 @@ class AuthServiceImpl implements AuthServiceInt {
   Future<Either<AuthServiceSignInFailure, Unit>> signInWithDevOnly() async {
     _fbAuth.signOut();
 
-    HttpsCallable devOnlyCallable =
-        AppConfigBase.firebaseFunctionCallable(AppConfigBase.devOnlyDevSignInFunction);
+    HttpsCallable devActionsCallable =
+        AppConfigBase.firebaseFunctionCallable(AppConfigBase.devActionsFunction);
 
-    var result = await devOnlyCallable.call({
+    var result = await devActionsCallable.call({
+      'action': 'signInWithUserId',
       'uid': AppConfigBase.devOnlyUid,
       'autoGenerateNewUser': AppConfigBase.devOnlyAutoGenerateNewUser,
       'autoGenerateNewUserAccessLevel': AppConfigBase.devOnlyAutoGenerateNewUserAccessLevel,
