@@ -1,4 +1,5 @@
 import 'package:dreamic/data/helpers/model_converters.dart';
+import 'package:dreamic/data/models/device_form_factor.dart';
 import 'package:dreamic/data/models/device_platform.dart';
 import 'package:dreamic/data/models_bases/base_firestore_model.dart';
 import 'package:json_annotation/json_annotation.dart';
@@ -72,6 +73,7 @@ class DeviceMetadata {
 /// - [createdAt]: When this device was first registered
 /// - [updatedAt]: When this device document was last updated
 /// - [platform]: Device platform (ios, android, web, macos, windows, linux)
+/// - [formFactor]: Physical form factor (phone, tablet, desktop, browser)
 /// - [appVersion]: App version installed on this device
 /// - [deviceInfo]: Optional additional device metadata
 ///
@@ -157,6 +159,17 @@ class DeviceInfo extends BaseFirestoreModel {
   )
   final DevicePlatform? platform;
 
+  /// Physical form factor of this device.
+  ///
+  /// Orthogonal to [platform] — an iPad is platform "ios" but
+  /// form factor "tablet". Used by server-side delivery strategies
+  /// to prioritize notification delivery (e.g., prefer phones over tablets).
+  @JsonKey(
+    fromJson: DeviceFormFactorSerialization.deserialize,
+    toJson: DeviceFormFactorSerialization.serialize,
+  )
+  final DeviceFormFactor? formFactor;
+
   /// App version installed on this device.
   ///
   /// Useful for debugging and ensuring notifications are compatible
@@ -179,6 +192,7 @@ class DeviceInfo extends BaseFirestoreModel {
     this.createdAt,
     this.updatedAt,
     this.platform,
+    this.formFactor,
     this.appVersion,
     this.deviceInfo,
   });
@@ -216,6 +230,7 @@ class DeviceInfo extends BaseFirestoreModel {
     DateTime? createdAt,
     DateTime? updatedAt,
     DevicePlatform? platform,
+    DeviceFormFactor? formFactor,
     String? appVersion,
     DeviceMetadata? deviceInfo,
   }) {
@@ -229,6 +244,7 @@ class DeviceInfo extends BaseFirestoreModel {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       platform: platform ?? this.platform,
+      formFactor: formFactor ?? this.formFactor,
       appVersion: appVersion ?? this.appVersion,
       deviceInfo: deviceInfo ?? this.deviceInfo,
     );
@@ -248,6 +264,7 @@ class DeviceInfo extends BaseFirestoreModel {
           createdAt == other.createdAt &&
           updatedAt == other.updatedAt &&
           platform == other.platform &&
+          formFactor == other.formFactor &&
           appVersion == other.appVersion &&
           deviceInfo == other.deviceInfo;
 
@@ -262,6 +279,7 @@ class DeviceInfo extends BaseFirestoreModel {
       createdAt.hashCode ^
       updatedAt.hashCode ^
       platform.hashCode ^
+      formFactor.hashCode ^
       appVersion.hashCode ^
       deviceInfo.hashCode;
 
@@ -272,6 +290,7 @@ class DeviceInfo extends BaseFirestoreModel {
         'timezone: $timezone, '
         'timezoneOffsetMinutes: $timezoneOffsetMinutes, '
         'platform: $platform, '
+        'formFactor: $formFactor, '
         'appVersion: $appVersion, '
         'lastActiveAt: $lastActiveAt, '
         'fcmToken: ${fcmToken != null ? '***' : 'null'}'

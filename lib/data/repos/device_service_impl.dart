@@ -16,6 +16,8 @@ import '../../app/helpers/app_lifecycle_service.dart';
 import '../../utils/get_it_utils.dart';
 import '../../utils/logger.dart';
 import '../helpers/repository_failure.dart';
+import '../../utils/device_utils.dart';
+import '../models/device_form_factor.dart';
 import '../models/device_info.dart';
 import '../models/device_platform.dart';
 import 'auth_service_int.dart';
@@ -66,6 +68,9 @@ class _PendingDevicePayload {
   /// Optional: App version to include in registration.
   final String? appVersion;
 
+  /// Optional: Form factor to include in registration.
+  final String? formFactor;
+
   /// When this pending payload was last updated locally.
   final DateTime pendingUpdatedAt;
 
@@ -85,6 +90,7 @@ class _PendingDevicePayload {
     this.touch = false,
     this.platform,
     this.appVersion,
+    this.formFactor,
     required this.pendingUpdatedAt,
     this.lastAttemptAt,
     this.hasChangedFields = false,
@@ -100,6 +106,7 @@ class _PendingDevicePayload {
       touch: json['touch'] as bool? ?? false,
       platform: json['platform'] as String?,
       appVersion: json['appVersion'] as String?,
+      formFactor: json['formFactor'] as String?,
       pendingUpdatedAt: json['pendingUpdatedAt'] != null
           ? DateTime.fromMillisecondsSinceEpoch(json['pendingUpdatedAt'] as int)
           : DateTime.now(),
@@ -120,6 +127,7 @@ class _PendingDevicePayload {
       'touch': touch,
       if (platform != null) 'platform': platform,
       if (appVersion != null) 'appVersion': appVersion,
+      if (formFactor != null) 'formFactor': formFactor,
       'pendingUpdatedAt': pendingUpdatedAt.millisecondsSinceEpoch,
       if (lastAttemptAt != null) 'lastAttemptAt': lastAttemptAt!.millisecondsSinceEpoch,
       'hasChangedFields': hasChangedFields,
@@ -138,6 +146,7 @@ class _PendingDevicePayload {
     bool touch = false,
     String? platform,
     String? appVersion,
+    String? formFactor,
     bool hasChangedFields = false,
   }) {
     return _PendingDevicePayload(
@@ -148,6 +157,7 @@ class _PendingDevicePayload {
       touch: this.touch || touch, // Sticky
       platform: platform ?? this.platform,
       appVersion: appVersion ?? this.appVersion,
+      formFactor: formFactor ?? this.formFactor,
       pendingUpdatedAt: DateTime.now(),
       lastAttemptAt: lastAttemptAt, // Preserved until flush attempt
       hasChangedFields: this.hasChangedFields || hasChangedFields, // Sticky
@@ -164,6 +174,7 @@ class _PendingDevicePayload {
       touch: touch,
       platform: platform,
       appVersion: appVersion,
+      formFactor: formFactor,
       pendingUpdatedAt: pendingUpdatedAt,
       lastAttemptAt: attemptAt,
       hasChangedFields: hasChangedFields,
@@ -177,7 +188,8 @@ class _PendingDevicePayload {
         fcmToken != null ||
         touch ||
         platform != null ||
-        appVersion != null;
+        appVersion != null ||
+        formFactor != null;
   }
 
   /// Whether the backoff should be applied before attempting flush.
@@ -210,6 +222,7 @@ class _PendingDevicePayload {
         'offset: $timezoneOffsetMinutes, '
         'touch: $touch, '
         'hasToken: ${fcmToken != null}, '
+        'formFactor: $formFactor, '
         'hasChangedFields: $hasChangedFields'
         '}';
   }
@@ -314,6 +327,9 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
   /// Timestamp of last successful touch operation.
   DateTime? _lastTouchAt;
+
+  /// Cached form factor — a physical device property that doesn't change during a session.
+  DeviceFormFactor? _cachedFormFactor;
 
   /// Registered authenticated callback for cleanup during disconnect.
   Future<void> Function(String? uid)? _registeredOnAuthenticatedCallback;
@@ -433,6 +449,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
     bool touch = false,
     String? platform,
     String? appVersion,
+    String? formFactor,
     bool hasChangedFields = false,
   }) async {
     await _ensurePendingPayloadLoaded();
@@ -447,6 +464,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         touch: touch,
         platform: platform,
         appVersion: appVersion,
+        formFactor: formFactor,
         pendingUpdatedAt: DateTime.now(),
         hasChangedFields: hasChangedFields,
       );
@@ -459,6 +477,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         touch: touch,
         platform: platform,
         appVersion: appVersion,
+        formFactor: formFactor,
         hasChangedFields: hasChangedFields,
       );
     }
@@ -533,6 +552,12 @@ class DeviceServiceImpl implements DeviceServiceInt {
         callData['timezoneOffsetMinutes'] = payload.timezoneOffsetMinutes;
         callData['platform'] = payload.platform;
         callData['appVersion'] = payload.appVersion;
+
+        // Always include formFactor for register action — defensively detect
+        // if not in payload (handles payloads stored before formFactor was added)
+        final formFactorValue = payload.formFactor ??
+            DeviceFormFactorSerialization.serialize(await _getCurrentFormFactor());
+        callData['formFactor'] = formFactorValue;
 
         // Include token if available
         if (payload.fcmToken != null) {
@@ -698,6 +723,72 @@ class DeviceServiceImpl implements DeviceServiceInt {
     return DevicePlatform.web;
   }
 
+  /// Gets the current device form factor.
+  ///
+  /// Detection strategy per platform:
+  /// - iOS: Uses device_info_plus iosInfo.model — returns "iPhone" or "iPad".
+  ///   This is a definitive answer from the OS, not a heuristic.
+  /// - Android: Uses the standard Material Design heuristic: shortestSide >= 600dp.
+  ///   Android has no native phone/tablet API.
+  /// - Web: Always "browser".
+  /// - macOS/Windows/Linux: Always "desktop".
+  ///
+  /// Result is cached after first call.
+  Future<DeviceFormFactor> _getCurrentFormFactor() async {
+    if (_cachedFormFactor != null) {
+      return _cachedFormFactor!;
+    }
+
+    // 1) Web
+    if (kIsWeb) {
+      _cachedFormFactor = DeviceFormFactor.browser;
+      return _cachedFormFactor!;
+    }
+
+    // 2) Desktop native targets
+    if (defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux) {
+      _cachedFormFactor = DeviceFormFactor.desktop;
+      return _cachedFormFactor!;
+    }
+
+    // 3) iOS (definitive OS model signal)
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      try {
+        final iosInfo = await DeviceUtils.deviceInfo.iosInfo;
+        _cachedFormFactor = iosInfo.model.toLowerCase().contains('ipad')
+            ? DeviceFormFactor.tablet
+            : DeviceFormFactor.phone;
+        return _cachedFormFactor!;
+      } catch (e) {
+        logw('DeviceService: Failed to detect iOS form factor, defaulting to phone: $e');
+        _cachedFormFactor = DeviceFormFactor.phone;
+        return _cachedFormFactor!;
+      }
+    }
+
+    // 4) Android (shortest-side heuristic)
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final view = PlatformDispatcher.instance.views.first;
+        final shortestSide = view.physicalSize.shortestSide / view.devicePixelRatio;
+        _cachedFormFactor = shortestSide >= 600
+            ? DeviceFormFactor.tablet
+            : DeviceFormFactor.phone;
+        return _cachedFormFactor!;
+      } catch (e) {
+        logw('DeviceService: Failed to detect Android form factor, defaulting to phone: $e');
+        _cachedFormFactor = DeviceFormFactor.phone;
+        return _cachedFormFactor!;
+      }
+    }
+
+    // 5) Defensive fallback
+    _cachedFormFactor = DeviceFormFactor.phone;
+    return _cachedFormFactor!;
+  }
+
   @override
   Future<Either<RepositoryFailure, Unit>> registerDevice() async {
     logd('DeviceService: registerDevice called');
@@ -708,6 +799,8 @@ class DeviceServiceImpl implements DeviceServiceInt {
       final offsetMinutes = _getCurrentOffsetMinutes();
       final platform = _getCurrentPlatform();
       final platformString = DevicePlatformSerialization.serialize(platform);
+      final formFactor = await _getCurrentFormFactor();
+      final formFactorString = DeviceFormFactorSerialization.serialize(formFactor);
       final packageInfo = await PackageInfo.fromPlatform();
 
       // Check authentication - if not authenticated, store pending and return
@@ -719,6 +812,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
           timezoneOffsetMinutes: offsetMinutes,
           platform: platformString,
           appVersion: packageInfo.version,
+          formFactor: formFactorString,
           touch: true,
           hasChangedFields: true,
         );
@@ -738,6 +832,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         'timezone': timezone,
         'timezoneOffsetMinutes': offsetMinutes,
         'platform': platformString,
+        'formFactor': formFactorString,
         'appVersion': packageInfo.version,
       });
 
@@ -752,6 +847,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
           timezoneOffsetMinutes: offsetMinutes,
           platform: platformString,
           appVersion: packageInfo.version,
+          formFactor: formFactorString,
           touch: true,
           hasChangedFields: true,
         );
@@ -803,6 +899,8 @@ class DeviceServiceImpl implements DeviceServiceInt {
       final offsetMinutes = _getCurrentOffsetMinutes();
       final platform = _getCurrentPlatform();
       final platformString = DevicePlatformSerialization.serialize(platform);
+      final formFactor = await _getCurrentFormFactor();
+      final formFactorString = DeviceFormFactorSerialization.serialize(formFactor);
       final packageInfo = await PackageInfo.fromPlatform();
 
       await _updatePendingPayload(
@@ -811,6 +909,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         timezoneOffsetMinutes: offsetMinutes,
         platform: platformString,
         appVersion: packageInfo.version,
+        formFactor: formFactorString,
         touch: true,
         hasChangedFields: true,
       );
@@ -911,6 +1010,8 @@ class DeviceServiceImpl implements DeviceServiceInt {
         final deviceId = await getDeviceId();
         final platform = _getCurrentPlatform();
         final platformString = DevicePlatformSerialization.serialize(platform);
+        final formFactor = await _getCurrentFormFactor();
+        final formFactorString = DeviceFormFactorSerialization.serialize(formFactor);
         final packageInfo = await PackageInfo.fromPlatform();
 
         await _updatePendingPayload(
@@ -919,6 +1020,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
           timezoneOffsetMinutes: currentOffsetMinutes,
           platform: platformString,
           appVersion: packageInfo.version,
+          formFactor: formFactorString,
           touch: true,
           hasChangedFields: didChange,
         );
@@ -939,6 +1041,8 @@ class DeviceServiceImpl implements DeviceServiceInt {
       final deviceId = await getDeviceId();
       final platform = _getCurrentPlatform();
       final platformString = DevicePlatformSerialization.serialize(platform);
+      final formFactor = await _getCurrentFormFactor();
+      final formFactorString = DeviceFormFactorSerialization.serialize(formFactor);
       final packageInfo = await PackageInfo.fromPlatform();
 
       final result = await _deviceCallable.call({
@@ -947,6 +1051,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         'timezone': currentTimezone,
         'timezoneOffsetMinutes': currentOffsetMinutes,
         'platform': platformString,
+        'formFactor': formFactorString,
         'appVersion': packageInfo.version,
       });
 
@@ -960,6 +1065,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
           timezoneOffsetMinutes: currentOffsetMinutes,
           platform: platformString,
           appVersion: packageInfo.version,
+          formFactor: formFactorString,
           touch: true,
           hasChangedFields: didChange,
         );
@@ -1004,6 +1110,8 @@ class DeviceServiceImpl implements DeviceServiceInt {
       final offsetMinutes = _getCurrentOffsetMinutes();
       final platform = _getCurrentPlatform();
       final platformString = DevicePlatformSerialization.serialize(platform);
+      final formFactor = await _getCurrentFormFactor();
+      final formFactorString = DeviceFormFactorSerialization.serialize(formFactor);
       final packageInfo = await PackageInfo.fromPlatform();
 
       // Check if this is a change from cached values
@@ -1016,6 +1124,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         timezoneOffsetMinutes: offsetMinutes,
         platform: platformString,
         appVersion: packageInfo.version,
+        formFactor: formFactorString,
         touch: true,
         hasChangedFields: hasChangedFields,
       );

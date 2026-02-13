@@ -31,6 +31,8 @@ DeviceInfo _$DeviceInfoFromJson(Map<String, dynamic> json) => DeviceInfo(
       updatedAt: const SmartTimestampConverter().fromJson(json['updatedAt']),
       platform:
           DevicePlatformSerialization.deserialize(json['platform'] as String?),
+      formFactor: DeviceFormFactorSerialization.deserialize(
+          json['formFactor'] as String?),
       appVersion: json['appVersion'] as String?,
       deviceInfo: json['deviceInfo'] == null
           ? null
@@ -50,6 +52,8 @@ Map<String, dynamic> _$DeviceInfoToJson(DeviceInfo instance) =>
       'createdAt': const SmartTimestampConverter().toJson(instance.createdAt),
       'updatedAt': const SmartTimestampConverter().toJson(instance.updatedAt),
       'platform': DevicePlatformSerialization.serialize(instance.platform),
+      'formFactor':
+          DeviceFormFactorSerialization.serialize(instance.formFactor),
       'appVersion': instance.appVersion,
       'deviceInfo': instance.deviceInfo?.toJson(),
     };
