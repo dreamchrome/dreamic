@@ -6,6 +6,7 @@ import 'package:app_badge_plus/app_badge_plus.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -194,6 +195,42 @@ class NotificationService {
   /// - If [oldToken] is non-null and [newToken] is null: unregister [oldToken] on backend (best-effort).
   Future<void> Function(String? newToken, String? oldToken)? _onTokenChanged;
 
+  /// Callback for when the OS triggers a "manage notification settings" deep link.
+  ///
+  /// Set via [initialize] when the consuming app provides
+  /// [onSystemNotificationSettingsOpened]. When non-null, dreamic sets up
+  /// a method channel listener and performs permission flow integration
+  /// before invoking this callback.
+  NotificationSettingsDeepLinkCallback? _onSystemNotificationSettingsOpened;
+
+  //
+  // Notification Settings Deep Link
+  //
+
+  /// Method channel for receiving notification settings deep links from native code.
+  ///
+  /// Consuming apps must invoke 'openNotificationSettings' on this channel from:
+  /// - iOS: `userNotificationCenter(_:openSettingsFor:)` in AppDelegate
+  /// - Android: `onNewIntent()` handling `ACTION_APP_NOTIFICATION_SETTINGS` in MainActivity
+  static const String notificationSettingsChannelName =
+      'com.dreamchrome.dreamic/notification_settings';
+
+  MethodChannel? _settingsChannel;
+
+  /// Guard against concurrent deep link handling. Set to true while
+  /// [_handleSettingsDeepLink] is executing (including the consuming app's
+  /// callback). Subsequent invocations during this time are dropped — the user
+  /// intent is the same regardless of how many times the OS fires the event.
+  bool _handlingDeepLink = false;
+
+  /// Guard against concurrent lifecycle resume handling. Set to true while
+  /// the lifecycle listener's polling + [_handleResumeAfterSettings] path is
+  /// executing. Prevents duplicate entry when Dart's event loop delivers a
+  /// second [AppLifecycleState.resumed] event while the first is suspended
+  /// in the polling loop (async stream listeners are fire-and-forget — the
+  /// stream does not await them).
+  bool _lifecycleResumeHandlerActive = false;
+
   /// Private constructor for singleton pattern.
   NotificationService._internal() {
     _permissionHelper = NotificationPermissionHelper(notificationService: this);
@@ -292,6 +329,7 @@ class NotificationService {
     bool showNotificationsInForeground = true,
     int reminderIntervalDays = 30,
     Future<void> Function(String? newToken, String? oldToken)? onTokenChanged,
+    NotificationSettingsDeepLinkCallback? onSystemNotificationSettingsOpened,
     // NEW: Pass auth service directly for race-free initialization
     AuthServiceInt? authService,
     // DEPRECATED: Use authService parameter instead
@@ -324,6 +362,7 @@ class NotificationService {
       _onError = onError;
       _showNotificationsInForeground = showNotificationsInForeground;
       _reminderIntervalDays = reminderIntervalDays;
+      _onSystemNotificationSettingsOpened = onSystemNotificationSettingsOpened;
 
       // Initialize local notifications plugin
       await _initializeLocalNotifications();
@@ -340,6 +379,46 @@ class NotificationService {
       // Store token callback if provided (used by both paths)
       if (onTokenChanged != null) {
         _onTokenChanged = onTokenChanged;
+      }
+
+      // Set up notification settings deep link channel
+      if (onSystemNotificationSettingsOpened != null) {
+        _settingsChannel =
+            const MethodChannel(notificationSettingsChannelName);
+        _settingsChannel!.setMethodCallHandler(_handleSettingsMethodCall);
+        logi('Notification settings deep link channel initialized');
+
+        // Check for pending cold-launch intent.
+        // On cold launch, native code stores the settings intent/delegate call
+        // because the Dart handler isn't registered yet when the engine starts.
+        // This pull-based check retrieves any pending event.
+        try {
+          final pending = await _settingsChannel!
+              .invokeMethod<Map<dynamic, dynamic>?>('getPendingSettingsIntent');
+          if (pending != null) {
+            final channelId = pending['channelId'] as String?;
+            logi('Found pending notification settings deep link from cold launch');
+            // Use addPostFrameCallback to ensure the widget tree (including the
+            // Navigator/Router) is built before the consuming app's callback
+            // navigates.
+            //
+            // TIMING NOTE: addPostFrameCallback guarantees the widget tree is
+            // mounted, but NOT that the consuming app's async initialization is
+            // complete (auth state, router configuration, initial data fetch,
+            // etc.). This is the same constraint as onNotificationTapped
+            // cold-launch handling. If the consuming app's callback needs to
+            // navigate after its own async setup, it should queue the navigation
+            // (e.g., store the info and process it when the home screen mounts).
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _handleSettingsDeepLink(channelId);
+            });
+          }
+        } on MissingPluginException {
+          // Native side hasn't set up the handler — feature not configured.
+          // This is expected when the consuming app hasn't added the native setup.
+          logd('No native handler for getPendingSettingsIntent — cold launch '
+              'deep links will not be detected');
+        }
       }
 
       // Skip auto-connect if authService was provided directly (race-free path)
@@ -728,6 +807,9 @@ class NotificationService {
   /// be automatically cleared. This handles the case where the user enabled
   /// notifications via system settings.
   Future<NotificationPermissionStatus> getPermissionStatus() async {
+    if (_testGetPermissionStatusOverride != null) {
+      return _testGetPermissionStatusOverride!();
+    }
     try {
       final settings = await FirebaseMessaging.instance.getNotificationSettings();
 
@@ -781,6 +863,12 @@ class NotificationService {
         criticalAlert: false,
         announcement: false,
         carPlay: false,
+        // Tell iOS to show "Notification Settings..." link in system
+        // Settings > [App] > Notifications. Only enabled when the consuming
+        // app has registered onSystemNotificationSettingsOpened. No effect
+        // on Android (the link appears based on the manifest intent filter).
+        providesAppNotificationSettings:
+            _onSystemNotificationSettingsOpened != null,
       );
 
       final status = _convertAuthorizationStatus(settings.authorizationStatus);
@@ -1532,8 +1620,12 @@ class NotificationService {
   ///
   /// Useful for implementing "ask again after X days" or "ask again after Y launches" logic.
   /// Delegates to [NotificationPermissionHelper.getNotificationDenialInfo].
-  Future<NotificationDenialInfo?> getNotificationDenialInfo() =>
-      _permissionHelper.getNotificationDenialInfo();
+  Future<NotificationDenialInfo?> getNotificationDenialInfo() {
+    if (_testGetNotificationDenialInfoOverride != null) {
+      return _testGetNotificationDenialInfoOverride!();
+    }
+    return _permissionHelper.getNotificationDenialInfo();
+  }
 
   /// Clears stored denial info (e.g., after user grants permission via settings).
   ///
@@ -1875,10 +1967,52 @@ class NotificationService {
       lifecycleService.initialize();
     }
 
-    _lifecycleSubscription = lifecycleService.lifecycleStream.listen((state) {
+    _lifecycleSubscription =
+        lifecycleService.lifecycleStream.listen((state) async {
       if (state == AppLifecycleState.resumed && _waitingForSettingsReturn) {
-        _waitingForSettingsReturn = false;
-        _handleResumeAfterSettings();
+        // Concurrency guard — async stream listeners are fire-and-forget (the
+        // stream does not await them). If a second resumed event arrives while
+        // the first is suspended in the polling loop below, this guard prevents
+        // duplicate entry.
+        if (_lifecycleResumeHandlerActive) return;
+        _lifecycleResumeHandlerActive = true;
+        try {
+          if (_onSystemNotificationSettingsOpened != null) {
+            // Race prevention: When a deep link callback is registered, the
+            // user may return from system settings by tapping the "Notification
+            // Settings..." / "Additional settings in the app" deep link. This
+            // fires BOTH a lifecycle resume event AND a method channel message.
+            // If we run immediately, we may clear denial info (via
+            // getPermissionStatus auto-clear) before the deep link handler can
+            // snapshot it for permissionJustGranted detection.
+            //
+            // Poll in 10ms intervals (up to 100ms) to give the method channel
+            // message time to arrive and be processed. Each iteration yields to
+            // the event loop, allowing queued events (including the method
+            // channel message) to be dispatched. The method channel handler
+            // (_handleSettingsMethodCall) clears _waitingForSettingsReturn
+            // synchronously, so we detect ownership transfer immediately on
+            // the next check. The 100ms ceiling is extremely generous — platform
+            // method channel dispatch is typically sub-millisecond — and
+            // imperceptible to the user on the back-button return path.
+            const pollInterval = Duration(milliseconds: 10);
+            const maxWait = Duration(milliseconds: 100);
+            final stopwatch = Stopwatch()..start();
+            while (_waitingForSettingsReturn &&
+                stopwatch.elapsedMilliseconds < maxWait.inMilliseconds) {
+              await Future<void>.delayed(pollInterval);
+            }
+            if (!_waitingForSettingsReturn) {
+              // Deep link handler claimed ownership during the polling window.
+              logd('Settings return deferred to deep link handler');
+              return;
+            }
+          }
+          _waitingForSettingsReturn = false;
+          _handleResumeAfterSettings();
+        } finally {
+          _lifecycleResumeHandlerActive = false;
+        }
       }
     });
 
@@ -1897,6 +2031,145 @@ class NotificationService {
       }
     } else {
       logd('Returned from settings - permission still not granted');
+    }
+  }
+
+  //
+  // Notification Settings Deep Link Handling
+  //
+
+  /// Handles incoming method calls from the native notification settings deep link.
+  ///
+  /// CRITICAL: Clears [_waitingForSettingsReturn] synchronously (before any await)
+  /// to claim ownership and prevent the lifecycle resume handler from also running.
+  /// See "Race prevention" in plan.notify-deeplink.md for the full two-part mechanism.
+  Future<dynamic> _handleSettingsMethodCall(MethodCall call) async {
+    if (call.method != 'openNotificationSettings') return;
+
+    // Synchronous ownership claim — must happen before any await so that if the
+    // lifecycle resume event is still queued, its listener will see false and skip.
+    _waitingForSettingsReturn = false;
+
+    // Safe cast — if the native side sends a non-String argument (e.g., a Map due
+    // to a setup error), degrade gracefully to null channelId rather than throwing
+    // a TypeError that would prevent the callback from firing.
+    final channelId = call.arguments is String ? call.arguments as String : null;
+    if (call.arguments != null && call.arguments is! String) {
+      logw('openNotificationSettings received non-String argument: '
+          '${call.arguments.runtimeType} — expected String? channelId. '
+          'Proceeding with channelId: null');
+    }
+
+    await _handleSettingsDeepLink(channelId);
+  }
+
+  /// Core deep link handler with permission flow integration.
+  ///
+  /// Called from two paths:
+  /// 1. Method channel push (warm launch — native invokes 'openNotificationSettings').
+  ///    In this path, [_handleSettingsMethodCall] has already claimed ownership by
+  ///    clearing [_waitingForSettingsReturn] synchronously before delegating here.
+  /// 2. Pending intent check (cold launch — Dart pulls during initialize()).
+  ///    In this path, no race exists because [_waitingForSettingsReturn] is false
+  ///    by default and [_setupLifecycleListener] hasn't been called yet.
+  ///
+  /// Performs the following before invoking the consuming app's callback:
+  /// 1. Snapshots denial state before auto-clear (best-effort)
+  /// 2. Refreshes permission status (best-effort)
+  /// 3. Auto-initializes FCM if permission was just granted (best-effort)
+  /// 4. Resets ALL tracking if permission is still denied (best-effort)
+  /// 5. ALWAYS invokes callback with enriched context — even if steps 1-4 fail
+  ///
+  /// Steps 1-4 are wrapped in a try-catch so that the callback is guaranteed
+  /// to fire regardless of errors in permission flow integration. If an error
+  /// occurs (SharedPreferences corruption, Firebase misconfiguration, etc.),
+  /// the callback receives best-effort data: [permissionStatus] defaults to
+  /// [NotificationPermissionStatus.denied], [permissionJustGranted] defaults
+  /// to false, and [isFcmActive] reflects the current state of the FCM token.
+  Future<void> _handleSettingsDeepLink(String? channelId) async {
+    // Concurrency guard — drop duplicate invocations while handling is in progress.
+    if (_handlingDeepLink) {
+      logd('Settings deep link already being handled — ignoring');
+      return;
+    }
+    _handlingDeepLink = true;
+    try {
+      logi('Received notification settings deep link'
+          '${channelId != null ? ' for channel: $channelId' : ''}');
+
+      NotificationPermissionStatus? currentStatus;
+      var permissionJustGranted = false;
+
+      try {
+        // Step 1: Snapshot denial state BEFORE getPermissionStatus() clears it.
+        // getPermissionStatus() calls autoClearIfGranted() internally, which wipes
+        // denial info when permission is granted. We need the snapshot to detect
+        // whether permission was newly granted (denial info existed → now granted).
+        final denialInfo = await getNotificationDenialInfo();
+
+        // Step 2: Refresh permission status (may auto-clear denial data via autoClearIfGranted)
+        currentStatus = await getPermissionStatus();
+
+        // Step 3: If permission is granted, detect new grant and ensure FCM is active
+        if (currentStatus == NotificationPermissionStatus.authorized ||
+            currentStatus == NotificationPermissionStatus.provisional) {
+          if (denialInfo != null) {
+            // Denial info existed but permission is now granted — this is a new grant.
+            // autoClearIfGranted() already cleared the tracking data in Step 2.
+            permissionJustGranted = true;
+            logd('Permission newly granted — denial tracking already auto-cleared');
+          }
+
+          // Initialize FCM if not already active — matches the existing
+          // _handleResumeAfterSettings() pattern. initializeFcmToken() has its
+          // own internal guard (_hasFcmTokenInitialized) so redundant calls are no-ops.
+          if (_onTokenChanged != null) {
+            await initializeFcmToken(onTokenChanged: _onTokenChanged!);
+            logd('FCM token initialized after settings deep link grant');
+          }
+        }
+
+        // Step 4: If still denied, reset ALL tracking — user is proactively re-engaging.
+        // This clears both NotificationDenialInfo (denial count, backoff timers) and
+        // GoToSettingsPromptInfo (go-to-settings prompt count/timing). Clearing only
+        // GoToSettingsPromptInfo would be insufficient — runNotificationPermissionFlow
+        // checks denialCount >= maxAskCount from NotificationDenialInfo when deciding
+        // whether to return skippedAskAgain. Without clearing it, a maxed-out user
+        // would still be blocked despite re-engaging via the OS settings link.
+        //
+        // Both clear methods handle their own errors internally (catch + log),
+        // so failures in one cannot prevent the other from executing. No outer
+        // try-catches needed — the helpers' error handling is part of their contract.
+        if (currentStatus == NotificationPermissionStatus.denied) {
+          await _permissionHelper.clearNotificationDenialInfo();
+          await _permissionHelper.clearGoToSettingsPromptInfo();
+          logd('Reset all notification tracking — user re-engaging via settings deep link');
+        }
+      } catch (e, stack) {
+        loge(e, 'Error during settings deep link permission integration', stack);
+        // Continue to callback with best-effort data.
+        // currentStatus may be null (defaults to denied below).
+        // permissionJustGranted stays false. isFcmActive reflects current state.
+      }
+
+      // Note: Race prevention with _handleResumeAfterSettings() is handled upstream:
+      // - Warm launch: _handleSettingsMethodCall clears _waitingForSettingsReturn
+      //   synchronously before delegating here (see method channel handler above).
+      // - Cold launch: _waitingForSettingsReturn is false by default; no race exists.
+
+      // Step 5: ALWAYS invoke — even if permission flow integration failed above.
+      // Uses best-effort data; defaults to denied status if the refresh threw.
+      final info = NotificationSettingsDeepLinkInfo(
+        channelId: channelId,
+        permissionStatus: currentStatus ?? NotificationPermissionStatus.denied,
+        permissionJustGranted: permissionJustGranted,
+        isFcmActive: _hasFcmTokenInitialized,
+      );
+
+      logd('Invoking settings deep link callback: $info');
+      await _onSystemNotificationSettingsOpened?.call(info);
+    } finally {
+      _handlingDeepLink = false;
     }
   }
 
@@ -1997,6 +2270,9 @@ class NotificationService {
   Future<void> initializeFcmToken({
     required Future<void> Function(String? newToken, String? oldToken) onTokenChanged,
   }) async {
+    if (_testInitializeFcmTokenOverride != null) {
+      return _testInitializeFcmTokenOverride!();
+    }
     if (_hasFcmTokenInitialized) {
       logd('FCM token already initialized');
       return;
@@ -2121,6 +2397,11 @@ class NotificationService {
     _authSubscription = null;
     _lifecycleSubscription = null;
     _waitingForSettingsReturn = false;
+    _settingsChannel?.setMethodCallHandler(null);
+    _settingsChannel = null;
+    _onSystemNotificationSettingsOpened = null;
+    _handlingDeepLink = false;
+    _lifecycleResumeHandlerActive = false;
     _initialized = false;
     _hasFcmTokenInitialized = false;
     logi('NotificationService disposed');
@@ -2189,6 +2470,163 @@ class NotificationService {
         return 'Background updates';
       default:
         return 'App notifications';
+    }
+  }
+
+  //
+  // Testing Infrastructure
+  //
+  // These fields and methods are marked @visibleForTesting and exist solely
+  // to enable unit testing of the deep link handler and related logic without
+  // requiring Firebase, platform channels, or full service initialization.
+  // Production code never sets these — the override checks are compiled away
+  // as dead code when the fields are null (their default).
+  //
+
+  /// Resets the singleton instance for testing. Call in tearDown().
+  @visibleForTesting
+  static void resetForTesting() {
+    _instance = null;
+  }
+
+  // -- Test overrides for Firebase-dependent methods --
+
+  /// Override for [getPermissionStatus] in tests. When non-null, the override
+  /// is called instead of the real Firebase-based implementation. The auto-clear
+  /// side effect is intentionally skipped — tests that need to verify auto-clear
+  /// behavior can do so through SharedPreferences assertions.
+  Future<NotificationPermissionStatus> Function()?
+      _testGetPermissionStatusOverride;
+
+  /// Override for [getNotificationDenialInfo] in tests. When non-null, the
+  /// override is called instead of the real SharedPreferences-based implementation.
+  /// This allows tests to control the denial info returned and track call ordering.
+  Future<NotificationDenialInfo?> Function()?
+      _testGetNotificationDenialInfoOverride;
+
+  /// Override for [initializeFcmToken] in tests. When non-null, the override
+  /// is called instead of the real Firebase-based implementation. This skips
+  /// the internal [_hasFcmTokenInitialized] guard — the test controls the state.
+  Future<void> Function()? _testInitializeFcmTokenOverride;
+
+  // -- Test setters for overrides --
+
+  @visibleForTesting
+  set testGetPermissionStatusOverride(
+    Future<NotificationPermissionStatus> Function()? value,
+  ) =>
+      _testGetPermissionStatusOverride = value;
+
+  @visibleForTesting
+  set testGetNotificationDenialInfoOverride(
+    Future<NotificationDenialInfo?> Function()? value,
+  ) =>
+      _testGetNotificationDenialInfoOverride = value;
+
+  @visibleForTesting
+  set testInitializeFcmTokenOverride(Future<void> Function()? value) =>
+      _testInitializeFcmTokenOverride = value;
+
+  // -- Test accessors for internal state --
+
+  @visibleForTesting
+  set onSystemNotificationSettingsOpenedForTesting(
+    NotificationSettingsDeepLinkCallback? value,
+  ) =>
+      _onSystemNotificationSettingsOpened = value;
+
+  @visibleForTesting
+  set onTokenChangedForTesting(
+    Future<void> Function(String?, String?)? value,
+  ) =>
+      _onTokenChanged = value;
+
+  @visibleForTesting
+  bool get handlingDeepLinkForTesting => _handlingDeepLink;
+
+  @visibleForTesting
+  set handlingDeepLinkForTesting(bool value) => _handlingDeepLink = value;
+
+  @visibleForTesting
+  bool get hasFcmTokenInitializedForTesting => _hasFcmTokenInitialized;
+
+  @visibleForTesting
+  set hasFcmTokenInitializedForTesting(bool value) =>
+      _hasFcmTokenInitialized = value;
+
+  @visibleForTesting
+  bool get waitingForSettingsReturnForTesting => _waitingForSettingsReturn;
+
+  @visibleForTesting
+  set waitingForSettingsReturnForTesting(bool value) =>
+      _waitingForSettingsReturn = value;
+
+  @visibleForTesting
+  bool get lifecycleResumeHandlerActiveForTesting =>
+      _lifecycleResumeHandlerActive;
+
+  @visibleForTesting
+  set lifecycleResumeHandlerActiveForTesting(bool value) =>
+      _lifecycleResumeHandlerActive = value;
+
+  // -- Test wrappers for private methods --
+
+  /// Exposes [_handleSettingsDeepLink] for direct testing.
+  @visibleForTesting
+  Future<void> handleSettingsDeepLinkForTesting(String? channelId) =>
+      _handleSettingsDeepLink(channelId);
+
+  /// Exposes [_handleSettingsMethodCall] for direct testing.
+  @visibleForTesting
+  Future<dynamic> handleSettingsMethodCallForTesting(MethodCall call) =>
+      _handleSettingsMethodCall(call);
+
+  /// Exposes [_setupLifecycleListener] for direct testing of lifecycle polling
+  /// behavior (race prevention, duplicate entry guard, etc.).
+  @visibleForTesting
+  void setupLifecycleListenerForTesting() => _setupLifecycleListener();
+
+  /// Sets [_settingsChannel] for testing the pending intent check flow.
+  @visibleForTesting
+  set settingsChannelForTesting(MethodChannel? value) =>
+      _settingsChannel = value;
+
+  /// Gets [_settingsChannel] for test assertions.
+  @visibleForTesting
+  MethodChannel? get settingsChannelForTesting => _settingsChannel;
+
+  /// Gets [_onSystemNotificationSettingsOpened] for test assertions
+  /// (e.g., verifying cleanup nulls it out).
+  @visibleForTesting
+  NotificationSettingsDeepLinkCallback?
+      get onSystemNotificationSettingsOpenedGetterForTesting =>
+          _onSystemNotificationSettingsOpened;
+
+  /// Exposes the computed value of `providesAppNotificationSettings` that is
+  /// passed to [FirebaseMessaging.instance.requestPermission] in
+  /// [requestPermissions]. Tests can verify this value without requiring
+  /// Firebase initialization.
+  @visibleForTesting
+  bool get providesAppNotificationSettingsForTesting =>
+      _onSystemNotificationSettingsOpened != null;
+
+  /// Exposes the pending intent check logic from [initialize] for direct
+  /// testing. Unlike the production path in [initialize], this does NOT use
+  /// `addPostFrameCallback` — the deep link handler is invoked directly.
+  /// This is appropriate for unit tests where the widget tree is not relevant.
+  @visibleForTesting
+  Future<void> checkPendingSettingsIntentForTesting() async {
+    if (_settingsChannel == null) return;
+    try {
+      final pending = await _settingsChannel!
+          .invokeMethod<Map<dynamic, dynamic>?>('getPendingSettingsIntent');
+      if (pending != null) {
+        final channelId = pending['channelId'] as String?;
+        await _handleSettingsDeepLink(channelId);
+      }
+    } on MissingPluginException {
+      logd('No native handler for getPendingSettingsIntent — cold launch '
+          'deep links will not be detected');
     }
   }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:dreamic/app/app_config_base.dart';
+import '../data/models/notification_permission_status.dart';
 
 /// Result of initializing notifications.
 ///
@@ -473,3 +474,71 @@ class NotificationFlowConfig {
     );
   }
 }
+
+/// Information provided to the consuming app when the OS triggers
+/// a "manage notification settings" deep link.
+///
+/// Created by [NotificationService] after performing permission flow
+/// integration (status refresh, FCM initialization, denial tracking reset).
+class NotificationSettingsDeepLinkInfo {
+  /// Android notification channel ID if the user navigated from a
+  /// specific channel's settings page. Null on iOS or when opened
+  /// from the app's general notification settings.
+  final String? channelId;
+
+  /// Current permission status at the time of the deep link.
+  ///
+  /// This is freshly queried — not cached — so it reflects any changes
+  /// the user may have made in system settings before tapping the link.
+  final NotificationPermissionStatus permissionStatus;
+
+  /// Whether permission was detected as newly granted during this
+  /// deep link handling.
+  ///
+  /// Specifically, this is true when dreamic had stored denial tracking data
+  /// (from a prior denial through the permission flow) AND the permission
+  /// status is now authorized or provisional. A user who enabled notifications
+  /// outside of dreamic's flow (no prior denial info stored) will not trigger
+  /// this flag — but FCM initialization still happens regardless.
+  ///
+  /// When true, dreamic has automatically:
+  /// - Cleared denial/go-to-settings tracking data (via getPermissionStatus auto-clear)
+  /// - Triggered FCM token initialization (if [onTokenChanged] is configured)
+  ///
+  /// The consuming app can use this to show a success message or adjust
+  /// the UI of its notification settings screen.
+  final bool permissionJustGranted;
+
+  /// Whether FCM is currently active (token acquired and listeners running).
+  final bool isFcmActive;
+
+  const NotificationSettingsDeepLinkInfo({
+    this.channelId,
+    required this.permissionStatus,
+    this.permissionJustGranted = false,
+    this.isFcmActive = false,
+  });
+
+  @override
+  String toString() =>
+      'NotificationSettingsDeepLinkInfo('
+      'channelId: $channelId, '
+      'permissionStatus: $permissionStatus, '
+      'permissionJustGranted: $permissionJustGranted, '
+      'isFcmActive: $isFcmActive)';
+}
+
+/// Callback type for when the OS requests the app to show notification settings.
+///
+/// Dreamic automatically performs permission flow integration before invoking
+/// this callback:
+/// - Snapshots denial state, then refreshes permission status
+/// - Auto-initializes FCM if permission is granted
+/// - Resets ALL notification tracking if permission is still denied (re-engagement signal)
+/// - Claims deep link ownership to prevent race with lifecycle resume handler
+///
+/// The [info] object provides the consuming app with enriched context
+/// about the current notification state.
+typedef NotificationSettingsDeepLinkCallback = Future<void> Function(
+  NotificationSettingsDeepLinkInfo info,
+);
