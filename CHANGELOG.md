@@ -1,3 +1,10 @@
+## Unreleased
+
+### Planned
+* Begin extraction of `auto_route` singleton helpers to `dreamroute_autoroutehelper`.
+* Compatibility policy locked to temporary re-exports in `dreamic` with deprecation for one minor release cycle.
+* Planned minimum compatible pair: `dreamic >=0.7.0 <0.8.0` with `dreamroute_autoroutehelper >=0.1.0 <0.2.0`.
+
 ## 0.5.0
 
 ### Added
