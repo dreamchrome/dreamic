@@ -1,4 +1,28 @@
-## Unreleased
+## 0.7.0
+
+### ⚠️ Breaking Changes: Minimum SDK Bumps
+
+Raised minimum toolchain versions to match upgraded dependencies:
+
+* **Dart SDK:** `>=3.10.0` (was `^3.5.4`)
+* **Flutter SDK:** `>=3.38.1` (was `>=3.22.0`)
+
+Consumer platform minimums (enforced by `flutter_local_notifications 21.0.0`):
+
+* **Android:** minSdk 24 (Android 7.0) — was 21
+* **iOS:** 13 — was 11
+* **macOS:** 10.15 — was 10.14
+
+### ⚠️ Breaking Changes: flutter_local_notifications 21.0.0
+
+`flutter_local_notifications` v20 converted several methods from positional to named parameters. Internal dreamic call sites have been migrated:
+
+* `FlutterLocalNotificationsPlugin.initialize(settings, ...)` now takes `settings:` as a named parameter
+* `FlutterLocalNotificationsPlugin.show(id, title, body, details, ...)` now takes all args as named
+* `FlutterLocalNotificationsPlugin.cancel(id)` now takes `id:` as a named parameter
+* `AndroidFlutterLocalNotificationsPlugin.deleteNotificationChannel(channelId)` now takes `channelId:` as a named parameter
+
+Consumer apps calling these APIs directly must update their call sites. Apps using only dreamic's `NotificationService` / `NotificationChannelManager` require no code changes.
 
 ### ⚠️ Breaking Changes: Email-link Auth Mobile Configuration
 

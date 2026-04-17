@@ -1,62 +1,62 @@
 name: dreamic
 description: "A general-purpose package for Flutter/Firebase apps."
-version: 0.6.0
+version: 0.7.0
 repository: https://github.com/dreamchrome/dreamic
 issue_tracker: https://github.com/dreamchrome/dreamic/issues
 
 environment:
-  sdk: ^3.5.4
-  flutter: ">=3.22.0"
+  sdk: ^3.10.0
+  flutter: ">=3.38.1"
 
 dependencies:
   flutter:
     sdk: flutter
 
-  firebase_auth: ^6.1.4
-  firebase_storage: ^13.0.6
-  cloud_firestore: ^6.1.2
-  cloud_functions: ^6.0.6
-  firebase_core: ^4.4.0
+  firebase_auth: ^6.4.0
+  firebase_storage: ^13.3.0
+  cloud_firestore: ^6.3.0
+  cloud_functions: ^6.2.0
+  firebase_core: ^4.7.0
 
-  firebase_messaging: ^16.1.1
-  firebase_remote_config: ^6.1.4
-  firebase_crashlytics: ^5.0.7
+  firebase_messaging: ^16.2.0
+  firebase_remote_config: ^6.4.0
+  firebase_crashlytics: ^5.2.0
 
-  get_it: ^9.2.0
+  get_it: ^9.2.1
   bloc: ^9.2.0
   flutter_bloc: ^9.1.1
   equatable: ^2.0.8
-  json_annotation: ^4.9.0
+  json_annotation: ^4.11.0
 
   exponential_back_off: ^0.1.0+2
-  flutter_timezone: ^5.0.1
+  flutter_timezone: ^5.0.2
   dartz: ^0.10.1
-  shared_preferences: ^2.5.4
-  device_info_plus: ">=11.3.0 <13.0.0"  # Relaxed for livekit_client compatibility
-  http: ^1.5.0
-  package_info_plus: ^9.0.0
+  shared_preferences: ^2.5.5
+  device_info_plus: ">=11.3.0 <14.0.0"  # Relaxed for livekit_client compatibility
+  http: ^1.6.0
+  package_info_plus: ^10.0.0
   url_launcher: ^6.3.2
-  wakelock_plus: ^1.4.0
+  wakelock_plus: ^1.6.0
   percent_indicator: ^4.2.5
   web: ^1.1.1
-  connectivity_plus: ^7.0.0
+  connectivity_plus: ^7.1.1
   internet_connection_checker_plus: ^2.9.1
   path_provider: ^2.1.5
-  open_file: ^3.5.10
-  flutter_local_notifications: ^19.5.0
-  app_badge_plus: ^1.2.6
-  adaptive_dialog: ^2.6.0
+  open_file: ^3.5.11
+  flutter_local_notifications: ^21.0.0
+  app_badge_plus: ^1.2.9
+  adaptive_dialog: ^2.7.1
   path: ^1.9.1
   permission_handler: ^12.0.1
-  uuid: ^4.5.1
+  uuid: ^4.5.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  build_runner: ^2.10.5
-  json_serializable: ^6.11.4
-  mocktail: ^1.0.4
+  build_runner: ^2.13.1
+  json_serializable: ^6.13.1
+  mocktail: ^1.0.5
 
 
 # For information on the generic Dart part of this file, see the

@@ -113,7 +113,7 @@ class NotificationChannelManager {
       final androidPlugin =
           _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
 
-      await androidPlugin?.deleteNotificationChannel(channelId);
+      await androidPlugin?.deleteNotificationChannel(channelId: channelId);
       logd('Deleted notification channel: $channelId');
     } catch (e, stack) {
       loge(stack, 'Failed to delete channel $channelId: $e');

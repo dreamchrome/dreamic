@@ -489,7 +489,7 @@ class NotificationService {
 
     // Set up notification tap handler
     await _localNotifications!.initialize(
-      initializationSettings,
+      settings: initializationSettings,
       onDidReceiveNotificationResponse: _handleNotificationTap,
     );
 
@@ -710,10 +710,10 @@ class NotificationService {
       final payloadJson = _serializePayload(payload);
 
       await _localNotifications!.show(
-        id,
-        payload.title ?? 'Notification',
-        payload.body,
-        notificationDetails,
+        id: id,
+        title: payload.title ?? 'Notification',
+        body: payload.body,
+        notificationDetails: notificationDetails,
         payload: payloadJson,
       );
 
@@ -733,7 +733,7 @@ class NotificationService {
     }
 
     try {
-      await _localNotifications!.cancel(id);
+      await _localNotifications!.cancel(id: id);
       logi('Cancelled notification: $id');
     } catch (e, stackTrace) {
       loge(e, 'Error cancelling notification', stackTrace);
