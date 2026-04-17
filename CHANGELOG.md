@@ -1,3 +1,14 @@
+## 0.7.1
+
+Widened version constraints on `wakelock_plus` and `package_info_plus` so
+consuming apps can stay on the `win32 ^5` line when they transitively depend
+on packages that haven't migrated yet (e.g. `quill_native_bridge_windows`,
+`file_picker`). The 1.5.x/9.x and 1.6.x/10.x branches share the same Dart
+APIs — the majors were cut solely to bump `win32` from `^5` to `^6`.
+
+* `wakelock_plus`: `^1.6.0` → `">=1.5.2 <2.0.0"`
+* `package_info_plus`: `^10.0.0` → `">=9.0.0 <11.0.0"`
+
 ## 0.7.0
 
 ### ⚠️ Breaking Changes: Minimum SDK Bumps
