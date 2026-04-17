@@ -1165,8 +1165,10 @@ class TappableActionGroupConfig {
 
 /// Production-grade group manager with comprehensive safety measures
 class TappableActionGroupManager with WidgetsBindingObserver implements ITappableActionGroupManager {
+  // Thread-safe: Dart is single-threaded within an isolate. No synchronization needed.
   static TappableActionGroupManager? _instance;
   static const TappableActionGroupConfig _config = TappableActionGroupConfig();
+  static final _nullNotifier = ValueNotifier<bool>(false);
   
   /// Factory constructor with optional config
   factory TappableActionGroupManager([TappableActionGroupConfig? config]) {
@@ -1275,7 +1277,7 @@ class TappableActionGroupManager with WidgetsBindingObserver implements ITappabl
   
   @override
   ValueNotifier<bool> getGroupNotifier(String? groupId) {
-    if (groupId == null) return ValueNotifier<bool>(false);
+    if (groupId == null) return _nullNotifier;
     return _getNotifier(groupId);
   }
   

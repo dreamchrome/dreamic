@@ -24,11 +24,11 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   Uri? entranceUri;
   bool networkRequired;
   bool hasProcessedEntrance = false;
-  InternetConnection? connectionChecker;
-  StreamSubscription? connectionCheckerSubscription;
-  StreamSubscription<VersionUpdateInfo>? versionUpdateSubscription;
-  StreamSubscription<AppLifecycleState>? lifecycleSubscription;
-  StreamSubscription<int>? notificationBadgeSubscription;
+  InternetConnection? _connectionChecker;
+  StreamSubscription? _connectionCheckerSubscription;
+  StreamSubscription<VersionUpdateInfo>? _versionUpdateSubscription;
+  StreamSubscription<AppLifecycleState>? _lifecycleSubscription;
+  StreamSubscription<int>? _notificationBadgeSubscription;
 
   static const Duration _networkCheckTimeout = Duration(seconds: 10);
 
@@ -48,25 +48,25 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
     // Clean up all stream subscriptions and services
     // Use try-catch for each to ensure all cleanup happens even if one fails
     try {
-      await connectionCheckerSubscription?.cancel();
+      await _connectionCheckerSubscription?.cancel();
     } catch (e) {
       loge(e, 'Error canceling connection checker subscription');
     }
 
     try {
-      await versionUpdateSubscription?.cancel();
+      await _versionUpdateSubscription?.cancel();
     } catch (e) {
       loge(e, 'Error canceling version update subscription');
     }
 
     try {
-      await lifecycleSubscription?.cancel();
+      await _lifecycleSubscription?.cancel();
     } catch (e) {
       loge(e, 'Error canceling lifecycle subscription');
     }
 
     try {
-      await notificationBadgeSubscription?.cancel();
+      await _notificationBadgeSubscription?.cancel();
     } catch (e) {
       loge(e, 'Error canceling notification badge subscription');
     }
@@ -137,7 +137,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       await AppVersionUpdateService().initialize();
 
       // Subscribe to version update notifications
-      versionUpdateSubscription = AppVersionUpdateService().updateStream.listen(
+      _versionUpdateSubscription = AppVersionUpdateService().updateStream.listen(
         (versionUpdateInfo) {
           _handleVersionUpdate(versionUpdateInfo);
         },
@@ -226,7 +226,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
         return;
       }
 
-      connectionChecker = InternetConnection.createInstance(
+      _connectionChecker = InternetConnection.createInstance(
         useDefaultOptions: false,
         customCheckOptions: [
           InternetCheckOption(uri: Uri.parse(defaultHostingUrl)),
@@ -266,7 +266,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
 
   Future<bool> _checkNetworkWithTimeout() async {
     try {
-      final result = await connectionChecker?.hasInternetAccess.timeout(_networkCheckTimeout);
+      final result = await _connectionChecker?.hasInternetAccess.timeout(_networkCheckTimeout);
       return result ?? false;
     } catch (e) {
       logd('Network check timed out or failed: $e');
@@ -276,7 +276,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
 
   void _subscribeToNetworkChanges() {
     logd('Subscribing to network connection changes');
-    connectionCheckerSubscription = connectionChecker?.onStatusChange.listen(
+    _connectionCheckerSubscription = _connectionChecker?.onStatusChange.listen(
       (InternetStatus status) {
         if (status == InternetStatus.connected) {
           logd('Network connection detected connected');
@@ -311,7 +311,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       AppLifecycleService().initialize();
 
       // Subscribe to lifecycle events
-      lifecycleSubscription = AppLifecycleService().lifecycleStream.listen(
+      _lifecycleSubscription = AppLifecycleService().lifecycleStream.listen(
         (AppLifecycleState state) {
           logv('App lifecycle state changed: $state');
           // The lifecycle service already handles version checking internally
@@ -452,7 +452,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
   /// Safe to call multiple times - subsequent calls are ignored.
   Future<void> initializeNotificationSync() async {
     // Already subscribed
-    if (notificationBadgeSubscription != null) {
+    if (_notificationBadgeSubscription != null) {
       logv('Notification sync already initialized, skipping');
       return;
     }
@@ -473,7 +473,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       emitSafe(state.copyWith(unreadNotificationCount: initialCount));
 
       // Subscribe to badge count changes
-      notificationBadgeSubscription = notificationService.badgeCountStream.listen(
+      _notificationBadgeSubscription = notificationService.badgeCountStream.listen(
         (count) {
           logv('Badge count stream update: $count');
           emitSafe(state.copyWith(unreadNotificationCount: count));

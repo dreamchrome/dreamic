@@ -1,7 +1,6 @@
 import 'package:dartz/dartz.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:dreamic/data/helpers/repository_failure.dart';
-import 'package:dreamic/data/models/login_code_response.dart';
 
 /// Callback with priority for ordered execution.
 ///
@@ -67,8 +66,6 @@ abstract class AuthServiceInt {
   // Future<Either<RepositoryFailure, UserPrivate>> getCurrentUserPrivate();
 
   Future<Either<AuthServiceSignInFailure, Unit>> checkIfSignedInAndLoginAnonymouslyIfNot();
-
-  Future<Either<AuthServiceSignInFailure, LoginCodeResponse>> loginWithCode(String code);
 
   Future<Either<PhoneAuthError, Unit>> loginWithPhone(
     String phoneNumber, {
@@ -221,6 +218,8 @@ enum PhoneAuthError {
   captchaCheckFailed,
   tooManyRequests,
   wrongSmsCode,
+  smsCodeExpired,
+  sessionExpired,
   invalidPhone,
   unexpected,
 }
@@ -234,6 +233,7 @@ enum AuthServiceSignInFailure {
   userAlreadyExists,
   databaseError,
   unexpected,
+  signInTimedOut,
   tooManyRequests,
   invalidCredential,
 }

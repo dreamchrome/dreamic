@@ -3,6 +3,7 @@
 import 'dart:io';
 
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -33,6 +34,14 @@ enum EnvironmentType {
     );
   }
 }
+
+/// Builder callback that fully owns construction of mobile email-link
+/// `ActionCodeSettings`. Set this if your app uses Firebase Dynamic Links,
+/// Firebase `linkDomain`, Branch, AppsFlyer, Adjust, or any other
+/// deferred-deep-link product. When set, dreamic completely defers to this
+/// callback and ignores `emailConfirmMobileOrigin`.
+typedef MobileEmailLinkActionCodeSettingsBuilder
+    = Future<fb_auth.ActionCodeSettings> Function();
 
 class AppConfigBase {
   //
@@ -99,6 +108,7 @@ class AppConfigBase {
     'firebaseFunctionTimeoutSecs': kDebugMode ? 540 : 70,
     'firebaseFunctionTimeoutSecsLong': kDebugMode ? 540 : 140,
     'connectionCheckerUrlOverride': '',
+    'emailConfirmMobileOrigin': '',
     'timeoutForAboutToLogOutCallbackMill': 5000,
     // Notification permission re-request configuration
     'notificationAskAgainDays': 7,
@@ -112,6 +122,26 @@ class AppConfigBase {
     'dreamic_device_touch_throttle_minutes': 60,
     // Device pending payload backoff (offline retry interval)
     'dreamic_device_pending_backoff_minutes': 15,
+  };
+
+  /// Operational bounds for Remote Config int values.
+  /// Only applied to remote values — env overrides bypass these for testing flexibility.
+  /// Min bounds start at 1 because Firebase Remote Config getInt() returns 0 for
+  /// unset keys, and all getters use `if (remoteValue > 0)` to detect "set" values.
+  static const configBounds = {
+    'retryAttemptsCountMax': (min: 1, max: 20),
+    'timeoutBeforeShowingLoadingMill': (min: 100, max: 30000),
+    'timeoutNetworkProcessMill': (min: 1000, max: 120000),
+    'firebaseFunctionTimeoutSecs': (min: 5, max: 600),
+    'firebaseFunctionTimeoutSecsLong': (min: 10, max: 600),
+    'timeoutForAboutToLogOutCallbackMill': (min: 1000, max: 30000),
+    'notificationAskAgainDays': (min: 1, max: 365),
+    'notificationMaxAskCount': (min: 1, max: 100),
+    'dreamic_device_timezone_unchanged_sync_min_minutes': (min: 1, max: 10080),
+    'dreamic_device_timezone_unchanged_sync_max_minutes': (min: 1, max: 43200),
+    'dreamic_device_timezone_change_debounce_minutes': (min: 1, max: 1440),
+    'dreamic_device_touch_throttle_minutes': (min: 1, max: 1440),
+    'dreamic_device_pending_backoff_minutes': (min: 1, max: 10080),
   };
 
   static set minimumAppVersionRequiredAppleDefault(String value) =>
@@ -278,7 +308,8 @@ class AppConfigBase {
     } else {
       final remoteValue = g<RemoteConfigRepoInt>().getInt('retryAttemptsCountMax');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['retryAttemptsCountMax']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['retryAttemptsCountMax'] as int;
       }
@@ -292,7 +323,8 @@ class AppConfigBase {
     } else {
       final remoteValue = g<RemoteConfigRepoInt>().getInt('timeoutBeforeShowingLoadingMill');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['timeoutBeforeShowingLoadingMill']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['timeoutBeforeShowingLoadingMill'] as int;
       }
@@ -306,7 +338,8 @@ class AppConfigBase {
     } else {
       final remoteValue = g<RemoteConfigRepoInt>().getInt('timeoutNetworkProcessMill');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['timeoutNetworkProcessMill']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['timeoutNetworkProcessMill'] as int;
       }
@@ -320,7 +353,8 @@ class AppConfigBase {
     } else {
       final remoteValue = g<RemoteConfigRepoInt>().getInt('firebaseFunctionTimeoutSecs');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['firebaseFunctionTimeoutSecs']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['firebaseFunctionTimeoutSecs'] as int;
       }
@@ -334,7 +368,8 @@ class AppConfigBase {
     } else {
       final remoteValue = g<RemoteConfigRepoInt>().getInt('firebaseFunctionTimeoutSecsLong');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['firebaseFunctionTimeoutSecsLong']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['firebaseFunctionTimeoutSecsLong'] as int;
       }
@@ -361,7 +396,8 @@ class AppConfigBase {
     } else {
       final remoteValue = g<RemoteConfigRepoInt>().getInt('timeoutForAboutToLogOutCallbackMill');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['timeoutForAboutToLogOutCallbackMill']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['timeoutForAboutToLogOutCallbackMill'] as int;
       }
@@ -388,7 +424,8 @@ class AppConfigBase {
     } else {
       final remoteValue = g<RemoteConfigRepoInt>().getInt('notificationAskAgainDays');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['notificationAskAgainDays']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['notificationAskAgainDays'] as int;
       }
@@ -444,7 +481,8 @@ class AppConfigBase {
     } else {
       final remoteValue = g<RemoteConfigRepoInt>().getInt('notificationMaxAskCount');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['notificationMaxAskCount']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['notificationMaxAskCount'] as int;
       }
@@ -478,7 +516,8 @@ class AppConfigBase {
       final remoteValue =
           g<RemoteConfigRepoInt>().getInt('dreamic_device_timezone_unchanged_sync_min_minutes');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['dreamic_device_timezone_unchanged_sync_min_minutes']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['dreamic_device_timezone_unchanged_sync_min_minutes'] as int;
       }
@@ -508,7 +547,8 @@ class AppConfigBase {
       final remoteValue =
           g<RemoteConfigRepoInt>().getInt('dreamic_device_timezone_unchanged_sync_max_minutes');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['dreamic_device_timezone_unchanged_sync_max_minutes']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['dreamic_device_timezone_unchanged_sync_max_minutes'] as int;
       }
@@ -538,7 +578,8 @@ class AppConfigBase {
       final remoteValue =
           g<RemoteConfigRepoInt>().getInt('dreamic_device_timezone_change_debounce_minutes');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['dreamic_device_timezone_change_debounce_minutes']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['dreamic_device_timezone_change_debounce_minutes'] as int;
       }
@@ -572,7 +613,8 @@ class AppConfigBase {
       final remoteValue =
           g<RemoteConfigRepoInt>().getInt('dreamic_device_touch_throttle_minutes');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['dreamic_device_touch_throttle_minutes']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['dreamic_device_touch_throttle_minutes'] as int;
       }
@@ -606,7 +648,8 @@ class AppConfigBase {
       final remoteValue =
           g<RemoteConfigRepoInt>().getInt('dreamic_device_pending_backoff_minutes');
       if (remoteValue > 0) {
-        return remoteValue;
+        final bounds = configBounds['dreamic_device_pending_backoff_minutes']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
       } else {
         return defaultRemoteConfig['dreamic_device_pending_backoff_minutes'] as int;
       }
@@ -1166,6 +1209,31 @@ class AppConfigBase {
             ? const String.fromEnvironment('APP_STORE_APPLE_URL', defaultValue: '')
             : (_appStoreAppleUrlDefault ?? '');
     return _appStoreAppleUrl!;
+  }
+
+  //
+  // Email-link auth mobile configuration
+  //
+
+  /// Optional escape-hatch builder for mobile email-link `ActionCodeSettings`.
+  /// When set, dreamic defers entirely to this callback and ignores
+  /// `emailConfirmMobileOrigin`.
+  static MobileEmailLinkActionCodeSettingsBuilder?
+      mobileEmailLinkActionCodeSettingsBuilder;
+
+  static set emailConfirmMobileOriginDefault(String value) =>
+      defaultRemoteConfig['emailConfirmMobileOrigin'] = value;
+
+  static String get emailConfirmMobileOrigin {
+    const envValue = String.fromEnvironment('emailConfirmMobileOrigin');
+    if (envValue.isNotEmpty) {
+      return envValue;
+    } else {
+      final remoteValue = g<RemoteConfigRepoInt>().getString('emailConfirmMobileOrigin');
+      return remoteValue.isNotEmpty
+          ? remoteValue
+          : defaultRemoteConfig['emailConfirmMobileOrigin'] as String;
+    }
   }
 
   //

@@ -573,9 +573,10 @@ class NotificationPermissionHelper {
 
       // Legacy behavior without config
       // Don't request too frequently (wait at least 1 day between requests)
-      if (denialInfo?.lastRequestAttemptTime != null) {
+      final lastAttemptTime = denialInfo?.lastRequestAttemptTime;
+      if (lastAttemptTime != null) {
         final daysSinceLastRequest = DateTime.now()
-            .difference(denialInfo!.lastRequestAttemptTime!)
+            .difference(lastAttemptTime)
             .inDays;
 
         if (daysSinceLastRequest < 1) {

@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import '../../app/app_config_base.dart';
@@ -16,4 +17,16 @@ class RepoHelpers {
 
     return url;
   }
+}
+
+/// Safely extracts a Map from a Cloud Function result.
+/// Throws [StateError] if the response is not a Map — callers are expected
+/// to catch this via their existing try/catch → RepositoryFailure.unexpected.
+Map<String, dynamic> safeResultData(HttpsCallableResult result) {
+  final data = result.data;
+  if (data is Map) {
+    return Map<String, dynamic>.from(data);
+  }
+  throw StateError(
+      'Expected Map response from Cloud Function, got ${data.runtimeType}');
 }

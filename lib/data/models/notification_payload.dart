@@ -129,7 +129,7 @@ class NotificationPayload {
       category: message.category ?? data['category'] as String?,
       sound: notification?.android?.sound ?? data['sound'] as String?,
       badge: notification?.apple?.badge != null
-          ? int.tryParse(notification!.apple!.badge.toString())
+          ? int.tryParse(notification?.apple?.badge?.toString() ?? '')
           : null,
       ttl: message.ttl,
       priority: data['priority'] as String?,

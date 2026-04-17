@@ -83,7 +83,8 @@ enum SerializationContext {
 ///
 /// // Receiving data from callable function
 /// final result = await callable.call({'postId': 'abc123'});
-/// final post = PostModel.fromJson(result.data as Map<String, dynamic>);
+/// final data = safeResultData(result); // from repo_helpers.dart
+/// final post = PostModel.fromJson(data);
 /// ```
 ///
 /// The [SmartTimestampConverter] automatically handles all timestamp formats
@@ -216,7 +217,8 @@ abstract class BaseFirestoreModel {
   /// ```dart
   /// final callable = FirebaseFunctions.instance.httpsCallable('getPost');
   /// final result = await callable.call({'postId': 'abc123'});
-  /// final post = PostModel.fromJson(result.data as Map<String, dynamic>);
+  /// final data = safeResultData(result); // from repo_helpers.dart
+  /// final post = PostModel.fromJson(data);
   /// ```
   ///
   /// Supported timestamp formats in responses:

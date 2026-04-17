@@ -1,5 +1,49 @@
 ## Unreleased
 
+### ⚠️ Breaking Changes: Email-link Auth Mobile Configuration
+
+`_createActionCodeSettings` renamed `_createActionCodeSettingsAsync`).
+
+#### Migration Required for Mobile Email-link Auth
+
+Choose one of the two approaches in your app initialization:
+
+**Option 1 — Plain App Links / Universal Links (most common):**
+```dart
+AppConfigBase.emailConfirmMobileOriginDefault = 'https://app.example.com';
+```
+The origin must match the App Links / Universal Links domain configured
+in `AndroidManifest.xml` intent-filters and iOS associated domains.
+The `/emailconfirm` path is appended automatically and must match the
+route handler in your consuming app.
+
+**Option 2 — Firebase Dynamic Links, `linkDomain`, Branch, AppsFlyer, etc.:**
+```dart
+AppConfigBase.mobileEmailLinkActionCodeSettingsBuilder = () async {
+  final pkg = await AppConfigBase.getPackageInfo();
+  return ActionCodeSettings(
+    url: 'https://your-underlying-url/emailconfirm',
+    linkDomain: 'links.example.com', // or dynamicLinkDomain, or wrap in Branch URL
+    androidPackageName: pkg.packageName,
+    iOSBundleId: pkg.packageName,
+    handleCodeInApp: true,
+  );
+};
+```
+
+### Other Changes
+* Web email-link continueUrl is now derived from `Uri.base` — no
+  configuration required for web.
+* If neither mobile option above is set, `signInWithEmail` throws
+  `StateError` at the first mobile email-link auth attempt with a
+  message naming both options.
+* Added `PhoneAuthError.smsCodeExpired` and `.sessionExpired` for
+  granular phone verification error handling.
+* Added `AuthServiceSignInFailure.signInTimedOut` — returned when
+  post-registration sign-in retry loop exhausts all attempts.
+* Removed deprecated `sharedPrefKeyTimezone` constant and sign-out
+  cleanup code (timezone tracking handled by DeviceService since v0.4.0).
+
 ### Planned
 * Begin extraction of `auto_route` singleton helpers to `dreamroute_autoroutehelper`.
 * Compatibility policy locked to temporary re-exports in `dreamic` with deprecation for one minor release cycle.

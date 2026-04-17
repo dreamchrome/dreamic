@@ -378,5 +378,49 @@ void main() {
         expect(str, contains('data: (key)')); // Uses parentheses not brackets
       });
     });
+
+    group('BEH-03: sparse remote messages degrade gracefully', () {
+      test('handles missing imageUrl without crash', () {
+        final message = RemoteMessage(
+          notification: RemoteNotification(
+            title: 'No Image',
+            body: 'Body',
+          ),
+          data: {},
+        );
+
+        final payload = NotificationPayload.fromRemoteMessage(message);
+
+        expect(payload.title, equals('No Image'));
+        expect(payload.imageUrl, isNull);
+      });
+
+      test('handles null apple badge without crash', () {
+        // RemoteMessage with no apple notification data — badge path is null
+        final message = RemoteMessage(
+          notification: RemoteNotification(
+            title: 'No Badge',
+            body: 'Body',
+          ),
+          data: {},
+        );
+
+        final payload = NotificationPayload.fromRemoteMessage(message);
+
+        expect(payload.badge, isNull);
+      });
+
+      test('handles completely empty RemoteMessage without crash', () {
+        final message = RemoteMessage();
+
+        final payload = NotificationPayload.fromRemoteMessage(message);
+
+        expect(payload.title, isNull);
+        expect(payload.body, isNull);
+        expect(payload.imageUrl, isNull);
+        expect(payload.badge, isNull);
+        expect(payload.route, isNull);
+      });
+    });
   });
 }

@@ -118,6 +118,7 @@ typedef NotificationErrorCallback = void Function(
 /// - Don't need notification entitlements
 /// - Won't have notification code in their build (tree-shaking)
 class NotificationService {
+  // Thread-safe: Dart is single-threaded within an isolate. No synchronization needed.
   static NotificationService? _instance;
 
   bool _initialized = false;
@@ -459,6 +460,8 @@ class NotificationService {
 
   /// Initializes the local notifications plugin with platform-specific configuration.
   Future<void> _initializeLocalNotifications() async {
+    if (_localNotifications != null) return;
+
     _localNotifications = FlutterLocalNotificationsPlugin();
 
     // Android initialization
@@ -2293,8 +2296,13 @@ class NotificationService {
         // Prefer the persisted token as the source of truth for "old token"
         // (cached in-memory values may be null on cold start).
         if (token != oldToken) {
-          await _onTokenChanged!(token, oldToken);
-          await _storeToken(token);
+          final onTokenChanged = _onTokenChanged;
+          if (onTokenChanged == null) {
+            logw('_onTokenChanged is null, skipping initial token sync');
+          } else {
+            await onTokenChanged(token, oldToken);
+            await _storeToken(token);
+          }
         }
         _cachedFcmToken = token;
         logd('FCM token initialized: ${token.substring(0, 20)}...');
@@ -2309,7 +2317,12 @@ class NotificationService {
       (newToken) async {
         final oldToken = await _getStoredToken();
         try {
-          await _onTokenChanged!(newToken, oldToken);
+          final onTokenChanged = _onTokenChanged;
+          if (onTokenChanged == null) {
+            logw('_onTokenChanged is null, skipping refreshed token sync');
+            return;
+          }
+          await onTokenChanged(newToken, oldToken);
           await _storeToken(newToken);
           _cachedFcmToken = newToken;
           logd('FCM token refreshed: ${newToken.substring(0, 20)}...');

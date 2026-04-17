@@ -9,24 +9,13 @@ Future<bool> appIsVersionValid(
 
   // Strip build number suffix (e.g., "2.2.5+71" → "2.2.5")
   final deviceVersion = deviceInfo.version.split('+').first;
-  int deviceMajor = int.tryParse(deviceVersion.split('.')[0]) ?? 0;
-  int deviceMinor = int.tryParse(deviceVersion.split('.')[1]) ?? 0;
-  int devicePatch = int.tryParse(deviceVersion.split('.')[2]) ?? 0;
+  final deviceParts = deviceVersion.split('.');
+  int deviceMajor = _safePart(deviceParts, 0);
+  int deviceMinor = _safePart(deviceParts, 1);
+  int devicePatch = _safePart(deviceParts, 2);
 
   logv('App version: ${deviceInfo.version} (parsed: $deviceMajor.$deviceMinor.$devicePatch)');
 
-  // var serverInfo = (await Get.find<SystemInfoRepoInt>().getSystemInfo()).fold(
-  //   (l) {
-  //     return l.maybeWhen<SystemInfo>(
-  //       expectedRecordNotFound: () => SystemInfo(),
-  //       //TODO: handle this better, it crashes the whole app with no feedback!!!
-  //       orElse: () => throw StateError('Error getting version'),
-  //     );
-  //   },
-  //   (r) => r,
-  // );
-
-  // var serverInfo = GetIt.I.get<RemoteConfigRepoInt>().getString('minimumAppVersion');
   final serverInfo = minimumAppVersion;
 
   if (serverInfo.isEmpty && allowToRunIfServerVersionIsEmpty) {
@@ -36,9 +25,10 @@ Future<bool> appIsVersionValid(
 
   // Strip build number suffix if present
   final serverVersion = serverInfo.split('+').first;
-  int appVersionMajor = int.tryParse(serverVersion.split('.')[0]) ?? 0;
-  int appVersionMinor = int.tryParse(serverVersion.split('.')[1]) ?? 0;
-  int appVersionPatch = int.tryParse(serverVersion.split('.')[2]) ?? 0;
+  final serverParts = serverVersion.split('.');
+  int appVersionMajor = _safePart(serverParts, 0);
+  int appVersionMinor = _safePart(serverParts, 1);
+  int appVersionPatch = _safePart(serverParts, 2);
 
   logv('Server versions: = $appVersionMajor.$appVersionMinor.$appVersionPatch');
 
@@ -57,4 +47,8 @@ Future<bool> appIsVersionValid(
   }
 
   return false;
+}
+
+int _safePart(List<String> parts, int index) {
+  return parts.length > index ? int.tryParse(parts[index]) ?? 0 : 0;
 }

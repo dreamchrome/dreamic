@@ -10,45 +10,13 @@ import 'package:flutter/foundation.dart';
 import 'package:dreamic/data/helpers/repository_failure.dart';
 import 'package:dreamic/utils/retry_it.dart';
 import 'package:dreamic/data/helpers/repo_helpers.dart';
-import 'package:dreamic/data/models/login_code_request.dart';
-import 'package:dreamic/data/models/login_code_response.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
-// import 'package:http/browser_client.dart';
-
-// import '../../common/bloc_exception.dart';
 import '../../app/app_config_base.dart';
 import '../../utils/logger.dart';
 import 'auth_service_int.dart';
 
-/// @deprecated This key is no longer actively used for timezone storage.
-///
-/// **Migration Note (v0.4.0+):**
-/// Timezone tracking has been migrated to [DeviceServiceInt]/[DeviceServiceImpl].
-/// The new system provides:
-/// - Per-device timezone tracking (instead of per-user)
-/// - DST-aware offset tracking (`timezoneOffsetMinutes`)
-/// - Automatic sync on app resume and auth events
-/// - Offline resilience with pending payload system
-///
-/// **Current Status:**
-/// - This key was intended for storing timezone but was never actively written to.
-/// - The timezone passed in auth callables (`loginAnonymously`, `accessCodeCheck`)
-///   remains for backend redundancy during the migration period.
-/// - Removal of this constant is planned for a future version.
-///
-/// **For Consuming Apps:**
-/// - Call `DeviceService.connectToAuthService()` to enable automatic timezone tracking.
-/// - The timezone will be synced to `users/{uid}/devices/{deviceId}` in Firestore.
-/// - Backend systems should query the `devices` subcollection for timezone data.
-///
-/// See `docs/DEVICE_SERVICE_GUIDE.md` for full documentation.
-@Deprecated('Use DeviceServiceInt for timezone tracking. '
-    'This constant will be removed in a future version.')
-const String sharedPrefKeyTimezone = 'dreamic_timezone';
-
-//TODO: this doesn't work with both anon auth and federated auth, but it could
+// Note: this doesn't work with both anon auth and federated auth, but it could
 
 class AuthServiceImpl implements AuthServiceInt {
   /// Callbacks invoked when user authenticates, grouped by priority.
@@ -122,9 +90,17 @@ class AuthServiceImpl implements AuthServiceInt {
     return false;
   }
 
-  HttpsCallable authCallable =
+  late HttpsCallable authCallable =
       AppConfigBase.firebaseFunctionCallable(AppConfigBase.authMainCallableFunction);
+
+  @visibleForTesting
+  Duration signInRetryDelay = const Duration(seconds: 1);
+
   late final fb_auth.FirebaseAuth _fbAuth;
+
+  // Firebase auth listener subscriptions (for dispose/test teardown)
+  StreamSubscription<fb_auth.User?>? _authStateSubscription;
+  StreamSubscription<fb_auth.User?>? _idTokenSubscription;
 
   // bool _hasGottenUserPrivate = false;
   bool _hasAuthStateChangeListenerRunAtLeastOnce = false;
@@ -165,12 +141,13 @@ class AuthServiceImpl implements AuthServiceInt {
   //User currentUser;
   @override
   set currentFbUser(fb_auth.User? user) {
-    //TODO: This is done to appease the compiler...
+    // Note: This is done to appease the compiler...
     throw StateError('Cannot set this value programmatically');
   }
 
   AuthServiceImpl({
-    required FirebaseApp firebaseApp,
+    FirebaseApp? firebaseApp,
+    fb_auth.FirebaseAuth? firebaseAuthOverride, // @visibleForTesting
     // Single callback convenience (default priority 0)
     Future<void> Function(String? uid)? onAuthenticated,
     Future<void> Function()? onLoggedOut,
@@ -185,10 +162,11 @@ class AuthServiceImpl implements AuthServiceInt {
     List<PrioritizedCallback<Future<void> Function()>>? onLoggedOutPrioritized,
     List<PrioritizedCallback<Future<void> Function()>>?
         onAboutToLogOutPrioritized,
-  }) {
+  }) : assert(firebaseApp != null || firebaseAuthOverride != null,
+            'Provide firebaseApp or firebaseAuthOverride') {
     // This can be disabled for hardcoding
     logd('Instantiated AuthServiceImpl');
-    _fbAuth = fb_auth.FirebaseAuth.instanceFor(app: firebaseApp);
+    _fbAuth = firebaseAuthOverride ?? fb_auth.FirebaseAuth.instanceFor(app: firebaseApp!);
 
     // IMPORTANT: Register ALL constructor-provided lifecycle callbacks BEFORE
     // attaching auth listeners.
@@ -245,8 +223,8 @@ class AuthServiceImpl implements AuthServiceInt {
     }
 
     // Attach listeners AFTER callbacks are registered.
-    _fbAuth.authStateChanges().listen(handleAuthStateChanges);
-    _fbAuth.idTokenChanges().listen((event) => handleTokenChanges(event));
+    _authStateSubscription = _fbAuth.authStateChanges().listen(handleAuthStateChanges);
+    _idTokenSubscription = _fbAuth.idTokenChanges().listen((event) => handleTokenChanges(event));
 
     // For debuggin
     if (AppConfigBase.signoutOnReload) {
@@ -257,6 +235,8 @@ class AuthServiceImpl implements AuthServiceInt {
 
   // Add dispose method to clean up the stream controller
   void dispose() {
+    _authStateSubscription?.cancel();
+    _idTokenSubscription?.cancel();
     _isLoggedInStreamController.close();
   }
 
@@ -423,8 +403,7 @@ class AuthServiceImpl implements AuthServiceInt {
       return;
     } else {
       logd('fbUser is NOT null during handleTokenChanges');
-      //TODO: added this here but not sure it needs to do this again...
-      // await refreshCurrentUser();
+      // Note: refreshCurrentUser was here but is no longer needed.
 
       // Note: FCM token management has been moved to NotificationService.
       // Apps should subscribe to isLoggedInStream and call
@@ -443,22 +422,21 @@ class AuthServiceImpl implements AuthServiceInt {
       // logd('token: $token');
 
       final http.Client client = http.Client();
-      //TODO: temp disabled
-      // if (client is BrowserClient) {
-      //   client.withCredentials = true;
-      // }
+      try {
+        final response = await client.post(Uri.parse(url), body: {
+          // 'Accept': '*/*',
+          // 'User-Agent': 'Thunder Client (https://www.thunderclient.com)',
+          // 'Authorization': 'Bearer $token',
+          'token': token,
+        });
 
-      final response = await client.post(Uri.parse(url), body: {
-        // 'Accept': '*/*',
-        // 'User-Agent': 'Thunder Client (https://www.thunderclient.com)',
-        // 'Authorization': 'Bearer $token',
-        'token': token,
-      });
-
-      if (response.statusCode == 200) {
-        logd('Cookie set successfully!!');
-      } else {
-        loge('Failed to set cookie!!');
+        if (response.statusCode == 200) {
+          logd('Cookie set successfully!!');
+        } else {
+          loge('Failed to set cookie!!');
+        }
+      } finally {
+        client.close();
       }
     }
   }
@@ -511,30 +489,20 @@ class AuthServiceImpl implements AuthServiceInt {
       // Clear the cookie on the server if using federated auth
       if (AppConfigBase.useCookieFederatedAuth) {
         final http.Client client = http.Client();
+        try {
+          final response = await client
+              .get(Uri.parse(RepoHelpers.getFunctionUrl(_fbAuth.app, 'authfunctions-signout')));
 
-        final response = await client
-            .get(Uri.parse(RepoHelpers.getFunctionUrl(_fbAuth.app, 'authfunctions-signout')));
-
-        if (response.statusCode == 204) {
-          logd('Cleared cookie successfully');
-        } else {
-          logd('Failed to clear cookie!!');
-          // Don't return error for cookie clear failure
+          if (response.statusCode == 204) {
+            logd('Cleared cookie successfully');
+          } else {
+            logd('Failed to clear cookie!!');
+            // Don't return error for cookie clear failure
+          }
+        } finally {
+          client.close();
         }
       }
-
-      // Clear any legacy stored user info
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-
-      // MIGRATION NOTE: This key was never actively written to, but we keep the
-      // removal call for safety during migration. Device-level cleanup (including
-      // timezone data) is now handled by DeviceService.unregisterDevice() which
-      // is automatically called via the onAboutToLogOut callback when
-      // DeviceService.connectToAuthService() has been configured.
-      // TODO(migration): Remove this line after confirming no production data
-      // uses this key (target: next major version after v0.4.0).
-      // ignore: deprecated_member_use_from_same_package
-      await prefs.remove(sharedPrefKeyTimezone);
 
       // Note: FCM token cleanup has been moved to NotificationService.clearFcmToken()
       // Apps should call NotificationService.clearFcmToken() before signing out.
@@ -887,8 +855,13 @@ class AuthServiceImpl implements AuthServiceInt {
 
   Future<bool> _performLightweightTokenCheck() async {
     try {
+      final user = _fbAuth.currentUser;
+      if (user == null) {
+        logw('_performLightweightTokenCheck: currentUser is null');
+        return false;
+      }
       // Get token without forcing refresh - uses cached token if valid
-      final token = await _fbAuth.currentUser!.getIdToken(false);
+      final token = await user.getIdToken(false);
       return token != null;
     } catch (e) {
       logd('_performLightweightTokenCheck failed: $e');
@@ -904,8 +877,14 @@ class AuthServiceImpl implements AuthServiceInt {
 
       logd('_performFullTokenValidation: forceRefresh=$shouldForceRefresh');
 
+      final user = _fbAuth.currentUser;
+      if (user == null) {
+        logw('_performFullTokenValidation: currentUser is null');
+        return false;
+      }
+
       // This will use Firebase's automatic token management
-      final token = await _fbAuth.currentUser!
+      final token = await user
           .getIdToken(shouldForceRefresh)
           .timeout(const Duration(seconds: 10));
 
@@ -1005,11 +984,13 @@ class AuthServiceImpl implements AuthServiceInt {
         return true;
       } else {
         logd('_attemptCookieAuth: Cookie is NOT valid or not present');
-        return false; // Add this line
+        return false;
       }
     } catch (e) {
       logd('_attemptCookieAuth: Cookie auth failed: $e');
-      return false; // Add this line
+      return false;
+    } finally {
+      client.close();
     }
   }
 
@@ -1077,44 +1058,23 @@ class AuthServiceImpl implements AuthServiceInt {
     return result;
   }
 
-  // @override
-  // Future<bool> waitForUserPrivateRefreshed() async {
-  //   // logd('waitForCanCheckLoginState called');
-
-  //   // while (_hasTriedToGetCurrentUserPrivate == false) {
-
-  //   //TODO: set a
-  //   while (_hasGottenUserPrivate == false) {
-  //     logd('waitForUserPrivateRefreshed loop');
-  //     await Future.delayed(const Duration(milliseconds: 50));
-  //   }
-
-  //   // logd('waitForCanCheckLoginState FINISHED');
-
-  //   return _hasGottenUserPrivate;
-  // }
-
-  // @override
-  // Future<Either<RepositoryFailure, UserPrivate>> getCurrentUserPrivate() {
-
-  // }
-
   @override
   Future<Map<T, bool>> getUserClaims<T extends Enum>({
     required List<T> enumValues,
     bool forceRefresh = false,
   }) async {
     // Handle if they are not logged in
-    if (_fbAuth.currentUser == null) {
+    final user = _fbAuth.currentUser;
+    if (user == null) {
       logd('AuthService: Current user is null! (getUserClaims()');
       return <T, bool>{};
     }
 
     var userClaims = <T, bool>{};
-    var tokenResult = await _fbAuth.currentUser!.getIdTokenResult(forceRefresh);
+    var tokenResult = await user.getIdTokenResult(forceRefresh);
 
     // For each tokenResult.claims, add it to the userClaims list if it matches an enum value
-    for (var entry in tokenResult.claims!.entries) {
+    for (var entry in (tokenResult.claims?.entries ?? <MapEntry<String, dynamic>>[])) {
       var key = entry.key;
       var value = entry.value;
 
@@ -1128,84 +1088,6 @@ class AuthServiceImpl implements AuthServiceInt {
     return userClaims;
   }
 
-  // @override
-  // Future<Either<AuthServiceSignInFailure, UserPrivate>> refreshCurrentUser() async {
-  //   logd('REFRESHING CURRENT USER');
-
-  //   // if (_fbAuth.currentUser != null) {
-  //   //   if (_fbAuth.currentUser!.isAnonymous) {
-  //   //     // Create a standard anonymous profile
-  //   //     logd('AuthService: Current user is anonymous!');
-  //   //     currentUser = UserPrivate(
-  //   //       firstName: 'Anonymous',
-  //   //       lastName: 'User',
-  //   //       userType: UserType.anonymous,
-  //   //     );
-  //   //     // if (kDebugMode)
-  //   //     // {
-  //   //     //   _auth.app
-  //   //     // }
-  //   //   } else {
-  //   // Get database user
-  //   (await Get.find<UserRepoInt>().getMyUserPrivate()).fold(
-  //     (failure) {
-  //       failure.maybeWhen(
-  //         expectedRecordNotFound: () {
-  //           logd('AuthService: Couldnt find database user for auth user. Signing out...');
-  //           _hasGottenUserPrivate = false;
-  //           _fbAuth.signOut();
-  //         },
-  //         orElse: () {
-  //           logd('AuthService: Unknown failure getting db user for auth user');
-  //           //TODO: Which error should we throw here?
-  //           throw BlocRetryableException();
-  //         },
-  //       );
-  //     },
-  //     (success) {
-  //       // logd('AuthService: Sucessfully found db user for auth user');
-  //       logd('AuthService: Sucessfully found db user for auth user: ${success.id}');
-  //       currentUserPrivate = success;
-  //       _hasGottenUserPrivate = true;
-  //     },
-  //   );
-
-  //   //TODO: need more logic around this. SHould we clear cache when refreshing??????????????
-  //   if (_hasGottenUserPrivate) {
-  //     // await GetIt.I.get<InputRepoInt>().getMyInputCached();
-  //     await onRefreshed?.call();
-  //   }
-  //   //   }
-  //   // } else {
-  //   //   logd('AuthService: fbUser is null. Must be signed out');
-  //   //   currentUser = UserPrivate();
-  //   // }
-
-  //   logd('REFRESHING CURRENT USER FINISHED');
-
-  //   return right(unit);
-  // }
-
-  // Future<Either<AuthServiceSignInFailure, Unit>> signInOrUpFirstStep(String email, String password) {
-
-  // }
-
-  // Future<Either<AuthServiceSignInFailure, Unit>> signInOrUpFirstStep(String email, String password) {
-
-  // }
-
-  @override
-  Future<Either<AuthServiceSignInFailure, LoginCodeResponse>> loginWithCode(String code) async {
-    try {
-      var result = await authCallable.call(LoginCodeRequest(loginCode: code).toJson());
-
-      return right(LoginCodeResponse.fromJson(result.data));
-    } catch (e) {
-      loge(e);
-      return left(AuthServiceSignInFailure.wrongPassword);
-    }
-  }
-
   String _lastUsedPhoneNumberForLogin = '';
   String _phoneVerificationId = '';
   int? _resendToken;
@@ -1217,7 +1099,7 @@ class AuthServiceImpl implements AuthServiceInt {
     required Function(PhoneAuthError) verificationFailed,
     required Function codeSent,
     required Function codeAutoRetrievalTimeout,
-    //TODO: this is unused right now because the code kind of handles either case
+    // Note: this is unused right now because the code kind of handles either case
     required bool codeResend,
   }) async {
     assert(phoneNumber.isNotEmpty);
@@ -1299,21 +1181,19 @@ class AuthServiceImpl implements AuthServiceInt {
       // Sign in the user with the credential
       await _fbAuth.signInWithCredential(credential);
 
-      //TODO: handle the Firebase Errors to see if the code was wrong
       return right(true);
     } on FirebaseAuthException catch (e) {
       if (e.code == 'invalid-verification-code') {
-        // print('The provided verification code is invalid.');
         return left(PhoneAuthError.wrongSmsCode);
-        // Handle invalid verification code
+      } else if (e.code == 'session-expired') {
+        return left(PhoneAuthError.smsCodeExpired);
+      } else if (e.code == 'invalid-verification-id') {
+        return left(PhoneAuthError.sessionExpired);
       } else if (e.code == 'user-not-found') {
-        // print('No user found with this phone number.');
         return left(PhoneAuthError.invalidPhone);
-        // Handle no user found
       } else {
         logd(
             'e.code was something unhandled in loginWithPhoneVerifyCode:${e.message ?? 'no message'}');
-        // Handle other Firebase auth errors
         return left(PhoneAuthError.unexpected);
       }
     } catch (e) {
@@ -1370,11 +1250,12 @@ class AuthServiceImpl implements AuthServiceInt {
     try {
       // Call the function to register the user with a random password
 
+      final packageInfo = await AppConfigBase.getPackageInfo();
       var result = await authCallable.call({
         'action': 'registerWithJustEmail',
         'email': email,
-        //TODO: pass the bundle ID or something like that to know whihc app is calling. Using isForApp is legacy and should be removed after the existing functions are updated
-        'isForApp': true,
+        'isForApp': true, // deprecated: use bundleId
+        'bundleId': packageInfo.packageName,
       });
 
       if (result.data['result'] == 'exists') {
@@ -1387,37 +1268,26 @@ class AuthServiceImpl implements AuthServiceInt {
       const int maxRetries = 8;
       int i = 0;
       for (i; i < maxRetries; i++) {
-        bool hadError = false;
-
         try {
           await _fbAuth.signInWithEmailAndPassword(
             email: email,
             password: result.data['password'],
           );
         } on fb_auth.FirebaseAuthException catch (f) {
-          hadError = true;
-          //TODO: should this be "firebase_auth/user-not-found" now?
-          // if (f.message == 'user-not-found') {
-          // Delay
-          loge(f);
-          // } else {
-          // rethrow;
-          // }
+          if (f.code == 'user-not-found') {
+            logd('AUTH SIGN IN FAILED. Waiting a second then trying again');
+            await Future.delayed(signInRetryDelay);
+            continue;
+          } else {
+            loge(f);
+            return left(AuthServiceSignInFailure.unexpected);
+          }
         }
-
-        if (hadError) {
-          logd('AUTH SIGN IN FAILED. Waiting a second then trying again');
-          await Future.delayed(const Duration(seconds: 1));
-          continue;
-        }
-        // Got here so there's no error
         break;
       }
 
       if (i >= maxRetries) {
-        //TODO: a better error?
-
-        return left(AuthServiceSignInFailure.unexpected);
+        return left(AuthServiceSignInFailure.signInTimedOut);
       }
 
       logd('Signed in with one time password');
@@ -1445,11 +1315,12 @@ class AuthServiceImpl implements AuthServiceInt {
   @override
   Future<Either<AuthServiceSignInFailure, Unit>> sendLoginEmail(String email) async {
     try {
+      final packageInfo = await AppConfigBase.getPackageInfo();
       await authCallable.call({
         'action': 'emailLoginLink',
         'email': email,
-        //TODO: pass the bundle ID or something like that to know whihc app is calling. Using isForApp is legacy and should be removed after the existing functions are updated
-        'isForApp': !kIsWeb,
+        'isForApp': !kIsWeb, // deprecated: use bundleId
+        'bundleId': packageInfo.packageName,
       });
 
       // if (result.data['result'] == 'exists') {
@@ -1468,55 +1339,16 @@ class AuthServiceImpl implements AuthServiceInt {
   Future<Either<AuthServiceSignInFailure, Unit>> signInWithEmailAndPassword(
       String email, String password) async {
     try {
-      // _hasGottenUserPrivate = false;
-
       var userCred = await _fbAuth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
-
-      // Have to get this here so we'll know if the user finished setup yet
-      // (await Get.find<UserRepositoryInt>().getUserById(credential.user!.uid)).fold(
-      //   (failure) => currentUser.value = User(),
-      //   (success) => currentUser.value = success,
-      // );
-
-      //TODO: duplicate code because the user could quit right after login
-
-      // Create, Get the firebase user and return
-      // var dbCreateResult = await Get.find<UserRepoInt>().createUserIfNotExist(User(
-      //   id: userCred.user!.uid,
-      //   email: email,
-      // ));
-
-      // Determine outcome
-      // Either<AuthServiceSignInFailure, User> returnVal = dbCreateResult.fold(
-      //   (failure) {
-      //     return failure.maybeWhen(
-      //       orElse: () => left(AuthServiceSignInFailure.databaseError()),
-      //     );
-      //   },
-      //   (success) {
-      //     currentUser.value = success;
-      //     return right(success);
-      //   },
-      // );
-
-      // Finally return
 
       if (userCred.user == null) {
         return left(AuthServiceSignInFailure.userNotFound);
       }
 
       await waitForCanCheckLoginState();
-
-      // UserPrivate returnValUser =
-      //     (await Get.find<UserRepoInt>().getUserPrivateById(userCred.user!.uid)).fold(
-      //   (failure) => throw Exception(),
-      //   (success) => success,
-      // );
-
-      //await refreshCurrentUser();
 
       return right(unit);
 
@@ -1531,6 +1363,9 @@ class AuthServiceImpl implements AuthServiceInt {
           return left(AuthServiceSignInFailure.userNotFound);
         case 'wrong-password':
           logd('signInWithEmailAndPassword wrong-password');
+          return left(AuthServiceSignInFailure.wrongPassword);
+        case 'invalid-credential':
+          logd('signInWithEmailAndPassword invalid-credential');
           return left(AuthServiceSignInFailure.wrongPassword);
         case 'user-disabled':
           logd('signInWithEmailAndPassword user-disabled');
@@ -1595,41 +1430,22 @@ class AuthServiceImpl implements AuthServiceInt {
         try {
           await _fbAuth.signInWithEmailAndPassword(email: email, password: password);
         } on fb_auth.FirebaseAuthException catch (f) {
-          if (f.message == 'user-not-found') {
-            // Delay
+          if (f.code == 'user-not-found') {
             logd('AUTH SIGN IN FAILED. Waiting a second then trying again');
-            await Future.delayed(const Duration(seconds: 1));
+            await Future.delayed(signInRetryDelay);
             continue;
           } else {
-            rethrow;
+            loge(f);
+            return left(AuthServiceSignInFailure.unexpected);
           }
         }
         break;
       }
       if (i >= maxRetries) {
-        //TODO: a better error?
-        return left(AuthServiceSignInFailure.unexpected);
+        return left(AuthServiceSignInFailure.signInTimedOut);
       }
 
-//TODO: is this redundant? Because I'm not sure it gets it in tiem without it
-      //await refreshCurrentUser();
-
       return right(unit);
-      // } on fb_auth.FirebaseAuthException catch (e) {
-      //   switch (e.code) {
-      //     case 'invalid-email':
-      //       logd('registerUserWithEmailAndPassword invalid-email');
-      //       return left(AuthServiceSignInFailure.invalidEmail);
-      //     case 'email-already-in-use':
-      //       logd('registerUserWithEmailAndPassword email-already-in-use');
-      //       return left(AuthServiceSignInFailure.userAlreadyExists);
-      //     case 'weak-password':
-      //       logd('registerUserWithEmailAndPassword weak-password');
-      //       return left(AuthServiceSignInFailure.weakPassword);
-      //     default:
-      //       logd('registerUserWithEmailAndPassword default');
-      //       return left(AuthServiceSignInFailure.unexpected);
-      //   }
     } on FirebaseFunctionsException catch (e) {
       logd('registerUserWithEmailAndPassword FirebaseFunctionsException: ${e.message}');
       switch (e.message) {
@@ -1695,7 +1511,7 @@ class AuthServiceImpl implements AuthServiceInt {
       // Send the email
       await _fbAuth.sendSignInLinkToEmail(
         email: email,
-        actionCodeSettings: _createActionCodeSettings(),
+        actionCodeSettings: await _createActionCodeSettingsAsync(),
       );
       // For UI
       await Future.delayed(const Duration(seconds: 1));
@@ -1724,20 +1540,14 @@ class AuthServiceImpl implements AuthServiceInt {
       logd('isSignInWithEmailLink failed');
       return left(AuthServiceEmailLinkFailure.invalidLink);
     } else {
-      // Get the email from storage if we can
-      // if (email == null) {
-      //   storedEmail = GetStorage().read(Constants.boxKeyUserSignInWithLinkEmail);
-      // } else {
-      //   storedEmail = email;
-      // }
-
-      // If email is still null, we need to ask the user
-      // if (storedEmail == null) {
-      //   return left(AuthServiceEmailLinkFailure.noEmailRemembered());
-      // }
-
-      //TODO: sure we want to rely on this email being passed?
+      // The email is embedded in the link URL by the server (sendLoginEmail.ts)
+      // and validated by Firebase against the oobCode — client-side email
+      // validation is unnecessary.
       storedEmail = email;
+
+      if (storedEmail == null) {
+        return left(AuthServiceEmailLinkFailure.noEmailRemembered);
+      }
 
       logd('storedEmail: $storedEmail');
       logd('link: $link');
@@ -1745,45 +1555,12 @@ class AuthServiceImpl implements AuthServiceInt {
       try {
         // Do the signin
         var signInResult = await _fbAuth.signInWithEmailLink(
-          email: storedEmail!,
+          email: storedEmail,
           emailLink: link,
         );
 
         assert(signInResult.user != null);
         currentFbUserCredentials = signInResult;
-
-        // Don't need the temp storage anymore
-        // GetStorage().remove(Constants.boxKeyUserSignInWithLinkEmail);
-
-        // Create, Get the firebase user and return
-        //TODO: broken due to separating private data
-        // var dbCreateResult = await Get.find<UserRepoInt>().createUserIfNotExist(User(
-        //   id: currentFbUserCredentials!.user!.uid,
-        //email: currentFbUserCredentials!.user!.email!,
-        // ));
-
-        // Determine outcome
-        // Either<AuthServiceEmailLinkFailure, Unit> returnVal = dbCreateResult.fold(
-        //   (failure) {
-        //     return failure.maybeWhen(
-        //       orElse: () => left(AuthServiceEmailLinkFailure.databaseError()),
-        //     );
-        //   },
-        //   (success) {
-        //     currentUser.value = success;
-        //     return right(unit);
-        //   },
-        // );
-
-        // Finally return
-        // return returnVal;
-
-        //TODO: make sure this doesn't return before getting the user info loaded
-        await isLoggedInAsync();
-
-        // final response = await http.get(Uri.parse(url), headers: {
-        //   'Authorization': 'Bearer $token',
-        // });
 
         return right(unit);
       } on fb_auth.FirebaseAuthException catch (e) {
@@ -1807,22 +1584,58 @@ class AuthServiceImpl implements AuthServiceInt {
     }
   }
 
-  fb_auth.ActionCodeSettings _createActionCodeSettings() {
+  /// The email-confirm route. Must match all of:
+  ///  - server-side `sendLoginEmail.ts` path component
+  ///  - consuming app's web router route
+  ///  - AndroidManifest.xml intent-filter `pathPrefix`
+  ///  - iOS associated domains `paths` entry
+  static const String _emailConfirmPath = '/emailconfirm';
+
+  Future<fb_auth.ActionCodeSettings> _createActionCodeSettingsAsync() async {
     if (kIsWeb) {
+      // Web: derive from the running page. Zero config — works in dev,
+      // staging, and prod. Constructs from components (not Uri.base.replace)
+      // to avoid leaking query params or fragment from the current page URL.
+      // Use hasPort to avoid redundant :443/:80 in production URLs
+      // while preserving explicit dev ports (e.g., localhost:5000).
       return fb_auth.ActionCodeSettings(
-        //TODO: localhost url
-        url: 'http://localhost:${Uri.base.port}/emailconfirm',
+        url: Uri(
+          scheme: Uri.base.scheme,
+          host: Uri.base.host,
+          port: Uri.base.hasPort ? Uri.base.port : null,
+          path: _emailConfirmPath,
+        ).toString(),
         handleCodeInApp: true,
-      );
-    } else {
-      //final PackageInfo packageInfo = await PackageInfo.fromPlatform();
-      return fb_auth.ActionCodeSettings(
-        url: 'https://xyz.page.link/emailconfirm}',
-        handleCodeInApp: true,
-        androidPackageName: 'family.milestone.milestone_app',
-        iOSBundleId: 'family.milestone.milestoneApp',
       );
     }
+
+    // Mobile: escape hatch first — consuming app fully owns construction
+    // for FDL / linkDomain / Branch / AppsFlyer / etc.
+    final builder = AppConfigBase.mobileEmailLinkActionCodeSettingsBuilder;
+    if (builder != null) {
+      return await builder();
+    }
+
+    // Default: plain App Links / Universal Links pattern.
+    final origin = AppConfigBase.emailConfirmMobileOrigin;
+    if (origin.isEmpty) {
+      throw StateError(
+        'Mobile email-link auth requires one of:\n'
+        '  (1) AppConfigBase.emailConfirmMobileOriginDefault = '
+        '"https://yourapp.com" — for plain App Links / Universal Links, OR\n'
+        '  (2) AppConfigBase.mobileEmailLinkActionCodeSettingsBuilder = '
+        '() async { ... } — for Firebase Dynamic Links, linkDomain, '
+        'Branch, AppsFlyer, or other deferred-deep-link services.',
+      );
+    }
+
+    final packageInfo = await AppConfigBase.getPackageInfo();
+    return fb_auth.ActionCodeSettings(
+      url: '$origin$_emailConfirmPath',
+      handleCodeInApp: true,
+      androidPackageName: packageInfo.packageName,
+      iOSBundleId: packageInfo.packageName,
+    );
   }
 
   @override
@@ -1857,7 +1670,7 @@ class AuthServiceImpl implements AuthServiceInt {
           ));
 
       // HttpsCallableResult.data returns Map<Object?, Object?>, not Map<String, dynamic>
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = safeResultData(result);
 
       // Check if the code is valid
       if (data['result'] != 'valid') {
@@ -1912,7 +1725,7 @@ class AuthServiceImpl implements AuthServiceInt {
       // if (result.data['result'] == 'exists') {
       //   return left(const AuthServiceSignInFailure.userAlreadyExists());
       // }
-      //TODO: I don' think the function actually returns any of these
+      // Note: the function may not actually return any of these
     } on FirebaseFunctionsException catch (e) {
       logd('registerUserWithEmailAndPassword FirebaseFunctionsException: ${e.message}');
       switch (e.message) {

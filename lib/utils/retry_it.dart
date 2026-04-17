@@ -3,11 +3,12 @@ import 'dart:async';
 import 'package:exponential_back_off/exponential_back_off.dart';
 import 'package:dreamic/app/app_config_base.dart';
 import 'package:dreamic/utils/logger.dart';
-// import 'package:retry/retry.dart';
+import 'package:dreamic/utils/retryable_checker.dart';
 
 Future<T> retryIt<T>(
   Future<T> Function() fn, {
   int? maxAttempts,
+  bool Function(Object)? retryIf,
 }) async {
   maxAttempts ??= AppConfigBase.retryAttemptsCountMax;
 
@@ -20,7 +21,7 @@ Future<T> retryIt<T>(
 
   final result = await exponentialBackOff.start<T>(
     () async => await fn.call(),
-    retryIf: (e) => true,
+    retryIf: retryIf ?? isTransientError,
     onRetry: (error) {
       logd(
           '-------------------------------------------------------- retryIt attempt: ${exponentialBackOff.attemptCounter}');

@@ -15,6 +15,8 @@ import '../../app/app_config_base.dart';
 import '../../app/helpers/app_lifecycle_service.dart';
 import '../../utils/get_it_utils.dart';
 import '../../utils/logger.dart';
+import '../../utils/retryable_checker.dart';
+import '../helpers/repo_helpers.dart';
 import '../helpers/repository_failure.dart';
 import '../../utils/device_utils.dart';
 import '../models/device_form_factor.dart';
@@ -391,6 +393,10 @@ class DeviceServiceImpl implements DeviceServiceInt {
       return payload;
     } catch (e) {
       logw('DeviceService: Failed to load pending payload: $e');
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_kPendingPayloadKey);
+      } catch (_) {}
       return null;
     }
   }
@@ -531,11 +537,10 @@ class DeviceServiceImpl implements DeviceServiceInt {
     }
 
     _isFlushingPayload = true;
+    final payload = _pendingPayload!;
 
     try {
       logd('DeviceService: Flushing pending payload: $_pendingPayload');
-
-      final payload = _pendingPayload!;
 
       // Determine the action based on what data we have
       // If we have timezone/platform/appVersion, use 'register' action
@@ -582,7 +587,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
       callData['action'] = action;
 
       final result = await _deviceCallable.call(callData);
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = safeResultData(result);
 
       if (data['success'] == true) {
         logd('DeviceService: Pending payload flushed successfully with action: $action');
@@ -602,22 +607,32 @@ class DeviceServiceImpl implements DeviceServiceInt {
         return true;
       } else {
         logw('DeviceService: Pending payload flush failed: ${data['error'] ?? 'unknown error'}');
-        // Update attempt timestamp for backoff
-        _pendingPayload = _pendingPayload!.withAttemptAt(DateTime.now());
-        await _savePendingPayload(_pendingPayload);
+        // Update attempt timestamp for backoff (guard: _pendingPayload may have been
+        // cleared by a concurrent registerDevice() during the await)
+        final current = _pendingPayload;
+        if (current != null) {
+          _pendingPayload = current.withAttemptAt(DateTime.now());
+          await _savePendingPayload(_pendingPayload);
+        }
         return false;
       }
     } on FirebaseFunctionsException catch (e) {
       loge(e, 'DeviceService: Firebase error during pending payload flush');
       // Update attempt timestamp for backoff
-      _pendingPayload = _pendingPayload!.withAttemptAt(DateTime.now());
-      await _savePendingPayload(_pendingPayload);
+      final current = _pendingPayload;
+      if (current != null) {
+        _pendingPayload = current.withAttemptAt(DateTime.now());
+        await _savePendingPayload(_pendingPayload);
+      }
       return false;
     } catch (e) {
       loge(e, 'DeviceService: Unexpected error during pending payload flush');
       // Update attempt timestamp for backoff
-      _pendingPayload = _pendingPayload!.withAttemptAt(DateTime.now());
-      await _savePendingPayload(_pendingPayload);
+      final current = _pendingPayload;
+      if (current != null) {
+        _pendingPayload = current.withAttemptAt(DateTime.now());
+        await _savePendingPayload(_pendingPayload);
+      }
       return false;
     } finally {
       _isFlushingPayload = false;
@@ -837,7 +852,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
       });
 
       // Check for success
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = safeResultData(result);
       if (data['success'] != true) {
         logw('DeviceService: Registration response indicated failure');
         // Store in pending payload for retry
@@ -924,28 +939,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
   /// Returns false for permanent errors (auth, permission) that won't benefit
   /// from retry without user action.
   bool _shouldStorePendingOnError(FirebaseFunctionsException e) {
-    switch (e.code) {
-      case 'unavailable':
-      case 'deadline-exceeded':
-      case 'internal':
-      case 'unknown':
-      case 'resource-exhausted':
-        return true; // Transient errors - store for retry
-      case 'unauthenticated':
-      case 'permission-denied':
-      case 'invalid-argument':
-      case 'not-found':
-      case 'already-exists':
-      case 'failed-precondition':
-      case 'aborted':
-      case 'out-of-range':
-      case 'unimplemented':
-      case 'cancelled':
-      case 'data-loss':
-        return false; // Permanent or user-actionable errors
-      default:
-        return true; // Default to storing for unknown errors
-    }
+    return isTransientError(e);
   }
 
   @override
@@ -1055,7 +1049,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         'appVersion': packageInfo.version,
       });
 
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = safeResultData(result);
       if (data['success'] != true) {
         logw('DeviceService: Timezone sync response indicated failure');
         // Store in pending payload for retry
@@ -1172,7 +1166,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         'deviceId': deviceId,
       });
 
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = safeResultData(result);
       if (data['success'] != true) {
         logw('DeviceService: Touch response indicated failure');
         // Store touch in pending payload for retry
@@ -1244,7 +1238,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         'fcmToken': fcmToken,
       });
 
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = safeResultData(result);
       if (data['success'] != true) {
         logw('DeviceService: persistFcmToken response indicated failure');
         // Store token update in pending payload
@@ -1308,7 +1302,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         'deviceId': deviceId,
       });
 
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = safeResultData(result);
       if (data['success'] != true) {
         logw('DeviceService: Unregister response indicated failure');
         return const Left(RepositoryFailure.unexpected);
@@ -1337,7 +1331,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         'deviceId': deviceId, // Required for callable validation
       });
 
-      final data = Map<String, dynamic>.from(result.data as Map);
+      final data = safeResultData(result);
       if (data['success'] != true) {
         logw('DeviceService: getMyDevices response indicated failure');
         return const Left(RepositoryFailure.unexpected);
