@@ -1,5 +1,20 @@
+import 'package:dreamic/app/app_config_base.dart';
+import 'package:dreamic/data/repos/remote_config_repo_int.dart';
 import 'package:dreamic/notifications/notification_types.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get_it/get_it.dart';
+
+class _StubRemoteConfig implements RemoteConfigRepoInt {
+  final Map<String, dynamic> values = {};
+  @override
+  String getString(String key) => values[key] as String? ?? '';
+  @override
+  bool getBool(String key) => values[key] as bool? ?? false;
+  @override
+  int getInt(String key) => values[key] as int? ?? 0;
+  @override
+  double getDouble(String key) => values[key] as double? ?? 0.0;
+}
 
 void main() {
   group('NotificationFlowConfig', () {
@@ -158,6 +173,109 @@ void main() {
         );
 
         expect(copy.strings.valuePropositionTitle, equals('New Title'));
+      });
+    });
+
+    group('fromAppConfig', () {
+      late _StubRemoteConfig stubRC;
+      late int origAskAgainDays;
+      late double origAskAgainMultiplier;
+      late int origMaxAskCount;
+      late int origGoToSettingsAskAgainDays;
+      late int? origGoToSettingsMaxAskCount;
+
+      setUp(() {
+        // Snapshot programmatic defaults for test isolation (per OQ-010).
+        origAskAgainDays =
+            AppConfigBase.defaultRemoteConfig['notificationAskAgainDays'] as int;
+        origAskAgainMultiplier = AppConfigBase
+            .defaultRemoteConfig['notificationAskAgainMultiplier'] as double;
+        origMaxAskCount =
+            AppConfigBase.defaultRemoteConfig['notificationMaxAskCount'] as int;
+        origGoToSettingsAskAgainDays = AppConfigBase
+            .defaultRemoteConfig['notificationGoToSettingsAskAgainDays'] as int;
+        origGoToSettingsMaxAskCount = AppConfigBase
+            .defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] as int?;
+
+        stubRC = _StubRemoteConfig();
+        if (GetIt.I.isRegistered<RemoteConfigRepoInt>()) {
+          GetIt.I.unregister<RemoteConfigRepoInt>();
+        }
+        GetIt.I.registerSingleton<RemoteConfigRepoInt>(stubRC);
+      });
+
+      tearDown(() {
+        AppConfigBase.defaultRemoteConfig['notificationAskAgainDays'] =
+            origAskAgainDays;
+        AppConfigBase.defaultRemoteConfig['notificationAskAgainMultiplier'] =
+            origAskAgainMultiplier;
+        AppConfigBase.defaultRemoteConfig['notificationMaxAskCount'] = origMaxAskCount;
+        AppConfigBase.defaultRemoteConfig['notificationGoToSettingsAskAgainDays'] =
+            origGoToSettingsAskAgainDays;
+        AppConfigBase.defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] =
+            origGoToSettingsMaxAskCount;
+
+        if (GetIt.I.isRegistered<RemoteConfigRepoInt>()) {
+          GetIt.I.unregister<RemoteConfigRepoInt>();
+        }
+      });
+
+      test('reads goToSettings defaults from AppConfigBase when no inline overrides',
+          () {
+        final config = NotificationFlowConfig.fromAppConfig();
+
+        // Default AppConfigBase values: 30 days, null for max ask count.
+        expect(config.goToSettingsAskAgainAfter, equals(const Duration(days: 30)));
+        expect(config.goToSettingsMaxAskCount, isNull);
+        // Existing AppConfigBase values: 7 days, 3.0 multiplier, max 3.
+        expect(config.askAgainAfter, equals(const Duration(days: 7)));
+        expect(config.askAgainMultiplier, equals(3.0));
+        expect(config.maxAskCount, equals(3));
+        // Default boolean and builder values pass through unchanged.
+        expect(config.showGoToSettingsPrompt, isTrue);
+        expect(config.valuePropositionBuilder, isNull);
+        expect(config.goToSettingsBuilder, isNull);
+        expect(config.askAgainBuilder, isNull);
+      });
+
+      test(
+          'reads goToSettings values from AppConfigBase when programmatic defaults '
+          'are overridden', () {
+        AppConfigBase.notificationGoToSettingsAskAgainDaysDefault = 14;
+        AppConfigBase.notificationGoToSettingsMaxAskCountDefault = 5;
+
+        final config = NotificationFlowConfig.fromAppConfig();
+
+        expect(config.goToSettingsAskAgainAfter, equals(const Duration(days: 14)));
+        expect(config.goToSettingsMaxAskCount, equals(5));
+      });
+
+      test('inline goToSettingsAskAgainAfter takes precedence over AppConfigBase', () {
+        AppConfigBase.notificationGoToSettingsAskAgainDaysDefault = 14;
+
+        final config = NotificationFlowConfig.fromAppConfig(
+          goToSettingsAskAgainAfter: const Duration(days: 60),
+        );
+
+        expect(config.goToSettingsAskAgainAfter, equals(const Duration(days: 60)));
+      });
+
+      test('inline goToSettingsMaxAskCount takes precedence over AppConfigBase', () {
+        AppConfigBase.notificationGoToSettingsMaxAskCountDefault = 5;
+
+        final config = NotificationFlowConfig.fromAppConfig(
+          goToSettingsMaxAskCount: 2,
+        );
+
+        expect(config.goToSettingsMaxAskCount, equals(2));
+      });
+
+      test('inline showGoToSettingsPrompt=false propagates', () {
+        final config = NotificationFlowConfig.fromAppConfig(
+          showGoToSettingsPrompt: false,
+        );
+
+        expect(config.showGoToSettingsPrompt, isFalse);
       });
     });
   });

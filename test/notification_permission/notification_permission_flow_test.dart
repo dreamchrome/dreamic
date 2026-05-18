@@ -1,6 +1,10 @@
+import 'package:dreamic/app/app_config_base.dart';
 import 'package:dreamic/data/models/notification_permission_status.dart';
+import 'package:dreamic/notifications/notification_service.dart';
 import 'package:dreamic/notifications/notification_types.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Tests for the notification permission flow logic.
 ///
@@ -793,6 +797,157 @@ void main() {
         ),
         isFalse,
       );
+    });
+  });
+
+  // =======================================================================
+  // recordValuePropDecline invocation contract (Phase 3 / OQ-011 boundary)
+  //
+  // Verifies: recordValuePropDecline is called exactly once iff the flow
+  // returns NotificationFlowResult.declinedValueProposition; never called
+  // for any other result. Drives the actual runNotificationPermissionFlow
+  // through testWidgets (real BuildContext) with @visibleForTesting
+  // overrides controlling status and builder callbacks short-circuiting
+  // dialogs. Verification is via SharedPreferences side-effects: VP info
+  // is non-null after a recorded decline, null otherwise.
+  //
+  // Paths that proceed past the value-proposition decision call
+  // initializeNotifications() which requires Firebase; those paths cannot
+  // be exercised here. They also cannot reach the recordValuePropDecline
+  // call site (it lives only in the notDetermined !shouldProceed branch),
+  // so coverage of the testable subset is sufficient for the contract.
+  // =======================================================================
+  group('recordValuePropDecline invocation contract', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+
+    late NotificationService service;
+
+    Future<BuildContext> buildContext(WidgetTester tester) async {
+      late BuildContext capturedContext;
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Builder(
+            builder: (ctx) {
+              capturedContext = ctx;
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      return capturedContext;
+    }
+
+    setUp(() {
+      SharedPreferences.setMockInitialValues({});
+      NotificationService.resetForTesting();
+      service = NotificationService();
+      // Ensure FCM is enabled so the early fcmDisabled return doesn't
+      // mask other branches.
+      AppConfigBase.useFCMDefault = true;
+    });
+
+    tearDown(() {
+      service.testGetPermissionStatusOverride = null;
+      service.testGetNotificationDenialInfoOverride = null;
+      service.testGetGoToSettingsPromptInfoOverride = null;
+      service.testGetValuePropDeclineInfoOverride = null;
+      service.testInitializeFcmTokenOverride = null;
+      NotificationService.resetForTesting();
+    });
+
+    // Direct constructor (no fromAppConfig) avoids the GetIt-backed
+    // AppConfigBase.notificationAskAgainDays getter chain that requires
+    // RemoteConfigRepoInt registration. Builders short-circuit dialogs.
+    NotificationFlowConfig flowConfig({
+      bool showGoToSettingsPrompt = true,
+      Future<bool> Function(BuildContext)? valuePropositionBuilder,
+      Future<bool> Function(BuildContext)? goToSettingsBuilder,
+      Future<bool> Function(BuildContext, NotificationDenialInfo)?
+          askAgainBuilder,
+    }) {
+      return NotificationFlowConfig(
+        showGoToSettingsPrompt: showGoToSettingsPrompt,
+        valuePropositionBuilder: valuePropositionBuilder,
+        goToSettingsBuilder: goToSettingsBuilder,
+        askAgainBuilder: askAgainBuilder,
+      );
+    }
+
+    testWidgets('called exactly once when result is declinedValueProposition',
+        (tester) async {
+      service.testGetPermissionStatusOverride =
+          () async => NotificationPermissionStatus.notDetermined;
+
+      final context = await buildContext(tester);
+      final result = await service.runNotificationPermissionFlow(
+        context,
+        config: flowConfig(valuePropositionBuilder: (_) async => false),
+      );
+
+      expect(result, NotificationFlowResult.declinedValueProposition);
+      // VP info present in real SP — proves recordValuePropDecline ran.
+      final info = await service.getValuePropDeclineInfo();
+      expect(info, isNotNull);
+      expect(info!.declineCount, 1);
+    });
+
+    // The denied → ask-again paths require a non-iOS/non-macOS platform
+    // (canPromptForPermission returns false on Apple platforms by design,
+    // forcing all denied → permanently-denied). The host runs macOS, so
+    // the ask-again branch is not exercisable here. Coverage of the
+    // negative cases below uses the permanently-denied paths instead.
+
+    testWidgets('NOT called when result is declinedGoToSettings',
+        (tester) async {
+      service.testGetPermissionStatusOverride =
+          () async => NotificationPermissionStatus.denied;
+      // Permanent denial → routes to permanently-denied (go-to-settings) flow.
+      service.testGetNotificationDenialInfoOverride = () async =>
+          NotificationDenialInfo(
+            lastDenialTime:
+                DateTime.now().subtract(const Duration(days: 365)),
+            denialCount: 3,
+            isPermanent: true,
+          );
+      service.testGetGoToSettingsPromptInfoOverride = () async => null;
+
+      final context = await buildContext(tester);
+      final result = await service.runNotificationPermissionFlow(
+        context,
+        config: flowConfig(
+          // User declines the go-to-settings prompt.
+          goToSettingsBuilder: (_) async => false,
+        ),
+      );
+
+      expect(result, NotificationFlowResult.declinedGoToSettings);
+      expect(await service.getValuePropDeclineInfo(), isNull);
+    });
+
+    testWidgets('NOT called when result is skippedGoToSettings',
+        (tester) async {
+      service.testGetPermissionStatusOverride =
+          () async => NotificationPermissionStatus.denied;
+      service.testGetNotificationDenialInfoOverride = () async =>
+          NotificationDenialInfo(
+            lastDenialTime:
+                DateTime.now().subtract(const Duration(days: 365)),
+            denialCount: 3,
+            isPermanent: true,
+          );
+      service.testGetGoToSettingsPromptInfoOverride = () async => null;
+
+      final context = await buildContext(tester);
+      final result = await service.runNotificationPermissionFlow(
+        context,
+        // showGoToSettingsPrompt: false → skippedGoToSettings without
+        // ever invoking the builder.
+        config: flowConfig(showGoToSettingsPrompt: false),
+      );
+
+      expect(result, NotificationFlowResult.skippedGoToSettings);
+      expect(await service.getValuePropDeclineInfo(), isNull);
     });
   });
 }

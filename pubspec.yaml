@@ -57,6 +57,12 @@ dev_dependencies:
   build_runner: ^2.13.1
   json_serializable: ^6.13.1
   mocktail: ^1.0.5
+  # Direct access to the in-memory store and platform interface for tests
+  # that need to inject fault-injecting SharedPreferences implementations
+  # (e.g. asserting helper methods swallow SP errors). Transitively pulled
+  # in via shared_preferences; declared here to make the test-only
+  # dependency explicit.
+  shared_preferences_platform_interface: ^2.4.0
 
 
 # For information on the generic Dart part of this file, see the

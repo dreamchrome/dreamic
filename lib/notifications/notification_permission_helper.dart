@@ -3,6 +3,7 @@ import 'dart:io' show Platform;
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../app/app_config_base.dart';
 import '../data/models/notification_permission_status.dart';
 import 'notification_service.dart';
 import 'notification_types.dart';
@@ -44,6 +45,8 @@ class NotificationPermissionHelper {
   static const String _keyDenialInfo = 'dreamic_notification_denial_info';
   static const String _keySettingsPromptInfo =
       'dreamic_notification_settings_prompt_info';
+  static const String _keyValuePropDeclineInfo =
+      'dreamic_notification_value_prop_decline_info';
   static const String _keyHasRequested = 'dreamic_notification_has_requested';
   static const String _keyLastReminderDate =
       'dreamic_notification_last_reminder_date';
@@ -364,6 +367,106 @@ class NotificationPermissionHelper {
     }
   }
 
+  /// Gets structured information about value-proposition declines.
+  ///
+  /// A value-prop decline is the in-app "Not Now" tap on the value-proposition
+  /// sheet shown before the OS permission dialog — distinct from system-denied
+  /// (tracked by [getNotificationDenialInfo]).
+  Future<ValuePropDeclineInfo?> getValuePropDeclineInfo() async {
+    try {
+      await ensureMigrated();
+      final prefs = await SharedPreferences.getInstance();
+      final jsonStr = prefs.getString(_keyValuePropDeclineInfo);
+      if (jsonStr == null) return null;
+
+      final json = jsonDecode(jsonStr) as Map<String, dynamic>;
+      return ValuePropDeclineInfo.fromJson(json);
+    } catch (e) {
+      loge(e, 'Error getting value prop decline info');
+      return null;
+    }
+  }
+
+  /// Clears stored value-proposition decline info.
+  Future<void> clearValuePropDeclineInfo() async {
+    try {
+      await ensureMigrated();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_keyValuePropDeclineInfo);
+      logd('Cleared value prop decline info');
+    } catch (e) {
+      loge(e, 'Error clearing value prop decline info');
+    }
+  }
+
+  /// Returns true if a value-proposition reminder should be shown.
+  ///
+  /// Returns false unless the permission status is `notDetermined` AND
+  /// decline info exists AND both the count cap and the cooldown allow
+  /// it. Any internal error is logged and returns false (conservative —
+  /// never double-prompt on error).
+  ///
+  /// [cooldown] — Minimum time since the last decline.
+  ///   * `null` (default) — falls through to
+  ///     `Duration(days: AppConfigBase.notificationValuePropReminderCooldownDays)`,
+  ///     which itself defaults to 30 days but is Remote-Config tunable.
+  ///   * `Duration.zero` — always passes the cooldown check; the cap
+  ///     becomes the sole gate.
+  ///   * Any other `Duration` — explicit inline override.
+  ///
+  /// [maxAskCount] — Maximum number of re-prompts allowed AFTER the
+  /// first decline. Internally checks
+  /// `info.declineCount >= maxAskCount + 1`.
+  ///
+  /// Note this differs semantically from
+  /// `AppConfigBase.notificationMaxAskCount`, which counts TOTAL prompts
+  /// for the system-denial flow. Here, `maxAskCount: 1` means "one
+  /// re-prompt allowed" (two total touches: first decline plus one
+  /// reminder).
+  ///   * `null` (default) — falls through to
+  ///     `AppConfigBase.notificationValuePropReminderMaxAskCount`, which
+  ///     itself defaults to `null` (= unlimited; cooldown is the sole
+  ///     gate). A consumer who calls
+  ///     `AppConfigBase.notificationValuePropReminderMaxAskCountDefault = N`
+  ///     changes the inline-`null` behavior to "cap at N."
+  ///   * `0` — never re-prompt after the first decline.
+  ///   * Negative values inline — same effect as `0` (never re-prompt).
+  ///     Not clamped; consistent with the rest of dreamic's predicates,
+  ///     which trust caller input. NOTE: at the AppConfigBase layer,
+  ///     RC value `-1` means "unset, fall through to default" (a
+  ///     different convention; see Phase 9 of the plan / AppConfigBase
+  ///     doc-comments).
+  ///   * `1` — one re-prompt allowed.
+  Future<bool> shouldShowValuePropReminder({
+    Duration? cooldown,
+    int? maxAskCount,
+  }) async {
+    try {
+      final status = await _notificationService.getPermissionStatus();
+      if (status != NotificationPermissionStatus.notDetermined) return false;
+
+      final info = await getValuePropDeclineInfo();
+      if (info == null) return false;
+
+      // Resolve effective values: inline overrides → AppConfigBase fallback.
+      final effectiveCooldown = cooldown ??
+          Duration(days: AppConfigBase.notificationValuePropReminderCooldownDays);
+      final effectiveMaxAskCount = maxAskCount ??
+          AppConfigBase.notificationValuePropReminderMaxAskCount;
+
+      if (effectiveMaxAskCount != null &&
+          info.declineCount >= effectiveMaxAskCount + 1) {
+        return false;
+      }
+
+      final timeSinceDecline = DateTime.now().difference(info.lastDeclineTime);
+      return timeSinceDecline >= effectiveCooldown;
+    } catch (e) {
+      loge(e, 'Error checking should show value prop reminder');
+      return false;
+    }
+  }
+
   /// Records a permission denial.
   ///
   /// [isPermanent] should be true for iOS (always permanent after first denial)
@@ -450,6 +553,47 @@ class NotificationPermissionHelper {
     }
   }
 
+  /// Records a value-proposition decline (in-app "Not Now" tap on the
+  /// value-proposition sheet — the OS dialog was never shown).
+  ///
+  /// Creates a new [ValuePropDeclineInfo] with `declineCount: 1` if none
+  /// exists; otherwise increments [ValuePropDeclineInfo.declineCount] and
+  /// updates [ValuePropDeclineInfo.lastDeclineTime] to now.
+  ///
+  /// **Critical: does NOT set `_keyHasRequested = true`** — a value-prop
+  /// decline means the OS dialog was never shown, so
+  /// [hasRequestedPermissionBefore] must remain false. This differs from
+  /// [recordDenial], which sets the flag because a system denial implies
+  /// the dialog was shown.
+  ///
+  /// **Does NOT touch [NotificationDenialInfo] or [GoToSettingsPromptInfo].**
+  /// Cross-cohort cleanup is centralized in [autoClearIfGranted] and the
+  /// settings deep-link handler — both lifecycle-triggered, not
+  /// call-triggered.
+  Future<void> recordValuePropDecline() async {
+    try {
+      await ensureMigrated();
+      final prefs = await SharedPreferences.getInstance();
+
+      final existingInfo = await getValuePropDeclineInfo();
+      final now = DateTime.now();
+
+      final newInfo = ValuePropDeclineInfo(
+        lastDeclineTime: now,
+        declineCount: (existingInfo?.declineCount ?? 0) + 1,
+      );
+
+      await prefs.setString(
+        _keyValuePropDeclineInfo,
+        jsonEncode(newInfo.toJson()),
+      );
+
+      logd('Recorded value prop decline: $newInfo');
+    } catch (e) {
+      loge(e, 'Error recording value prop decline');
+    }
+  }
+
   /// Checks permission status and clears tracking data if granted.
   ///
   /// Call this when the app resumes or at strategic points to detect
@@ -462,10 +606,12 @@ class NotificationPermissionHelper {
       if (isGranted) {
         final denialInfo = await getNotificationDenialInfo();
         final settingsInfo = await getGoToSettingsPromptInfo();
+        final valuePropInfo = await getValuePropDeclineInfo();
 
-        if (denialInfo != null || settingsInfo != null) {
+        if (denialInfo != null || settingsInfo != null || valuePropInfo != null) {
           await clearNotificationDenialInfo();
           await clearGoToSettingsPromptInfo();
+          await clearValuePropDeclineInfo();
           logd('Permission now granted - cleared stored tracking info');
           return true;
         }

@@ -9,6 +9,8 @@ class MockSharedPreferencesHelper {
   /// Keys used by the notification permission system.
   static const String keyDenialInfo = 'dreamic_notification_denial_info';
   static const String keySettingsPromptInfo = 'dreamic_notification_settings_prompt_info';
+  static const String keyValuePropDeclineInfo =
+      'dreamic_notification_value_prop_decline_info';
   static const String keyHasRequested = 'dreamic_notification_has_requested';
   static const String keyLastReminderDate = 'dreamic_notification_last_reminder_date';
   static const String keyMigrationComplete = 'dreamic_notification_keys_migrated';
@@ -67,6 +69,7 @@ class MockSharedPreferencesHelper {
   static void setupWithDreamicData({
     String? denialInfoJson,
     String? settingsPromptInfoJson,
+    String? valuePropDeclineInfoJson,
     bool? hasRequested,
     int? lastReminderDate,
     bool? migrationComplete,
@@ -79,6 +82,9 @@ class MockSharedPreferencesHelper {
     }
     if (settingsPromptInfoJson != null) {
       values[keySettingsPromptInfo] = settingsPromptInfoJson;
+    }
+    if (valuePropDeclineInfoJson != null) {
+      values[keyValuePropDeclineInfo] = valuePropDeclineInfoJson;
     }
     if (hasRequested != null) {
       values[keyHasRequested] = hasRequested;
@@ -130,6 +136,17 @@ class MockSharedPreferencesHelper {
         '"lastPromptTime":${lastPromptTime.millisecondsSinceEpoch},'
         '"promptCount":$promptCount,'
         '"lastActionWasOpenSettings":$lastActionWasOpenSettings'
+        '}';
+  }
+
+  /// Creates a JSON string for ValuePropDeclineInfo.
+  static String createValuePropDeclineInfoJson({
+    required DateTime lastDeclineTime,
+    required int declineCount,
+  }) {
+    return '{'
+        '"lastDeclineTime":${lastDeclineTime.millisecondsSinceEpoch},'
+        '"declineCount":$declineCount'
         '}';
   }
 }

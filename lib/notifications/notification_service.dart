@@ -1639,13 +1639,62 @@ class NotificationService {
   ///
   /// Useful for apps that want custom logic for when to show the settings prompt.
   /// Delegates to [NotificationPermissionHelper.getGoToSettingsPromptInfo].
-  Future<GoToSettingsPromptInfo?> getGoToSettingsPromptInfo() =>
-      _permissionHelper.getGoToSettingsPromptInfo();
+  Future<GoToSettingsPromptInfo?> getGoToSettingsPromptInfo() {
+    if (_testGetGoToSettingsPromptInfoOverride != null) {
+      return _testGetGoToSettingsPromptInfoOverride!();
+    }
+    return _permissionHelper.getGoToSettingsPromptInfo();
+  }
 
   /// Clears stored "go to settings" prompt info.
   ///
   /// Delegates to [NotificationPermissionHelper.clearGoToSettingsPromptInfo].
   Future<void> clearGoToSettingsPromptInfo() => _permissionHelper.clearGoToSettingsPromptInfo();
+
+  /// Gets metadata about previous value-proposition declines.
+  ///
+  /// Useful for apps that want analytics or custom UI around the
+  /// declined-value-proposition cohort (distinct from system-denied
+  /// and go-to-settings cohorts).
+  /// Delegates to [NotificationPermissionHelper.getValuePropDeclineInfo].
+  Future<ValuePropDeclineInfo?> getValuePropDeclineInfo() {
+    if (_testGetValuePropDeclineInfoOverride != null) {
+      return _testGetValuePropDeclineInfoOverride!();
+    }
+    return _permissionHelper.getValuePropDeclineInfo();
+  }
+
+  /// Clears stored value-proposition decline info.
+  ///
+  /// Delegates to [NotificationPermissionHelper.clearValuePropDeclineInfo].
+  Future<void> clearValuePropDeclineInfo() =>
+      _permissionHelper.clearValuePropDeclineInfo();
+
+  /// Returns true if a value-proposition reminder should be shown.
+  ///
+  /// See [NotificationPermissionHelper.shouldShowValuePropReminder] for
+  /// edge-value semantics ([Duration.zero], `maxAskCount: 0`/negative/null),
+  /// the [AppConfigBase] fall-through behavior for nulls, and the
+  /// divergence from [AppConfigBase.notificationMaxAskCount].
+  Future<bool> shouldShowValuePropReminder({
+    Duration? cooldown,
+    int? maxAskCount,
+  }) =>
+      _permissionHelper.shouldShowValuePropReminder(
+        cooldown: cooldown,
+        maxAskCount: maxAskCount,
+      );
+
+  /// Records a value-proposition decline.
+  ///
+  /// Apps that show their own value-proposition UI outside the built-in
+  /// flow can call this to participate in the same bookkeeping. Apps that
+  /// use [runNotificationPermissionFlow] do not need to call this — it is
+  /// invoked automatically when the flow returns
+  /// [NotificationFlowResult.declinedValueProposition].
+  /// Delegates to [NotificationPermissionHelper.recordValuePropDecline].
+  Future<void> recordValuePropDecline() =>
+      _permissionHelper.recordValuePropDecline();
 
   //
   // High-Level Permission Flow
@@ -1663,6 +1712,18 @@ class NotificationService {
   /// [config] allows customization of strings, timing, and dialog builders.
   ///
   /// Returns a [NotificationFlowResult] indicating how the flow completed.
+  ///
+  /// When the flow returns [NotificationFlowResult.declinedValueProposition],
+  /// dreamic auto-records the decline via
+  /// [NotificationPermissionHelper.recordValuePropDecline]. Apps can later
+  /// gate a targeted reminder via
+  /// [NotificationPermissionHelper.shouldShowValuePropReminder] or read
+  /// the tracking via [NotificationPermissionHelper.getValuePropDeclineInfo].
+  /// Tracking is auto-cleared on grant detection (via `autoClearIfGranted`
+  /// and the OS settings deep-link handler). Note: the
+  /// [NotificationFlowResult.skippedAskAgain] path is a separate cohort
+  /// (the user declined the system-denied "ask again" dialog) and does
+  /// NOT trigger value-prop decline tracking.
   ///
   /// Example:
   /// ```dart
@@ -1712,6 +1773,7 @@ class NotificationService {
 
           if (!shouldProceed) {
             logd('runNotificationPermissionFlow: User declined value proposition');
+            await _permissionHelper.recordValuePropDecline();
             return NotificationFlowResult.declinedValueProposition;
           }
 
@@ -2104,23 +2166,33 @@ class NotificationService {
       var permissionJustGranted = false;
 
       try {
-        // Step 1: Snapshot denial state BEFORE getPermissionStatus() clears it.
+        // Step 1: Snapshot ALL tracking blobs BEFORE getPermissionStatus() clears them.
         // getPermissionStatus() calls autoClearIfGranted() internally, which wipes
-        // denial info when permission is granted. We need the snapshot to detect
-        // whether permission was newly granted (denial info existed → now granted).
+        // all three tracking blobs when permission is granted. We need the snapshot
+        // to detect whether permission was newly granted (any tracking existed →
+        // now granted).
+        //
+        // All three reads go through the service-level pass-through methods
+        // (not _permissionHelper.X directly) so each can be controlled via the
+        // @visibleForTesting overrides (testGetNotificationDenialInfoOverride,
+        // testGetGoToSettingsPromptInfoOverride, testGetValuePropDeclineInfoOverride).
+        // This keeps deep-link cohort tests on a single coherent override pattern.
         final denialInfo = await getNotificationDenialInfo();
+        final settingsInfo = await getGoToSettingsPromptInfo();
+        final valuePropInfo = await getValuePropDeclineInfo();
 
-        // Step 2: Refresh permission status (may auto-clear denial data via autoClearIfGranted)
+        // Step 2: Refresh permission status (may auto-clear all three blobs via autoClearIfGranted)
         currentStatus = await getPermissionStatus();
 
         // Step 3: If permission is granted, detect new grant and ensure FCM is active
         if (currentStatus == NotificationPermissionStatus.authorized ||
             currentStatus == NotificationPermissionStatus.provisional) {
-          if (denialInfo != null) {
-            // Denial info existed but permission is now granted — this is a new grant.
-            // autoClearIfGranted() already cleared the tracking data in Step 2.
+          if (denialInfo != null || settingsInfo != null || valuePropInfo != null) {
+            // Any prior tracking existed but permission is now granted — this is
+            // a new grant. autoClearIfGranted() already cleared the tracking data
+            // in Step 2.
             permissionJustGranted = true;
-            logd('Permission newly granted — denial tracking already auto-cleared');
+            logd('Permission newly granted — all tracking already auto-cleared');
           }
 
           // Initialize FCM if not already active — matches the existing
@@ -2133,19 +2205,22 @@ class NotificationService {
         }
 
         // Step 4: If still denied, reset ALL tracking — user is proactively re-engaging.
-        // This clears both NotificationDenialInfo (denial count, backoff timers) and
-        // GoToSettingsPromptInfo (go-to-settings prompt count/timing). Clearing only
-        // GoToSettingsPromptInfo would be insufficient — runNotificationPermissionFlow
-        // checks denialCount >= maxAskCount from NotificationDenialInfo when deciding
-        // whether to return skippedAskAgain. Without clearing it, a maxed-out user
-        // would still be blocked despite re-engaging via the OS settings link.
+        // This clears NotificationDenialInfo (denial count, backoff timers),
+        // GoToSettingsPromptInfo (go-to-settings prompt count/timing), and
+        // ValuePropDeclineInfo (value-prop decline tracking). Clearing only one
+        // or two would be insufficient — runNotificationPermissionFlow checks
+        // denialCount >= maxAskCount from NotificationDenialInfo when deciding
+        // whether to return skippedAskAgain. Without clearing all three, a
+        // maxed-out user would still be blocked despite re-engaging via the
+        // OS settings link.
         //
-        // Both clear methods handle their own errors internally (catch + log),
-        // so failures in one cannot prevent the other from executing. No outer
+        // All clear methods handle their own errors internally (catch + log),
+        // so failures in one cannot prevent the others from executing. No outer
         // try-catches needed — the helpers' error handling is part of their contract.
         if (currentStatus == NotificationPermissionStatus.denied) {
           await _permissionHelper.clearNotificationDenialInfo();
           await _permissionHelper.clearGoToSettingsPromptInfo();
+          await _permissionHelper.clearValuePropDeclineInfo();
           logd('Reset all notification tracking — user re-engaging via settings deep link');
         }
       } catch (e, stack) {
@@ -2517,6 +2592,18 @@ class NotificationService {
   Future<NotificationDenialInfo?> Function()?
       _testGetNotificationDenialInfoOverride;
 
+  /// Override for [getGoToSettingsPromptInfo] in tests. When non-null, the
+  /// override is called instead of the real SharedPreferences-based implementation.
+  /// Allows deep-link cohort tests to control the snapshot read independently
+  /// of the denial-info read.
+  Future<GoToSettingsPromptInfo?> Function()?
+      _testGetGoToSettingsPromptInfoOverride;
+
+  /// Override for [getValuePropDeclineInfo] in tests. When non-null, the
+  /// override is called instead of the real SharedPreferences-based implementation.
+  Future<ValuePropDeclineInfo?> Function()?
+      _testGetValuePropDeclineInfoOverride;
+
   /// Override for [initializeFcmToken] in tests. When non-null, the override
   /// is called instead of the real Firebase-based implementation. This skips
   /// the internal [_hasFcmTokenInitialized] guard — the test controls the state.
@@ -2535,6 +2622,18 @@ class NotificationService {
     Future<NotificationDenialInfo?> Function()? value,
   ) =>
       _testGetNotificationDenialInfoOverride = value;
+
+  @visibleForTesting
+  set testGetGoToSettingsPromptInfoOverride(
+    Future<GoToSettingsPromptInfo?> Function()? value,
+  ) =>
+      _testGetGoToSettingsPromptInfoOverride = value;
+
+  @visibleForTesting
+  set testGetValuePropDeclineInfoOverride(
+    Future<ValuePropDeclineInfo?> Function()? value,
+  ) =>
+      _testGetValuePropDeclineInfoOverride = value;
 
   @visibleForTesting
   set testInitializeFcmTokenOverride(Future<void> Function()? value) =>

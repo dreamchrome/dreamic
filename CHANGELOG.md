@@ -1,3 +1,80 @@
+## 0.8.0
+
+### Notification Permission: Value-Prop Decline Tracking
+
+Adds a third notification-permission lifecycle cohort — value-prop declines —
+alongside the existing system-denied and go-to-settings cohorts.
+`runNotificationPermissionFlow()` now auto-records when the user taps
+"Not Now" on the in-app value-proposition sheet (before the OS dialog is ever
+shown), and auto-clears the tracking when permission is later granted.
+
+**New API:**
+
+* `ValuePropDeclineInfo` data class — `lastDeclineTime`, `declineCount`, with
+  JSON round-trip and `copyWith`.
+* `NotificationService.getValuePropDeclineInfo()` /
+  `clearValuePropDeclineInfo()` / `recordValuePropDecline()` — mirrored on
+  the service for parity with the existing two cohorts (also available
+  directly on `NotificationPermissionHelper`).
+* `NotificationService.shouldShowValuePropReminder({Duration? cooldown,
+  int? maxAskCount})` — predicate to decide whether to re-prompt a
+  previously-declined user. Gates on `permissionStatus == notDetermined`;
+  returns `false` for already-decided cohorts. See the doc-comment for
+  full edge-value semantics (`maxAskCount: 0` / negatives = never
+  re-prompt; `cooldown: Duration.zero` = always passes timing gate;
+  `null` for either = fall through to AppConfigBase value).
+
+**Auto-integration:**
+
+* `runNotificationPermissionFlow()` records a value-prop decline iff it
+  returns `NotificationFlowResult.declinedValueProposition`; never on any
+  other result (including `skippedAskAgain` — that's the system-denied
+  cohort declining the re-ask dialog).
+* `autoClearIfGranted()`, the OS settings deep-link handler, and the
+  app-resume detection path all clear the value-prop tracking blob
+  alongside the existing two when permission is granted.
+
+**`NotificationSettingsDeepLinkInfo.permissionJustGranted` semantic widened:**
+
+* Was: `true` when stored *denial* tracking data existed before the deep
+  link AND permission is now authorized.
+* Now: `true` when *any* stored tracking data (denial info, go-to-settings
+  prompt info, or value-prop decline info) existed before the deep link
+  AND permission is now authorized.
+* This retroactively fixes a pre-existing gap where a user who saw only
+  the go-to-settings prompt (no system denial) would not have triggered
+  the flag.
+
+**`AppConfigBase` retrofit — four new Remote-Config-tunable keys:**
+
+* `notificationGoToSettingsAskAgainDays` (`int`, default 30, bounds 1–365)
+  — formerly inline-only in `NotificationFlowConfig.fromAppConfig()`.
+* `notificationGoToSettingsMaxAskCount` (`int?`, default `null` =
+  unlimited, bounds 1–100 when set) — formerly inline-only.
+* `notificationValuePropReminderCooldownDays` (`int`, default 30, bounds
+  1–365) — new.
+* `notificationValuePropReminderMaxAskCount` (`int?`, default `null` =
+  unlimited, bounds 1–100 when set) — new.
+
+The two `*MaxAskCount` keys introduce a new `int?` getter pattern in
+`AppConfigBase`, with a layer-specific convention: RC value `<= 0`
+(including the `0` Firebase RC returns for unset keys) means "unset, fall
+through to programmatic default." This is independent of the inline
+helper API's `maxAskCount: 0/negative = never re-prompt` contract — the
+two layers have distinct signatures (RC is non-nullable `int`; inline is
+`int?`) and both are documented.
+
+**Behavior change for non-default callers.** Existing apps that neither
+pass inline overrides nor set the new `*Default` setters see identical
+behavior — the AppConfigBase defaults match the prior Dart defaults
+(30 days, `null`). Apps that previously passed `null` inline for
+`NotificationFlowConfig.fromAppConfig().goToSettingsMaxAskCount` AND set
+a non-`null` `notificationGoToSettingsMaxAskCountDefault` will now see
+the AppConfigBase value take effect (where previously inline `null`
+short-circuited to "unlimited"). If you relied on inline `null` meaning
+"force unlimited regardless of AppConfigBase," explicitly pass a large
+`int` instead.
+
 ## 0.7.1
 
 Widened version constraints on `wakelock_plus` and `package_info_plus` so

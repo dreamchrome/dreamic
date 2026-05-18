@@ -381,10 +381,13 @@ void main() {
         expect(prefs.getString('dreamic_notification_settings_prompt_info'), isNull);
       });
 
-      test('clears both denial and settings info together on grant', () async {
-        // Set up: User has both denial info and settings prompt info
+      test('clears all three tracking blobs together on grant', () async {
+        // Set up: User has all three tracking blobs (denial, settings prompt,
+        // and value-prop decline). autoClearIfGranted clears all three when
+        // permission is detected as granted.
         final denialTime = DateTime.now().subtract(const Duration(days: 7));
         final promptTime = DateTime.now().subtract(const Duration(days: 2));
+        final valuePropTime = DateTime.now().subtract(const Duration(days: 5));
         MockSharedPreferencesHelper.setupWithDreamicData(
           denialInfoJson: MockSharedPreferencesHelper.createDenialInfoJson(
             lastDenialTime: denialTime,
@@ -397,26 +400,39 @@ void main() {
             promptCount: 4,
             lastActionWasOpenSettings: false,
           ),
+          valuePropDeclineInfoJson:
+              MockSharedPreferencesHelper.createValuePropDeclineInfoJson(
+            lastDeclineTime: valuePropTime,
+            declineCount: 2,
+          ),
           migrationComplete: true,
         );
 
-        // Verify both exist before
+        // Verify all three exist before
         expect(await helper.getNotificationDenialInfo(), isNotNull);
         expect(await helper.getGoToSettingsPromptInfo(), isNotNull);
+        expect(await helper.getValuePropDeclineInfo(), isNotNull);
 
         // Simulate: User enabled notifications in settings, app resumes
-        // autoClearIfGranted() clears both when permission is detected as granted
+        // autoClearIfGranted() clears all three when permission is detected
+        // as granted.
         await helper.clearNotificationDenialInfo();
         await helper.clearGoToSettingsPromptInfo();
+        await helper.clearValuePropDeclineInfo();
 
-        // Verify: Both are cleared
+        // Verify: All three are cleared
         expect(await helper.getNotificationDenialInfo(), isNull);
         expect(await helper.getGoToSettingsPromptInfo(), isNull);
+        expect(await helper.getValuePropDeclineInfo(), isNull);
 
         // Verify in SharedPreferences directly
         final prefs = await SharedPreferences.getInstance();
         expect(prefs.getString('dreamic_notification_denial_info'), isNull);
         expect(prefs.getString('dreamic_notification_settings_prompt_info'), isNull);
+        expect(
+          prefs.getString('dreamic_notification_value_prop_decline_info'),
+          isNull,
+        );
       });
 
       test('clearing is idempotent (safe to call when no data exists)', () async {

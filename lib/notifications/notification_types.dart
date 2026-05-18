@@ -46,6 +46,17 @@ enum NotificationFlowResult {
   alreadyGranted,
 
   /// User declined at value proposition dialog.
+  ///
+  /// When the flow returns this result, dreamic automatically calls
+  /// [NotificationPermissionHelper.recordValuePropDecline] to track the
+  /// decline. Apps can read the tracking via
+  /// [NotificationPermissionHelper.getValuePropDeclineInfo], gate a
+  /// targeted re-prompt via
+  /// [NotificationPermissionHelper.shouldShowValuePropReminder], or clear
+  /// the tracking manually via
+  /// [NotificationPermissionHelper.clearValuePropDeclineInfo]. The
+  /// tracking is also auto-cleared on grant detection (via
+  /// `autoClearIfGranted` and the OS settings deep-link handler).
   declinedValueProposition,
 
   /// User denied the system permission request.
@@ -232,6 +243,61 @@ class GoToSettingsPromptInfo {
         'lastPromptTime: $lastPromptTime, '
         'promptCount: $promptCount, '
         'lastActionWasOpenSettings: $lastActionWasOpenSettings)';
+  }
+}
+
+/// Information about value-proposition declines (the in-app "Not Now" tap on
+/// the value-proposition sheet shown before the OS permission dialog).
+///
+/// This is a distinct cohort from system-denied users (tracked by
+/// [NotificationDenialInfo]). A value-prop decline means the OS dialog was
+/// never shown.
+class ValuePropDeclineInfo {
+  /// When the user last declined the value-proposition sheet.
+  final DateTime lastDeclineTime;
+
+  /// Total number of times the user declined the value-proposition sheet.
+  final int declineCount;
+
+  const ValuePropDeclineInfo({
+    required this.lastDeclineTime,
+    required this.declineCount,
+  });
+
+  /// Creates a [ValuePropDeclineInfo] from JSON.
+  factory ValuePropDeclineInfo.fromJson(Map<String, dynamic> json) {
+    return ValuePropDeclineInfo(
+      lastDeclineTime: DateTime.fromMillisecondsSinceEpoch(
+        json['lastDeclineTime'] as int,
+      ),
+      declineCount: json['declineCount'] as int,
+    );
+  }
+
+  /// Converts this [ValuePropDeclineInfo] to JSON.
+  Map<String, dynamic> toJson() {
+    return {
+      'lastDeclineTime': lastDeclineTime.millisecondsSinceEpoch,
+      'declineCount': declineCount,
+    };
+  }
+
+  /// Creates a copy of this [ValuePropDeclineInfo] with the given fields replaced.
+  ValuePropDeclineInfo copyWith({
+    DateTime? lastDeclineTime,
+    int? declineCount,
+  }) {
+    return ValuePropDeclineInfo(
+      lastDeclineTime: lastDeclineTime ?? this.lastDeclineTime,
+      declineCount: declineCount ?? this.declineCount,
+    );
+  }
+
+  @override
+  String toString() {
+    return 'ValuePropDeclineInfo('
+        'lastDeclineTime: $lastDeclineTime, '
+        'declineCount: $declineCount)';
   }
 }
 
@@ -422,10 +488,16 @@ class NotificationFlowConfig {
   /// and programmatic defaults.
   ///
   /// Use this to create a config that can be dynamically controlled via Remote Config.
+  ///
+  /// Pass a non-null [goToSettingsAskAgainAfter] / [goToSettingsMaxAskCount] to
+  /// override the AppConfigBase value inline. When `null` (the default), the
+  /// values are pulled from
+  /// [AppConfigBase.notificationGoToSettingsAskAgainDays] and
+  /// [AppConfigBase.notificationGoToSettingsMaxAskCount] respectively.
   factory NotificationFlowConfig.fromAppConfig({
-    // Go-to-settings defaults (not yet in AppConfigBase)
+    // Go-to-settings: pass non-null to override AppConfigBase value
     bool showGoToSettingsPrompt = true,
-    Duration goToSettingsAskAgainAfter = const Duration(days: 30),
+    Duration? goToSettingsAskAgainAfter,
     int? goToSettingsMaxAskCount,
     // Strings and builders
     NotificationFlowStrings strings = const NotificationFlowStrings(),
@@ -438,8 +510,10 @@ class NotificationFlowConfig {
       askAgainMultiplier: AppConfigBase.notificationAskAgainMultiplier,
       maxAskCount: AppConfigBase.notificationMaxAskCount,
       showGoToSettingsPrompt: showGoToSettingsPrompt,
-      goToSettingsAskAgainAfter: goToSettingsAskAgainAfter,
-      goToSettingsMaxAskCount: goToSettingsMaxAskCount,
+      goToSettingsAskAgainAfter: goToSettingsAskAgainAfter ??
+          Duration(days: AppConfigBase.notificationGoToSettingsAskAgainDays),
+      goToSettingsMaxAskCount:
+          goToSettingsMaxAskCount ?? AppConfigBase.notificationGoToSettingsMaxAskCount,
       strings: strings,
       valuePropositionBuilder: valuePropositionBuilder,
       goToSettingsBuilder: goToSettingsBuilder,
@@ -495,14 +569,15 @@ class NotificationSettingsDeepLinkInfo {
   /// Whether permission was detected as newly granted during this
   /// deep link handling.
   ///
-  /// Specifically, this is true when dreamic had stored denial tracking data
-  /// (from a prior denial through the permission flow) AND the permission
+  /// Specifically, this is true when dreamic had any stored tracking data
+  /// (denial info, go-to-settings prompt info, or value-prop decline info —
+  /// from any prior interaction with the permission flow) AND the permission
   /// status is now authorized or provisional. A user who enabled notifications
-  /// outside of dreamic's flow (no prior denial info stored) will not trigger
+  /// outside of dreamic's flow (no prior tracking stored) will not trigger
   /// this flag — but FCM initialization still happens regardless.
   ///
   /// When true, dreamic has automatically:
-  /// - Cleared denial/go-to-settings tracking data (via getPermissionStatus auto-clear)
+  /// - Cleared all three tracking blobs (via getPermissionStatus auto-clear)
   /// - Triggered FCM token initialization (if [onTokenChanged] is configured)
   ///
   /// The consuming app can use this to show a success message or adjust

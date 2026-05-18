@@ -36,6 +36,8 @@ void main() {
   tearDown(() async {
     service.testGetPermissionStatusOverride = null;
     service.testGetNotificationDenialInfoOverride = null;
+    service.testGetGoToSettingsPromptInfoOverride = null;
+    service.testGetValuePropDeclineInfoOverride = null;
     service.testInitializeFcmTokenOverride = null;
     await service.dispose();
     NotificationService.resetForTesting();

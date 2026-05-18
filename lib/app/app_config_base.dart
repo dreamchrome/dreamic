@@ -114,6 +114,12 @@ class AppConfigBase {
     'notificationAskAgainDays': 7,
     'notificationAskAgainMultiplier': 3.0,
     'notificationMaxAskCount': 3,
+    // Go-to-settings prompt configuration (re-prompt cadence for permanently-denied users)
+    'notificationGoToSettingsAskAgainDays': 30,
+    'notificationGoToSettingsMaxAskCount': null, // null = unlimited
+    // Value-prop reminder configuration (re-prompt cadence for value-prop decliners)
+    'notificationValuePropReminderCooldownDays': 30,
+    'notificationValuePropReminderMaxAskCount': null, // null = unlimited
     // Device service configuration (timezone tracking and device registration)
     // Keys use dreamic_ prefix for Remote Config namespacing
     'dreamic_device_timezone_unchanged_sync_min_minutes': 2880, // 48 hours
@@ -137,6 +143,10 @@ class AppConfigBase {
     'timeoutForAboutToLogOutCallbackMill': (min: 1000, max: 30000),
     'notificationAskAgainDays': (min: 1, max: 365),
     'notificationMaxAskCount': (min: 1, max: 100),
+    'notificationGoToSettingsAskAgainDays': (min: 1, max: 365),
+    'notificationGoToSettingsMaxAskCount': (min: 1, max: 100),
+    'notificationValuePropReminderCooldownDays': (min: 1, max: 365),
+    'notificationValuePropReminderMaxAskCount': (min: 1, max: 100),
     'dreamic_device_timezone_unchanged_sync_min_minutes': (min: 1, max: 10080),
     'dreamic_device_timezone_unchanged_sync_max_minutes': (min: 1, max: 43200),
     'dreamic_device_timezone_change_debounce_minutes': (min: 1, max: 1440),
@@ -177,6 +187,14 @@ class AppConfigBase {
       defaultRemoteConfig['notificationAskAgainMultiplier'] = value;
   static set notificationMaxAskCountDefault(int value) =>
       defaultRemoteConfig['notificationMaxAskCount'] = value;
+  static set notificationGoToSettingsAskAgainDaysDefault(int value) =>
+      defaultRemoteConfig['notificationGoToSettingsAskAgainDays'] = value;
+  static set notificationGoToSettingsMaxAskCountDefault(int? value) =>
+      defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] = value;
+  static set notificationValuePropReminderCooldownDaysDefault(int value) =>
+      defaultRemoteConfig['notificationValuePropReminderCooldownDays'] = value;
+  static set notificationValuePropReminderMaxAskCountDefault(int? value) =>
+      defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] = value;
   static set deviceTimezoneUnchangedSyncMinMinutesDefault(int value) =>
       defaultRemoteConfig['dreamic_device_timezone_unchanged_sync_min_minutes'] = value;
   static set deviceTimezoneUnchangedSyncMaxMinutesDefault(int value) =>
@@ -487,6 +505,129 @@ class AppConfigBase {
         return defaultRemoteConfig['notificationMaxAskCount'] as int;
       }
     }
+  }
+
+  /// Number of days to wait before re-showing the "go to settings" prompt to a
+  /// permanently-denied user who previously declined to open settings.
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.notificationGoToSettingsAskAgainDaysDefault = 14`
+  /// - Build flag: `--dart-define notificationGoToSettingsAskAgainDays=14`
+  /// - Firebase Remote Config: `notificationGoToSettingsAskAgainDays`
+  ///
+  /// Default: 30 days
+  static int get notificationGoToSettingsAskAgainDays {
+    const envValue =
+        int.fromEnvironment('notificationGoToSettingsAskAgainDays', defaultValue: -1);
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue =
+          g<RemoteConfigRepoInt>().getInt('notificationGoToSettingsAskAgainDays');
+      if (remoteValue > 0) {
+        final bounds = configBounds['notificationGoToSettingsAskAgainDays']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
+      } else {
+        return defaultRemoteConfig['notificationGoToSettingsAskAgainDays'] as int;
+      }
+    }
+  }
+
+  /// Maximum number of "go to settings" prompts shown to a permanently-denied
+  /// user. Returns `null` when unlimited (cooldown is the sole gate).
+  ///
+  /// Layered resolution:
+  /// - Env override: `--dart-define notificationGoToSettingsMaxAskCount=N`.
+  ///   Default `-1` means "unset, fall through". Any other value — including
+  ///   `0` and negatives — is returned as-is. This matches the existing
+  ///   dreamic env "-1 = unset" convention used by [notificationMaxAskCount];
+  ///   `--dart-define notificationGoToSettingsMaxAskCount=0` returns `0`.
+  /// - Remote Config: positive int returns the clamped value. RC values `0`
+  ///   or negative mean "unset, fall through to programmatic default"
+  ///   (Firebase RC returns 0 for unset keys). This is **layer-specific**
+  ///   and does NOT contradict the inline helper API contract — at the
+  ///   inline helper layer, `maxAskCount: 0` and negatives mean "never
+  ///   re-prompt"; at this RC layer, `0` and negatives mean "unset". The
+  ///   two layers have different signatures (RC returns non-nullable `int`;
+  ///   inline accepts `int?`).
+  /// - Programmatic default (set via
+  ///   [notificationGoToSettingsMaxAskCountDefault]): `int?`. Initial value
+  ///   `null` = unlimited.
+  ///
+  /// Default: null (unlimited)
+  static int? get notificationGoToSettingsMaxAskCount {
+    const envValue =
+        int.fromEnvironment('notificationGoToSettingsMaxAskCount', defaultValue: -1);
+    if (envValue != -1) {
+      return envValue;
+    }
+    final remoteValue =
+        g<RemoteConfigRepoInt>().getInt('notificationGoToSettingsMaxAskCount');
+    if (remoteValue > 0) {
+      final bounds = configBounds['notificationGoToSettingsMaxAskCount']!;
+      return remoteValue.clamp(bounds.min, bounds.max);
+    }
+    // RC value <= 0 (including 0 and negatives) → unset, fall through to
+    // programmatic default (which itself may be null = unlimited).
+    return defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] as int?;
+  }
+
+  /// Number of days to wait before re-prompting a user who declined the
+  /// in-app value-proposition sheet (the "Not Now" cohort, distinct from
+  /// system-denied).
+  ///
+  /// Can be set via:
+  /// - Code: `AppConfigBase.notificationValuePropReminderCooldownDaysDefault = 14`
+  /// - Build flag: `--dart-define notificationValuePropReminderCooldownDays=14`
+  /// - Firebase Remote Config: `notificationValuePropReminderCooldownDays`
+  ///
+  /// Default: 30 days
+  static int get notificationValuePropReminderCooldownDays {
+    const envValue = int.fromEnvironment(
+      'notificationValuePropReminderCooldownDays',
+      defaultValue: -1,
+    );
+    if (envValue != -1) {
+      return envValue;
+    } else {
+      final remoteValue =
+          g<RemoteConfigRepoInt>().getInt('notificationValuePropReminderCooldownDays');
+      if (remoteValue > 0) {
+        final bounds = configBounds['notificationValuePropReminderCooldownDays']!;
+        return remoteValue.clamp(bounds.min, bounds.max);
+      } else {
+        return defaultRemoteConfig['notificationValuePropReminderCooldownDays'] as int;
+      }
+    }
+  }
+
+  /// Maximum number of value-proposition reminders shown to a user who
+  /// previously declined the in-app value-proposition sheet. Returns `null`
+  /// when unlimited (cooldown is the sole gate).
+  ///
+  /// Layered resolution mirrors [notificationGoToSettingsMaxAskCount] —
+  /// see its doc-comment for the layer-specific `RC value <= 0 = unset`
+  /// convention and how it relates (does NOT contradict) the inline helper
+  /// API contract from `shouldShowValuePropReminder`.
+  ///
+  /// Default: null (unlimited)
+  static int? get notificationValuePropReminderMaxAskCount {
+    const envValue = int.fromEnvironment(
+      'notificationValuePropReminderMaxAskCount',
+      defaultValue: -1,
+    );
+    if (envValue != -1) {
+      return envValue;
+    }
+    final remoteValue =
+        g<RemoteConfigRepoInt>().getInt('notificationValuePropReminderMaxAskCount');
+    if (remoteValue > 0) {
+      final bounds = configBounds['notificationValuePropReminderMaxAskCount']!;
+      return remoteValue.clamp(bounds.min, bounds.max);
+    }
+    // RC value <= 0 (including 0 and negatives) → unset, fall through to
+    // programmatic default (which itself may be null = unlimited).
+    return defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] as int?;
   }
 
   //

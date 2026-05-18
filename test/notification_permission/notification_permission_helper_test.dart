@@ -1,8 +1,32 @@
+import 'dart:convert';
+
 import 'package:dreamic/notifications/notification_permission_helper.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 import 'mocks/mock_shared_preferences.dart';
+
+/// A SharedPreferencesStorePlatform that throws on [setValue] for keys that
+/// contain [throwOnKeyContains]. All other operations delegate to an
+/// in-memory store. Used to verify that helper methods swallow SP errors.
+class _ThrowingStore extends InMemorySharedPreferencesStore {
+  _ThrowingStore({required this.throwOnKeyContains}) : super.empty();
+
+  final String throwOnKeyContains;
+
+  // ignore: deprecated_member_use
+  @override
+  bool get isMock => true;
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) {
+    if (key.contains(throwOnKeyContains)) {
+      throw Exception('simulated SP setValue failure for key: $key');
+    }
+    return super.setValue(valueType, key, value);
+  }
+}
 
 void main() {
   late NotificationPermissionHelper helper;
@@ -477,6 +501,175 @@ void main() {
         final info = await helper.getNotificationDenialInfo();
         expect(info!.requestAttemptCount, equals(2));
         expect(info.lastRequestAttemptTime!.isAfter(oldAttemptTime), isTrue);
+      });
+    });
+
+    group('getValuePropDeclineInfo', () {
+      test('returns null when no decline info stored', () async {
+        MockSharedPreferencesHelper.setupEmpty();
+
+        final info = await helper.getValuePropDeclineInfo();
+        expect(info, isNull);
+      });
+
+      test('returns deserialized decline info when stored', () async {
+        final declineTime = DateTime(2024, 6, 15);
+        SharedPreferences.setMockInitialValues({
+          MockSharedPreferencesHelper.keyMigrationComplete: true,
+          'dreamic_notification_value_prop_decline_info': jsonEncode({
+            'lastDeclineTime': declineTime.millisecondsSinceEpoch,
+            'declineCount': 4,
+          }),
+        });
+
+        final info = await helper.getValuePropDeclineInfo();
+
+        expect(info, isNotNull);
+        expect(info!.lastDeclineTime, equals(declineTime));
+        expect(info.declineCount, equals(4));
+      });
+
+      test('handles corrupted JSON gracefully', () async {
+        SharedPreferences.setMockInitialValues({
+          MockSharedPreferencesHelper.keyMigrationComplete: true,
+          'dreamic_notification_value_prop_decline_info': 'not valid json',
+        });
+
+        final info = await helper.getValuePropDeclineInfo();
+        expect(info, isNull);
+      });
+    });
+
+    group('clearValuePropDeclineInfo', () {
+      test('removes decline info from storage', () async {
+        SharedPreferences.setMockInitialValues({
+          MockSharedPreferencesHelper.keyMigrationComplete: true,
+          'dreamic_notification_value_prop_decline_info': jsonEncode({
+            'lastDeclineTime': DateTime.now().millisecondsSinceEpoch,
+            'declineCount': 2,
+          }),
+        });
+
+        await helper.clearValuePropDeclineInfo();
+
+        final prefs = await SharedPreferences.getInstance();
+        expect(
+          prefs.getString('dreamic_notification_value_prop_decline_info'),
+          isNull,
+        );
+      });
+    });
+
+    group('recordValuePropDecline', () {
+      test('creates new decline info when none exists', () async {
+        MockSharedPreferencesHelper.setupWithDreamicData(migrationComplete: true);
+
+        await helper.recordValuePropDecline();
+
+        final info = await helper.getValuePropDeclineInfo();
+        expect(info, isNotNull);
+        expect(info!.declineCount, equals(1));
+        expect(
+          info.lastDeclineTime
+              .difference(DateTime.now())
+              .abs()
+              .inSeconds,
+          lessThan(5),
+        );
+      });
+
+      test('increments declineCount when info exists', () async {
+        final originalDeclineTime =
+            DateTime.now().subtract(const Duration(days: 30));
+        SharedPreferences.setMockInitialValues({
+          MockSharedPreferencesHelper.keyMigrationComplete: true,
+          'dreamic_notification_value_prop_decline_info': jsonEncode({
+            'lastDeclineTime': originalDeclineTime.millisecondsSinceEpoch,
+            'declineCount': 1,
+          }),
+        });
+
+        await helper.recordValuePropDecline();
+
+        final info = await helper.getValuePropDeclineInfo();
+        expect(info!.declineCount, equals(2));
+        // Timestamp updated to now.
+        expect(info.lastDeclineTime.isAfter(originalDeclineTime), isTrue);
+      });
+
+      test('two sequential calls increment monotonically', () async {
+        MockSharedPreferencesHelper.setupWithDreamicData(migrationComplete: true);
+
+        await helper.recordValuePropDecline();
+        await helper.recordValuePropDecline();
+
+        final info = await helper.getValuePropDeclineInfo();
+        expect(info!.declineCount, equals(2));
+      });
+
+      test('does NOT set _keyHasRequested flag (OS dialog was never shown)',
+          () async {
+        // Invariant guard: a value-prop decline means the OS dialog was never
+        // shown. hasRequestedPermissionBefore() must remain false. Guards
+        // against a future "fix" that mirrors recordDenial's behavior.
+        SharedPreferences.setMockInitialValues({
+          MockSharedPreferencesHelper.keyMigrationComplete: true,
+          MockSharedPreferencesHelper.keyHasRequested: false,
+        });
+
+        await helper.recordValuePropDecline();
+
+        expect(await helper.hasRequestedPermissionBefore(), isFalse);
+      });
+
+      test('does NOT touch NotificationDenialInfo or GoToSettingsPromptInfo',
+          () async {
+        // Invariant guard (per OQ-4 resolution): record-method pattern writes
+        // only its own cohort's state. Cross-cohort cleanup is centralized in
+        // autoClearIfGranted and the deep-link handler.
+        final denialJson = MockSharedPreferencesHelper.createDenialInfoJson(
+          lastDenialTime: DateTime(2024, 5, 1),
+          denialCount: 2,
+          isPermanent: true,
+          requestAttemptCount: 3,
+        );
+        final settingsJson =
+            MockSharedPreferencesHelper.createSettingsPromptInfoJson(
+          lastPromptTime: DateTime(2024, 5, 15),
+          promptCount: 1,
+          lastActionWasOpenSettings: false,
+        );
+        MockSharedPreferencesHelper.setupWithDreamicData(
+          denialInfoJson: denialJson,
+          settingsPromptInfoJson: settingsJson,
+          migrationComplete: true,
+        );
+
+        await helper.recordValuePropDecline();
+
+        final denialInfo = await helper.getNotificationDenialInfo();
+        expect(denialInfo!.lastDenialTime, equals(DateTime(2024, 5, 1)));
+        expect(denialInfo.denialCount, equals(2));
+        expect(denialInfo.isPermanent, isTrue);
+        expect(denialInfo.requestAttemptCount, equals(3));
+
+        final settingsInfo = await helper.getGoToSettingsPromptInfo();
+        expect(settingsInfo!.lastPromptTime, equals(DateTime(2024, 5, 15)));
+        expect(settingsInfo.promptCount, equals(1));
+        expect(settingsInfo.lastActionWasOpenSettings, isFalse);
+      });
+
+      test('swallows SharedPreferences setValue errors and logs', () async {
+        // Replace the platform store with one that throws on setValue for
+        // the VP decline key. Mirrors recordDenial's defensive guarantee.
+        SharedPreferencesStorePlatform.instance =
+            _ThrowingStore(throwOnKeyContains: 'value_prop_decline_info');
+
+        // Should complete without throwing.
+        await helper.recordValuePropDecline();
+
+        // Reset back to in-memory for tearDown / next test.
+        SharedPreferences.setMockInitialValues({});
       });
     });
 

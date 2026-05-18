@@ -3,6 +3,7 @@ import 'package:dreamic/notifications/notification_service.dart';
 import 'package:dreamic/notifications/notification_types.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Unit tests for the notification settings deep link handler (Phase 5).
 ///
@@ -29,6 +30,8 @@ void main() {
     // Clear overrides to prevent leaks between tests.
     service.testGetPermissionStatusOverride = null;
     service.testGetNotificationDenialInfoOverride = null;
+    service.testGetGoToSettingsPromptInfoOverride = null;
+    service.testGetValuePropDeclineInfoOverride = null;
     service.testInitializeFcmTokenOverride = null;
     NotificationService.resetForTesting();
   });
@@ -620,6 +623,164 @@ void main() {
       // The handler checks _onTokenChanged != null before calling initializeFcmToken.
       // Since _onTokenChanged is null, initializeFcmToken should NOT be called.
       expect(fcmInitCalled, isFalse);
+    });
+  });
+
+  // =======================================================================
+  // permissionJustGranted cohort tests (Phase 4 snapshot extension)
+  //
+  // After Phase 4, the deep-link handler snapshots all three tracking blobs
+  // (denialInfo, settingsInfo, valuePropInfo) before getPermissionStatus()
+  // and sets permissionJustGranted = true if any of them was non-null when
+  // status flips to authorized/provisional. Each cohort gets a positive
+  // test (one blob non-null, others null) plus an all-null negative case.
+  // All tests use the override pattern uniformly — no SP-vs-override
+  // mixing.
+  // =======================================================================
+  group('permissionJustGranted — single-cohort widening', () {
+    test('cohort A: only denial info snapshot → permissionJustGranted=true',
+        () async {
+      service.testGetNotificationDenialInfoOverride = () async =>
+          NotificationDenialInfo(
+            lastDenialTime:
+                DateTime.now().subtract(const Duration(days: 7)),
+            denialCount: 2,
+            isPermanent: true,
+          );
+      service.testGetGoToSettingsPromptInfoOverride = () async => null;
+      service.testGetValuePropDeclineInfoOverride = () async => null;
+      service.testGetPermissionStatusOverride =
+          () async => NotificationPermissionStatus.authorized;
+
+      NotificationSettingsDeepLinkInfo? receivedInfo;
+      service.onSystemNotificationSettingsOpenedForTesting =
+          (info) async => receivedInfo = info;
+
+      await service.handleSettingsDeepLinkForTesting(null);
+
+      expect(receivedInfo, isNotNull);
+      expect(receivedInfo!.permissionJustGranted, isTrue);
+    });
+
+    test(
+        'cohort B: only go-to-settings prompt info snapshot → '
+        'permissionJustGranted=true', () async {
+      service.testGetNotificationDenialInfoOverride = () async => null;
+      service.testGetGoToSettingsPromptInfoOverride = () async =>
+          GoToSettingsPromptInfo(
+            lastPromptTime:
+                DateTime.now().subtract(const Duration(days: 3)),
+            promptCount: 1,
+            lastActionWasOpenSettings: true,
+          );
+      service.testGetValuePropDeclineInfoOverride = () async => null;
+      service.testGetPermissionStatusOverride =
+          () async => NotificationPermissionStatus.authorized;
+
+      NotificationSettingsDeepLinkInfo? receivedInfo;
+      service.onSystemNotificationSettingsOpenedForTesting =
+          (info) async => receivedInfo = info;
+
+      await service.handleSettingsDeepLinkForTesting(null);
+
+      expect(receivedInfo, isNotNull);
+      expect(receivedInfo!.permissionJustGranted, isTrue);
+    });
+
+    test(
+        'cohort C: only value-prop decline info snapshot → '
+        'permissionJustGranted=true', () async {
+      service.testGetNotificationDenialInfoOverride = () async => null;
+      service.testGetGoToSettingsPromptInfoOverride = () async => null;
+      service.testGetValuePropDeclineInfoOverride = () async =>
+          ValuePropDeclineInfo(
+            lastDeclineTime:
+                DateTime.now().subtract(const Duration(days: 14)),
+            declineCount: 1,
+          );
+      service.testGetPermissionStatusOverride =
+          () async => NotificationPermissionStatus.authorized;
+
+      NotificationSettingsDeepLinkInfo? receivedInfo;
+      service.onSystemNotificationSettingsOpenedForTesting =
+          (info) async => receivedInfo = info;
+
+      await service.handleSettingsDeepLinkForTesting(null);
+
+      expect(receivedInfo, isNotNull);
+      expect(receivedInfo!.permissionJustGranted, isTrue);
+    });
+
+    test(
+        'all-null negative: no tracking, status flips to authorized → '
+        'permissionJustGranted=false', () async {
+      service.testGetNotificationDenialInfoOverride = () async => null;
+      service.testGetGoToSettingsPromptInfoOverride = () async => null;
+      service.testGetValuePropDeclineInfoOverride = () async => null;
+      service.testGetPermissionStatusOverride =
+          () async => NotificationPermissionStatus.authorized;
+
+      NotificationSettingsDeepLinkInfo? receivedInfo;
+      service.onSystemNotificationSettingsOpenedForTesting =
+          (info) async => receivedInfo = info;
+
+      await service.handleSettingsDeepLinkForTesting(null);
+
+      expect(receivedInfo, isNotNull);
+      expect(receivedInfo!.permissionJustGranted, isFalse);
+    });
+  });
+
+  // =======================================================================
+  // Deep-link denied path: all three tracking blobs cleared in one batch
+  //
+  // When a denied user re-engages via the OS deep link, the handler clears
+  // all three tracking blobs so a previously maxed-out user is unblocked
+  // for a fresh prompt cycle.
+  // =======================================================================
+  group('Deep-link denied path — clears all three blobs', () {
+    test('all three tracking blobs cleared when status is still denied',
+        () async {
+      // Seed real SharedPreferences with all three tracking blobs.
+      final now = DateTime.now();
+      SharedPreferences.setMockInitialValues({
+        // Mark migration as complete to avoid the legacy migration path
+        // (which only matters for the denial-info key).
+        'dreamic_notification_keys_migrated': true,
+        'dreamic_notification_denial_info':
+            '{"lastDenialTime":${now.subtract(const Duration(days: 1)).millisecondsSinceEpoch},'
+                '"denialCount":2,"isPermanent":false,'
+                '"requestAttemptCount":2,"lastRequestAttemptTime":null,'
+                '"lastRequestWasBlocked":false}',
+        'dreamic_notification_settings_prompt_info':
+            '{"lastPromptTime":${now.subtract(const Duration(days: 1)).millisecondsSinceEpoch},'
+                '"promptCount":1,"lastActionWasOpenSettings":true}',
+        'dreamic_notification_value_prop_decline_info':
+            '{"lastDeclineTime":${now.subtract(const Duration(days: 1)).millisecondsSinceEpoch},'
+                '"declineCount":1}',
+      });
+
+      // Don't override get*Info reads — let them hit SharedPreferences.
+      // Override only getPermissionStatus (still denied — user came back
+      // without granting).
+      service.testGetPermissionStatusOverride =
+          () async => NotificationPermissionStatus.denied;
+      service.onSystemNotificationSettingsOpenedForTesting =
+          (info) async {};
+
+      await service.handleSettingsDeepLinkForTesting(null);
+
+      // After handler completes, all three blobs should be cleared.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('dreamic_notification_denial_info'), isNull);
+      expect(
+        prefs.getString('dreamic_notification_settings_prompt_info'),
+        isNull,
+      );
+      expect(
+        prefs.getString('dreamic_notification_value_prop_decline_info'),
+        isNull,
+      );
     });
   });
 }
