@@ -151,11 +151,41 @@ abstract class AuthServiceInt {
   /// Check if current user's email is verified
   bool get isEmailVerified;
 
-  /// Send email verification to current user
-  Future<Either<AuthServiceEmailVerificationFailure, Unit>> sendEmailVerification();
+  /// Send email verification to current user.
+  ///
+  /// Pass [actionCodeSettings] to customize the verification email's action
+  /// URL (e.g. a custom in-app `/verify` route routed via Universal Links /
+  /// App Links / Web). When omitted, Firebase uses its default hosted
+  /// `firebaseapp.com/__/auth/action` page.
+  Future<Either<AuthServiceEmailVerificationFailure, Unit>> sendEmailVerification([
+    fb_auth.ActionCodeSettings? actionCodeSettings,
+  ]);
 
   /// Reload user data to get latest email verification status
   Future<Either<AuthServiceSignInFailure, Unit>> reloadUser();
+
+  /// Check (without consuming) a Firebase out-of-band action code — e.g. an
+  /// email-verification `oobCode` from a verification deep link — and return
+  /// the action's payload.
+  ///
+  /// Use this BEFORE [applyActionCode] when you need the action's email or
+  /// operation context. `applyActionCode` consumes the code; subsequent calls
+  /// to `checkActionCode` with the same code return [AuthServiceActionCodeFailure.invalidCode].
+  ///
+  /// The returned `email` is the address the action was issued for (e.g. the
+  /// pending verification target). May be null for operations that don't carry
+  /// an email payload.
+  Future<Either<AuthServiceActionCodeFailure, ({String? email})>> checkActionCode(
+    String oobCode,
+  );
+
+  /// Apply (consume) a Firebase out-of-band action code. For an email-
+  /// verification `oobCode`, this flips the auth record's `emailVerified` to
+  /// `true`. The code is single-use; a second call with the same code returns
+  /// [AuthServiceActionCodeFailure.invalidCode].
+  Future<Either<AuthServiceActionCodeFailure, Unit>> applyActionCode(
+    String oobCode,
+  );
 
   // Re-authentication
   /// Re-authenticate current user with password for sensitive operations
@@ -256,6 +286,25 @@ enum AuthServiceSignOutFailure {
 enum AuthServiceEmailVerificationFailure {
   userNotLoggedIn,
   tooManyRequests,
+  unexpected,
+}
+
+/// Failure cases for [AuthServiceInt.checkActionCode] and
+/// [AuthServiceInt.applyActionCode].
+enum AuthServiceActionCodeFailure {
+  /// Code is malformed, never issued, or already consumed.
+  invalidCode,
+
+  /// Code has expired (typically ~1h for email verification).
+  expiredCode,
+
+  /// Associated user account is disabled.
+  userDisabled,
+
+  /// No user account exists for the action (rare; user deleted between issue and use).
+  userNotFound,
+
+  /// Network or other unexpected failure.
   unexpected,
 }
 

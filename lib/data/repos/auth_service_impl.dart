@@ -526,7 +526,9 @@ class AuthServiceImpl implements AuthServiceInt {
   }
 
   @override
-  Future<Either<AuthServiceEmailVerificationFailure, Unit>> sendEmailVerification() async {
+  Future<Either<AuthServiceEmailVerificationFailure, Unit>> sendEmailVerification([
+    fb_auth.ActionCodeSettings? actionCodeSettings,
+  ]) async {
     try {
       final user = _fbAuth.currentUser;
       if (user == null) {
@@ -535,7 +537,7 @@ class AuthServiceImpl implements AuthServiceInt {
       }
 
       logd('sendEmailVerification: Sending verification email to ${user.email}');
-      await user.sendEmailVerification();
+      await user.sendEmailVerification(actionCodeSettings);
       logd('sendEmailVerification: Email sent successfully');
 
       return right(unit);
@@ -548,6 +550,60 @@ class AuthServiceImpl implements AuthServiceInt {
     } catch (e) {
       loge(e, 'sendEmailVerification failed');
       return left(AuthServiceEmailVerificationFailure.unexpected);
+    }
+  }
+
+  @override
+  Future<Either<AuthServiceActionCodeFailure, ({String? email})>> checkActionCode(
+    String oobCode,
+  ) async {
+    try {
+      logd('checkActionCode: Checking action code');
+      final info = await _fbAuth.checkActionCode(oobCode);
+      final email = info.data['email'] as String?;
+      logd('checkActionCode: Action code valid; email=$email');
+      return right((email: email));
+    } on fb_auth.FirebaseAuthException catch (e) {
+      loge(e, 'checkActionCode failed');
+      return left(_mapActionCodeException(e));
+    } catch (e) {
+      loge(e, 'checkActionCode failed');
+      return left(AuthServiceActionCodeFailure.unexpected);
+    }
+  }
+
+  @override
+  Future<Either<AuthServiceActionCodeFailure, Unit>> applyActionCode(
+    String oobCode,
+  ) async {
+    try {
+      logd('applyActionCode: Applying action code');
+      await _fbAuth.applyActionCode(oobCode);
+      logd('applyActionCode: Action code applied');
+      return right(unit);
+    } on fb_auth.FirebaseAuthException catch (e) {
+      loge(e, 'applyActionCode failed');
+      return left(_mapActionCodeException(e));
+    } catch (e) {
+      loge(e, 'applyActionCode failed');
+      return left(AuthServiceActionCodeFailure.unexpected);
+    }
+  }
+
+  AuthServiceActionCodeFailure _mapActionCodeException(
+    fb_auth.FirebaseAuthException e,
+  ) {
+    switch (e.code) {
+      case 'invalid-action-code':
+        return AuthServiceActionCodeFailure.invalidCode;
+      case 'expired-action-code':
+        return AuthServiceActionCodeFailure.expiredCode;
+      case 'user-disabled':
+        return AuthServiceActionCodeFailure.userDisabled;
+      case 'user-not-found':
+        return AuthServiceActionCodeFailure.userNotFound;
+      default:
+        return AuthServiceActionCodeFailure.unexpected;
     }
   }
 
