@@ -118,6 +118,10 @@ class DreamicServices {
   /// - [onAboutToLogOutCallbacks]: Optional list of prioritized callbacks to run before logout.
   /// - [onLoggedOutCallbacks]: Optional list of prioritized callbacks to run after logout completes.
   /// - [onNotificationTapped]: Callback for when user taps a notification.
+  /// - [onTokenChanged]: Optional callback for FCM token changes. When omitted
+  ///   and both [enableDeviceService] and [enableNotifications] are true, the
+  ///   token is persisted to the device document via
+  ///   [DeviceServiceInt.persistFcmToken] automatically.
   /// - [showNotificationsInForeground]: Whether to show notifications in foreground.
   /// - [registerInGetIt]: Whether to register services in GetIt (default: true).
   ///   Set to false if you want to handle GetIt registration yourself.
@@ -167,6 +171,7 @@ class DreamicServices {
     NotificationButtonActionCallback? onNotificationAction,
     ForegroundMessageCallback? onForegroundMessage,
     NotificationErrorCallback? onError,
+    Future<void> Function(String? newToken, String? oldToken)? onTokenChanged,
     bool showNotificationsInForeground = true,
     int reminderIntervalDays = 30,
     // GetIt registration control
@@ -261,6 +266,19 @@ class DreamicServices {
     //        deviceService.initialize(authService: auth),
     //        notificationService.initialize(authService: auth),
     //      ]);
+    // Resolve the effective FCM token-changed callback.
+    //
+    // When the consuming app didn't provide one explicitly AND both
+    // DeviceService and NotificationService are enabled, default to delegating
+    // to DeviceService.persistFcmToken. Without this, the silent FCM-token
+    // capture path in NotificationService._handleLogin (when the user has
+    // already granted permission and fcmAutoInitialize is false) would never
+    // persist the token to the device document.
+    final effectiveOnTokenChanged = onTokenChanged ??
+        (deviceService != null && notificationService != null
+            ? defaultTokenChangedCallback(deviceService)
+            : null);
+
     final futures = <Future<void>>[];
     if (deviceService != null) {
       futures.add(deviceService.initialize(authService: auth));
@@ -272,6 +290,7 @@ class DreamicServices {
         onNotificationAction: onNotificationAction,
         onForegroundMessage: onForegroundMessage,
         onError: onError,
+        onTokenChanged: effectiveOnTokenChanged,
         showNotificationsInForeground: showNotificationsInForeground,
         reminderIntervalDays: reminderIntervalDays,
         // We're handling auth connection directly, disable legacy auto-connect
@@ -300,5 +319,44 @@ class DreamicServices {
       deviceService: deviceService,
       notificationService: notificationService,
     );
+  }
+
+  /// Builds the default FCM token-changed callback used by [initialize] when
+  /// both DeviceService and NotificationService are enabled and the consuming
+  /// app didn't supply its own `onTokenChanged`.
+  ///
+  /// The returned callback delegates to [DeviceServiceInt.persistFcmToken] so
+  /// the FCM token captured by [NotificationService] is written to the canonical
+  /// device document. Failures are logged and swallowed — token sync failures
+  /// must not block other operations.
+  ///
+  /// Apps can use this to compose their own logic with the default behavior:
+  ///
+  /// ```dart
+  /// final services = await DreamicServices.initialize(
+  ///   firebaseApp: app,
+  ///   onTokenChanged: (newToken, oldToken) async {
+  ///     await myAnalytics.trackTokenChange(newToken);
+  ///     await DreamicServices
+  ///         .defaultTokenChangedCallback(deviceService)(newToken, oldToken);
+  ///   },
+  /// );
+  /// ```
+  static Future<void> Function(String? newToken, String? oldToken)
+      defaultTokenChangedCallback(DeviceServiceInt deviceService) {
+    return (String? newToken, String? oldToken) async {
+      try {
+        final result = await deviceService.persistFcmToken(fcmToken: newToken);
+        result.fold(
+          (failure) => logw(
+              'FCM token persistence via DeviceService failed: $failure'),
+          (_) => logd('FCM token persisted via DeviceService: '
+              '${newToken != null ? 'registered' : 'cleared'}'),
+        );
+      } catch (e, stackTrace) {
+        loge(e, 'Unexpected error during FCM token persistence', stackTrace);
+        // Don't rethrow - token sync failure shouldn't block other operations
+      }
+    };
   }
 }

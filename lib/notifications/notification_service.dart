@@ -1144,7 +1144,7 @@ class NotificationService {
   /// ## DeviceService Integration
   ///
   /// When [DeviceServiceInt] is registered in GetIt, token changes are automatically
-  /// delegated to [DeviceServiceInt.updateFcmToken]. This ensures:
+  /// delegated to [DeviceServiceInt.persistFcmToken]. This ensures:
   /// - Single canonical device document per install/profile
   /// - Token stored alongside timezone and activity data
   /// - Token uniqueness enforcement across device docs
@@ -1171,7 +1171,10 @@ class NotificationService {
   /// await notificationService.connectToAuthService();
   /// ```
   ///
-  /// If DeviceService is not registered, falls back to direct Firebase callable.
+  /// If DeviceService is not registered when the default callback runs, the
+  /// callback logs an integration-bug error and skips backend persistence.
+  /// Pass an explicit [onTokenChanged] if you need backend persistence without
+  /// DeviceService.
   ///
   /// ## Parameters
   ///
@@ -1179,9 +1182,11 @@ class NotificationService {
   /// resolve from GetIt (guarded - logs and skips if not registered).
   ///
   /// [onTokenChanged] callback for syncing tokens to your backend.
-  /// If not provided and DeviceService is registered, uses DeviceService.
-  /// Otherwise, uses the Firebase callable configured in
-  /// [AppConfigBase.notificationsUpdateFcmTokenFunction].
+  /// If not provided, the default callback delegates to
+  /// [DeviceServiceInt.persistFcmToken] (resolved via GetIt). If DeviceService
+  /// isn't registered when a token event fires, the default logs an error and
+  /// skips persistence — pass an explicit callback to talk to your backend
+  /// directly.
   ///
   /// ## Example
   ///

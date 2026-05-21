@@ -1,4 +1,32 @@
-## 0.8.0
+## 0.7.2
+
+### Bug fix: Auto-wire FCM token persistence in `DreamicServices.initialize`
+
+Auto-wire FCM token persistence to DeviceService when both services are
+enabled via `DreamicServices.initialize`.
+
+Previously, `DreamicServices.initialize(enableDeviceService: true,
+enableNotifications: true)` left `NotificationService._onTokenChanged`
+unset, so the silent FCM-token capture path on login — taken when the user
+had already granted permission and `AppConfigBase.fcmAutoInitialize` is
+`false` — never persisted the token to the device document. Apps relying
+on the canonical delegate-to-DeviceService pattern got a silently-broken
+token flow unless they also called `connectToAuthService` separately.
+
+`DreamicServices.initialize` now resolves an effective `onTokenChanged`
+when both services are enabled and the caller didn't supply one,
+defaulting to `DeviceServiceInt.persistFcmToken`. The legacy
+`connectToAuthService` path is unchanged.
+
+**New API (optional, non-breaking):**
+
+* `DreamicServices.initialize` — new optional `onTokenChanged` parameter
+  matching `NotificationService.initialize`'s shape. Omit for the
+  auto-wired default; pass to override or chain custom logic.
+* `DreamicServices.defaultTokenChangedCallback(DeviceServiceInt)` — public
+  static helper that returns the delegate-to-`persistFcmToken` callback.
+  Apps that want to wrap the default (e.g., add analytics) can compose with
+  it directly.
 
 ### Notification Permission: Value-Prop Decline Tracking
 
