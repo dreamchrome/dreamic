@@ -28,19 +28,19 @@ void main() {
   // Snapshot of programmatic defaults so each test starts/ends clean.
   // Per OQ-010: defaultRemoteConfig is static; mutations persist across tests.
   late int origGoToSettingsAskAgainDays;
-  late int? origGoToSettingsMaxAskCount;
+  late int origGoToSettingsMaxAskCount;
   late int origValuePropReminderCooldownDays;
-  late int? origValuePropReminderMaxAskCount;
+  late int origValuePropReminderMaxAskCount;
 
   setUp(() {
     origGoToSettingsAskAgainDays =
         AppConfigBase.defaultRemoteConfig['notificationGoToSettingsAskAgainDays'] as int;
     origGoToSettingsMaxAskCount =
-        AppConfigBase.defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] as int?;
+        AppConfigBase.defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] as int;
     origValuePropReminderCooldownDays = AppConfigBase
         .defaultRemoteConfig['notificationValuePropReminderCooldownDays'] as int;
     origValuePropReminderMaxAskCount = AppConfigBase
-        .defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] as int?;
+        .defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] as int;
 
     mockRC = _MutableRemoteConfigMock();
     if (GetIt.I.isRegistered<RemoteConfigRepoInt>()) {

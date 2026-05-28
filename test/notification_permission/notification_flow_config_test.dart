@@ -182,7 +182,7 @@ void main() {
       late double origAskAgainMultiplier;
       late int origMaxAskCount;
       late int origGoToSettingsAskAgainDays;
-      late int? origGoToSettingsMaxAskCount;
+      late int origGoToSettingsMaxAskCount;
 
       setUp(() {
         // Snapshot programmatic defaults for test isolation (per OQ-010).
@@ -195,7 +195,7 @@ void main() {
         origGoToSettingsAskAgainDays = AppConfigBase
             .defaultRemoteConfig['notificationGoToSettingsAskAgainDays'] as int;
         origGoToSettingsMaxAskCount = AppConfigBase
-            .defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] as int?;
+            .defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] as int;
 
         stubRC = _StubRemoteConfig();
         if (GetIt.I.isRegistered<RemoteConfigRepoInt>()) {

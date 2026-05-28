@@ -94,7 +94,19 @@ class AppConfigBase {
   // Remote Config
   //
 
-  static Map<String, dynamic> defaultRemoteConfig = {
+  /// Sentinel stored in [defaultRemoteConfig] to mean "unlimited" for the
+  /// notification max-ask-count programmatic defaults. Firebase Remote Config
+  /// `setDefaults` rejects `null` (it must be bool/num/String), so `null`
+  /// cannot be stored in the defaults map; this `-1` sentinel is stored
+  /// instead and the getters map it back to `null` (= unlimited).
+  ///
+  /// Note: this is the *programmatic-default-layer* meaning of `-1`. It is
+  /// distinct from the *env-override-layer* `-1`, which means "unset, fall
+  /// through" (see the notification max-ask-count getters). Same literal,
+  /// different layer, different meaning.
+  static const int notificationMaxAskCountUnlimited = -1;
+
+  static Map<String, Object> defaultRemoteConfig = {
     'minimumAppVersionRequiredApple': '0.0.0',
     'minimumAppVersionRequiredGoogle': '0.0.0',
     'minimumAppVersionRequiredWeb': '0.0.0',
@@ -116,10 +128,14 @@ class AppConfigBase {
     'notificationMaxAskCount': 3,
     // Go-to-settings prompt configuration (re-prompt cadence for permanently-denied users)
     'notificationGoToSettingsAskAgainDays': 30,
-    'notificationGoToSettingsMaxAskCount': null, // null = unlimited
+    // Sentinel -1 = unlimited (mapped back to null at the getter). null cannot
+    // be stored: the map is Map<String, Object> and Firebase RC setDefaults
+    // rejects null.
+    'notificationGoToSettingsMaxAskCount': notificationMaxAskCountUnlimited,
     // Value-prop reminder configuration (re-prompt cadence for value-prop decliners)
     'notificationValuePropReminderCooldownDays': 30,
-    'notificationValuePropReminderMaxAskCount': null, // null = unlimited
+    // Sentinel -1 = unlimited (mapped back to null at the getter).
+    'notificationValuePropReminderMaxAskCount': notificationMaxAskCountUnlimited,
     // Device service configuration (timezone tracking and device registration)
     // Keys use dreamic_ prefix for Remote Config namespacing
     'dreamic_device_timezone_unchanged_sync_min_minutes': 2880, // 48 hours
@@ -190,11 +206,15 @@ class AppConfigBase {
   static set notificationGoToSettingsAskAgainDaysDefault(int value) =>
       defaultRemoteConfig['notificationGoToSettingsAskAgainDays'] = value;
   static set notificationGoToSettingsMaxAskCountDefault(int? value) =>
-      defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] = value;
+      // null (unlimited) is stored as the sentinel; the map cannot hold null.
+      defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] =
+          value ?? notificationMaxAskCountUnlimited;
   static set notificationValuePropReminderCooldownDaysDefault(int value) =>
       defaultRemoteConfig['notificationValuePropReminderCooldownDays'] = value;
   static set notificationValuePropReminderMaxAskCountDefault(int? value) =>
-      defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] = value;
+      // null (unlimited) is stored as the sentinel; the map cannot hold null.
+      defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] =
+          value ?? notificationMaxAskCountUnlimited;
   static set deviceTimezoneUnchangedSyncMinMinutesDefault(int value) =>
       defaultRemoteConfig['dreamic_device_timezone_unchanged_sync_min_minutes'] = value;
   static set deviceTimezoneUnchangedSyncMaxMinutesDefault(int value) =>
@@ -538,9 +558,11 @@ class AppConfigBase {
   ///
   /// Layered resolution:
   /// - Env override: `--dart-define notificationGoToSettingsMaxAskCount=N`.
-  ///   Default `-1` means "unset, fall through". Any other value — including
-  ///   `0` and negatives — is returned as-is. This matches the existing
-  ///   dreamic env "-1 = unset" convention used by [notificationMaxAskCount];
+  ///   Default `-1` means "unset, fall through" — this env-layer `-1` is the
+  ///   "unset" marker and can never be *returned* (the guard
+  ///   `if (envValue != -1)` excludes it). Any other value — including `0`
+  ///   and negatives — is returned as-is. This matches the existing dreamic
+  ///   env "-1 = unset" convention used by [notificationMaxAskCount];
   ///   `--dart-define notificationGoToSettingsMaxAskCount=0` returns `0`.
   /// - Remote Config: positive int returns the clamped value. RC values `0`
   ///   or negative mean "unset, fall through to programmatic default"
@@ -551,10 +573,21 @@ class AppConfigBase {
   ///   two layers have different signatures (RC returns non-nullable `int`;
   ///   inline accepts `int?`).
   /// - Programmatic default (set via
-  ///   [notificationGoToSettingsMaxAskCountDefault]): `int?`. Initial value
-  ///   `null` = unlimited.
+  ///   [notificationGoToSettingsMaxAskCountDefault]): stored in
+  ///   [defaultRemoteConfig] as a non-null `int`. "Unlimited" is stored as the
+  ///   [notificationMaxAskCountUnlimited] sentinel (`-1`) and mapped back to
+  ///   `null` here; every other stored value — including `0` — passes through
+  ///   unchanged (so a programmatic `default = 0` resolves to `0`, "never
+  ///   prompt").
   ///
-  /// Default: null (unlimited)
+  ///   **Two meanings of `-1` coexist in this getter** a few lines apart:
+  ///   the env-override layer's `-1` means "unset, fall through" (above) and
+  ///   is never returned; the stored programmatic-default `-1` is the
+  ///   "unlimited" sentinel mapped to `null` below. Same literal, different
+  ///   layer, different meaning — do not conflate them.
+  ///
+  /// Default: null (unlimited), stored as the [notificationMaxAskCountUnlimited]
+  /// sentinel.
   static int? get notificationGoToSettingsMaxAskCount {
     const envValue =
         int.fromEnvironment('notificationGoToSettingsMaxAskCount', defaultValue: -1);
@@ -567,9 +600,12 @@ class AppConfigBase {
       final bounds = configBounds['notificationGoToSettingsMaxAskCount']!;
       return remoteValue.clamp(bounds.min, bounds.max);
     }
-    // RC value <= 0 (including 0 and negatives) → unset, fall through to
-    // programmatic default (which itself may be null = unlimited).
-    return defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] as int?;
+    // RC value <= 0 (including 0 and negatives) → unset, fall through to the
+    // programmatic default. The default is stored as a non-null int; only the
+    // sentinel maps to null (unlimited), every other value (incl. 0) is
+    // returned as-is.
+    final d = defaultRemoteConfig['notificationGoToSettingsMaxAskCount'] as int;
+    return d == notificationMaxAskCountUnlimited ? null : d;
   }
 
   /// Number of days to wait before re-prompting a user who declined the
@@ -610,7 +646,16 @@ class AppConfigBase {
   /// convention and how it relates (does NOT contradict) the inline helper
   /// API contract from `shouldShowValuePropReminder`.
   ///
-  /// Default: null (unlimited)
+  /// The programmatic default is stored in [defaultRemoteConfig] as a non-null
+  /// `int`: "unlimited" is the [notificationMaxAskCountUnlimited] sentinel
+  /// (`-1`) mapped back to `null` here; every other stored value — including
+  /// `0` — passes through unchanged. As in [notificationGoToSettingsMaxAskCount],
+  /// the env-layer `-1` ("unset, fall through", never returned) and the stored
+  /// programmatic-default `-1` ("unlimited" sentinel) are the same literal with
+  /// different layer-specific meanings — do not conflate them.
+  ///
+  /// Default: null (unlimited), stored as the [notificationMaxAskCountUnlimited]
+  /// sentinel.
   static int? get notificationValuePropReminderMaxAskCount {
     const envValue = int.fromEnvironment(
       'notificationValuePropReminderMaxAskCount',
@@ -625,9 +670,11 @@ class AppConfigBase {
       final bounds = configBounds['notificationValuePropReminderMaxAskCount']!;
       return remoteValue.clamp(bounds.min, bounds.max);
     }
-    // RC value <= 0 (including 0 and negatives) → unset, fall through to
-    // programmatic default (which itself may be null = unlimited).
-    return defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] as int?;
+    // RC value <= 0 (including 0 and negatives) → unset, fall through to the
+    // programmatic default. Only the sentinel maps to null (unlimited); every
+    // other value (incl. 0) is returned as-is.
+    final d = defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] as int;
+    return d == notificationMaxAskCountUnlimited ? null : d;
   }
 
   //

@@ -50,13 +50,13 @@ void main() {
 
   // Snapshot of programmatic defaults so each test starts/ends clean (OQ-010).
   late int origCooldownDays;
-  late int? origMaxAskCount;
+  late int origMaxAskCount;
 
   setUp(() {
     origCooldownDays = AppConfigBase
         .defaultRemoteConfig['notificationValuePropReminderCooldownDays'] as int;
     origMaxAskCount = AppConfigBase
-        .defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] as int?;
+        .defaultRemoteConfig['notificationValuePropReminderMaxAskCount'] as int;
 
     stubRC = _StubRemoteConfig();
     if (GetIt.I.isRegistered<RemoteConfigRepoInt>()) {

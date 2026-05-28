@@ -1,3 +1,47 @@
+## 0.7.3
+
+### Hardening: Remote Config defaults can no longer crash app startup
+
+`AppConfigBase.defaultRemoteConfig` previously held two `null` entries
+(`notificationGoToSettingsMaxAskCount`, `notificationValuePropReminderMaxAskCount`).
+On the live Firebase Remote Config path, `FirebaseRemoteConfig.setDefaults`
+rejects any non-`bool`/`num`/`String` value, so a `null` default threw an
+`ArgumentError` that propagated out of `appInitRemoteConfig` and prevented the
+app from reaching `runApp` (white screen) — and only on a live deploy, since
+the mock/emulator path never calls `setDefaults`.
+
+Three complementary guards now prevent this:
+
+* **Compile guard:** `defaultRemoteConfig` is now `Map<String, Object>`, so a
+  `null` (or other nullable) literal value fails to compile.
+* **Sentinel for "unlimited":** the two notification max-ask-count defaults are
+  now stored as the `-1` sentinel
+  (`AppConfigBase.notificationMaxAskCountUnlimited`) instead of `null`, mapped
+  back to `null` at the getter boundary. The public `int?` getter contract is
+  unchanged (`null` = unlimited); every other stored value, including `0`,
+  passes through unchanged.
+* **Loud runtime guard:** `appInitRemoteConfig` now validates the merged
+  defaults (DreamIC's plus `additionalDefaultConfigs`) on **every** init path
+  (live, mock, emulator) before any `GetIt` registration, throwing an
+  `ArgumentError` that names each offending `'key' = RuntimeType` if a value is
+  not `bool`/`num`/`String`. A bad consumer default now surfaces in local
+  development instead of first crashing a live deploy.
+
+**Breaking-ish notes:**
+
+* `AppConfigBase.defaultRemoteConfig` is now `Map<String, Object>` (was
+  `Map<String, dynamic>`). Consumers assigning the field a
+  `Map<String, dynamic>` or mutating it with a nullable value will get a type
+  error.
+* `appInitRemoteConfig` now throws an `ArgumentError` on unsupported
+  `additionalDefaultConfigs` values on all paths (live, mock, emulator), so a
+  bad default surfaces in local development instead of first crashing a live
+  deploy.
+
+Consumers that previously worked around the crash by setting both notification
+max-ask-count values to a positive number (e.g. `10`) before calling
+`appInitRemoteConfig` can remove that workaround after upgrading.
+
 ## 0.7.2
 
 ### Bug fix: Auto-wire FCM token persistence in `DreamicServices.initialize`

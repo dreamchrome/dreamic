@@ -35,30 +35,73 @@ import 'package:get_it/get_it.dart';
 Future<void> appInitRemoteConfig({
   Map<String, dynamic>? additionalDefaultConfigs,
 }) async {
+  // Build + validate the merged defaults ONCE, before any branch or GetIt
+  // registration. Validation runs identically on every path (live, mock,
+  // emulator), so a bad consumer default fails fast and identically
+  // everywhere — surfacing in local development instead of first crashing a
+  // live Firebase deploy. Throws an ArgumentError on any non-bool/num/String
+  // value (see buildValidatedRemoteConfigDefaults).
+  final mergedDefaults = buildValidatedRemoteConfigDefaults(additionalDefaultConfigs);
+
   // If Firebase is not initialized, always use mock implementation
   if (!AppConfigBase.isFirebaseInitialized) {
     logd('Firebase not initialized - using mock Remote Config');
-    await _initFakeRemoteConfig(
-      additionalDefaultConfigs: additionalDefaultConfigs,
-    );
+    await _initFakeRemoteConfig(mergedDefaults);
     return;
   }
 
   // Use fake Remote Config when using backend emulator (unless overridden)
   if (AppConfigBase.doUseBackendEmulator && !AppConfigBase.doOverrideUseLiveRemoteConfig) {
-    await _initFakeRemoteConfig(
-      additionalDefaultConfigs: additionalDefaultConfigs,
-    );
+    await _initFakeRemoteConfig(mergedDefaults);
   } else {
-    await _initLiveRemoteConfig(
-      additionalDefaultConfigs: additionalDefaultConfigs,
-    );
+    await _initLiveRemoteConfig(mergedDefaults);
   }
 }
 
-Future<void> _initLiveRemoteConfig({
+/// Merges DreamIC's [AppConfigBase.defaultRemoteConfig] with the
+/// consumer-supplied [additionalDefaultConfigs] and validates that every
+/// value in the merged map is a `bool`, `num`, or `String` — the only types
+/// Firebase Remote Config `setDefaults` accepts.
+///
+/// Throws an [ArgumentError] (matching Firebase's own `setDefaults` guard,
+/// which throws `ArgumentError` on `null`) naming each offending
+/// `'key' = RuntimeType` if any value is unsupported. This guard runs on
+/// every init path (live, mock, emulator) so a bad consumer default surfaces
+/// in local development rather than first crashing app startup on the live
+/// Remote Config path.
+///
+/// Exposed via `@visibleForTesting` (mirroring the `@visibleForTesting`
+/// setters in [AppConfigBase]) so validator tests can call it directly
+/// without a Firebase-init/GetIt harness.
+@visibleForTesting
+Map<String, dynamic> buildValidatedRemoteConfigDefaults(
   Map<String, dynamic>? additionalDefaultConfigs,
-}) async {
+) {
+  final merged = <String, dynamic>{
+    ...AppConfigBase.defaultRemoteConfig,
+    ...?additionalDefaultConfigs,
+  };
+
+  final offenders = <String>[];
+  merged.forEach((key, value) {
+    if (value is! bool && value is! num && value is! String) {
+      offenders.add("'$key' = ${value.runtimeType}");
+    }
+  });
+
+  if (offenders.isNotEmpty) {
+    throw ArgumentError(
+      'Invalid Remote Config default value(s): ${offenders.join(', ')}. '
+      'Firebase Remote Config defaults must be bool, num, or String. '
+      'An unsupported value would otherwise crash app startup on the live '
+      'Remote Config path (FirebaseRemoteConfig.setDefaults rejects it).',
+    );
+  }
+
+  return merged;
+}
+
+Future<void> _initLiveRemoteConfig(Map<String, dynamic> allDefaults) async {
   // Remote config
   GetIt.I.registerLazySingleton<RemoteConfigRepoInt>(
     () => RemoteConfigRepoLiveImpl(),
@@ -69,12 +112,6 @@ Future<void> _initLiveRemoteConfig({
       : const Duration(hours: 1); // 1 hour in release mode
 
   logv('🔧 Configuring Remote Config - Debug mode: $kDebugMode, Fetch interval: $fetchInterval');
-
-  // Always set defaults first - this ensures we always have usable values
-  final allDefaults = {
-    ...AppConfigBase.defaultRemoteConfig,
-    ...?additionalDefaultConfigs,
-  };
 
   logv('📋 Setting Remote Config defaults for ${allDefaults.length} parameters');
 
@@ -177,15 +214,10 @@ Future<void> _attemptFirebaseFetch() async {
   }
 }
 
-Future<void> _initFakeRemoteConfig({
-  Map<String, dynamic>? additionalDefaultConfigs,
-}) async {
-  // Remote config
+Future<void> _initFakeRemoteConfig(Map<String, dynamic> allDefaults) async {
+  // Remote config — store the already-merged, validated defaults.
   GetIt.I.registerLazySingleton<RemoteConfigRepoInt>(
-    () => RemoteConfigRepoMockImpl({
-      ...AppConfigBase.defaultRemoteConfig,
-      ...?additionalDefaultConfigs,
-    }),
+    () => RemoteConfigRepoMockImpl(allDefaults),
   );
 }
 
