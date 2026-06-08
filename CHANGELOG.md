@@ -1,3 +1,49 @@
+## 0.7.4
+
+### New Feature: Configurable Firestore database id (Enterprise-edition named databases)
+
+Adds support for pointing the app at a **named** Firestore database instead of
+the conventional `(default)` one. This is required for projects whose Firestore
+is an **Enterprise-edition** database, since Enterprise databases cannot use the
+`(default)` id and the SDK must target the named database explicitly.
+
+The default is unchanged (`null` → `(default)` database), so **existing apps are
+unaffected** and need no changes.
+
+**New API (optional, non-breaking):**
+
+* `AppConfigBase.backendFirestoreDatabaseId` (`String?` getter) — the database id
+  the app connects to. Resolves from the `BACKEND_FIRESTORE_DATABASE_ID`
+  dart-define when provided, otherwise from `backendFirestoreDatabaseIdDefault`,
+  otherwise `null` (the `(default)` database). Resolved once and cached.
+* `AppConfigBase.backendFirestoreDatabaseIdDefault` (`String?` setter) —
+  programmatic default, set from your app's config before any Firestore use.
+  Overridden by the `BACKEND_FIRESTORE_DATABASE_ID` dart-define when that is set.
+* `AppConfigBase.firestore` (`FirebaseFirestore` getter) — the app-wide Firestore
+  instance, targeting `backendFirestoreDatabaseId` (or `(default)` when null).
+  Throws `StateError` if accessed before `appInitFirebase()` initializes Firebase.
+
+**Recommended usage:**
+
+Use `AppConfigBase.firestore` everywhere instead of `FirebaseFirestore.instance`
+so projects on a named Enterprise database resolve to the correct database.
+Configure for a named database via either:
+
+```dart
+// Build flag
+// flutter run --dart-define=BACKEND_FIRESTORE_DATABASE_ID=default
+
+// Or programmatically, before any Firestore use
+AppConfigBase.backendFirestoreDatabaseIdDefault = 'default';
+```
+
+**Internal:**
+
+* The Firebase emulator is now wired onto `AppConfigBase.firestore` (the same
+  instance the app uses everywhere) instead of a freshly-created `(default)`
+  instance, so a named database id resolves consistently for both emulator and
+  live data access.
+
 ## 0.7.3
 
 ### Hardening: Remote Config defaults can no longer crash app startup

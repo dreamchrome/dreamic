@@ -2,6 +2,7 @@
 
 import 'dart:io';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import 'package:firebase_core/firebase_core.dart';
@@ -1031,6 +1032,37 @@ class AppConfigBase {
     return _backendRegion!;
   }
 
+  static String? _backendFirestoreDatabaseIdDefault;
+
+  /// Programmatic default for [backendFirestoreDatabaseId]. Set this from your
+  /// app's config (before any Firestore use). Overridden by the
+  /// `BACKEND_FIRESTORE_DATABASE_ID` dart-define when that is provided.
+  static set backendFirestoreDatabaseIdDefault(String? value) =>
+      _backendFirestoreDatabaseIdDefault = value;
+
+  static bool _backendFirestoreDatabaseIdResolved = false;
+  static String? _backendFirestoreDatabaseId;
+
+  /// The Firestore database id the app connects to.
+  ///
+  /// `null` (the default) targets Firestore's conventional `(default)` database,
+  /// so existing apps are unaffected. Set this to a NAMED database id (e.g.
+  /// `'default'`) for projects whose Firestore is an **Enterprise-edition**
+  /// database — Enterprise databases cannot use the `(default)` id, so the SDK
+  /// must target the named database explicitly.
+  ///
+  /// Set via `--dart-define=BACKEND_FIRESTORE_DATABASE_ID=default` or
+  /// programmatically via [backendFirestoreDatabaseIdDefault]. Consumed by [firestore].
+  static String? get backendFirestoreDatabaseId {
+    if (!_backendFirestoreDatabaseIdResolved) {
+      const envValue = String.fromEnvironment('BACKEND_FIRESTORE_DATABASE_ID');
+      _backendFirestoreDatabaseId =
+          envValue.isNotEmpty ? envValue : _backendFirestoreDatabaseIdDefault;
+      _backendFirestoreDatabaseIdResolved = true;
+    }
+    return _backendFirestoreDatabaseId;
+  }
+
   static bool? _doUseBackendEmulator;
   static bool get doUseBackendEmulator {
     _doUseBackendEmulator ??= const String.fromEnvironment('DO_USE_BACKEND_EMULATOR',
@@ -1439,6 +1471,25 @@ class AppConfigBase {
           ? minimumAppVersionRecommendedApple
           : minimumAppVersionRecommendedGoogle
       : minimumAppVersionRecommendedWeb;
+
+  /// The app-wide [FirebaseFirestore] instance, targeting
+  /// [backendFirestoreDatabaseId] (the `(default)` database when that is null).
+  ///
+  /// Use this everywhere instead of `FirebaseFirestore.instance` so projects on
+  /// an Enterprise-edition NAMED database resolve to the correct database. The
+  /// emulator (when enabled) is configured on this same instance.
+  static FirebaseFirestore get firestore {
+    if (!isFirebaseInitialized) {
+      throw StateError(
+        'Cannot access Firestore - Firebase is not initialized. '
+        'Call appInitFirebase() first.',
+      );
+    }
+    final dbId = backendFirestoreDatabaseId;
+    return (dbId == null || dbId.isEmpty)
+        ? FirebaseFirestore.instanceFor(app: firebaseApp)
+        : FirebaseFirestore.instanceFor(app: firebaseApp, databaseId: dbId);
+  }
 
   static HttpsCallableOptions get firebaseFunctionCallableOptions {
     return HttpsCallableOptions(timeout: Duration(seconds: firebaseFunctionTimeoutSecs));

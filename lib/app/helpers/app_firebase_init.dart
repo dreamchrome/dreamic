@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -63,9 +62,10 @@ Future<void> _connectToFirebaseEmulator(FirebaseApp fbApp) async {
   logd(
       'Set up Firebase Functions emulator with server $emulatorAddress:${AppConfigBase.backendEmulatorFunctionsPort}');
 
-  FirebaseFirestore.instanceFor(
-    app: fbApp,
-  ).useFirestoreEmulator(
+  // Configure the emulator on the SAME instance the app uses everywhere
+  // (AppConfigBase.firestore), so a named Enterprise database id resolves
+  // consistently for both the emulator and live data access.
+  AppConfigBase.firestore.useFirestoreEmulator(
     emulatorAddress,
     AppConfigBase.backendEmulatorFirestorePort,
   );

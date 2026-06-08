@@ -1,3 +1,30 @@
+// ============================================================================
+// DEPRECATED — do not extend this file; prefer tappable_action_widget_test.dart
+// ============================================================================
+//
+// This suite does NOT test the real `TappableAction` / `TappableActionGroupManager`.
+// It tests hand-cloned copies defined locally in this file — `SimpleTappableAction`
+// (a stand-in widget with `networkRequired`/`isNetworkConnected` as plain bools and
+// no `BlocBuilder<AppCubit>`) and `IsolatedGroupManager` (a copy of the manager with
+// an injectable mock timer). The clones exist only because the real widget could not
+// be mounted in isolation:
+//
+//   1. `TappableAction.build()` unconditionally wrapped its child in
+//      `BlocBuilder<AppCubit, AppState>`, so any isolated mount threw
+//      `ProviderNotFoundException` — even when `requireNetwork: false`.
+//   2. The `TappableActionGroupManager` singleton started a perpetual,
+//      self-rescheduling cleanup `Timer`, so a mount-only test failed at teardown
+//      with "A Timer is still pending...".
+//
+// Both smells were fixed in `lib/presentation/elements/tappable_action.dart`
+// (AppCubit is now only required when `requireNetwork == true`; group cleanup is
+// lazy/throttled with no background timer). The real widget is therefore now
+// directly testable — see `tappable_action_widget_test.dart`.
+//
+// Kept temporarily because it still passes and exercises the group state-machine
+// logic, but it should be migrated to tests against the real types and then
+// removed. Add new coverage to `tappable_action_widget_test.dart`, not here.
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -316,6 +343,10 @@ class _SimpleTappableActionState extends State<SimpleTappableAction> {
   }
 }
 
+@Deprecated(
+    'Tests cloned copies, not the real TappableAction/TappableActionGroupManager. '
+    'The original blockers (mandatory AppCubit + perpetual cleanup timer) are fixed; '
+    'migrate coverage to tappable_action_widget_test.dart and remove this file.')
 void main() {
   group('Isolated Group Manager', () {
     late MockTimerFactory timerFactory;

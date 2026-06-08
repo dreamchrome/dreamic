@@ -1189,11 +1189,9 @@ class TappableActionGroupManager with WidgetsBindingObserver implements ITappabl
     if (config.resetOnAppResume) {
       WidgetsBinding.instance.addObserver(this);
     }
-    
-    // Start periodic cleanup if group lifetime is configured
-    if (config.maxGroupLifetime > Duration.zero) {
-      _startPeriodicCleanup();
-    }
+    // Expired groups are reclaimed lazily on widget register/unregister
+    // (see _maybeCleanup) — no background timer, so nothing leaks in tests
+    // and there are no periodic event-loop wakeups in production.
   }
   
   final TappableActionGroupConfig config;
@@ -1202,7 +1200,10 @@ class TappableActionGroupManager with WidgetsBindingObserver implements ITappabl
   final Map<String, Timer?> _groupResetTimers = <String, Timer?>{};
   final Map<String, int> _groupTapCounts = <String, int>{};
   final Map<String, DateTime> _groupCreationTimes = <String, DateTime>{};
-  Timer? _cleanupTimer;
+
+  /// Wall-clock time of the last lazy TTL sweep, used to throttle _maybeCleanup
+  /// so bursts of registrations don't each trigger a full sweep.
+  DateTime? _lastCleanupAt;
   
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -1224,7 +1225,6 @@ class TappableActionGroupManager with WidgetsBindingObserver implements ITappabl
     for (final timer in _groupResetTimers.values) {
       timer?.cancel();
     }
-    _cleanupTimer?.cancel();
     
     // Dispose all notifiers to prevent memory leaks
     for (final notifier in _groupNotifiers.values) {
@@ -1302,21 +1302,27 @@ class TappableActionGroupManager with WidgetsBindingObserver implements ITappabl
         setGroupDisabled(groupId, false);
       }
     }
+
+    // New groups appearing is the natural moment to reclaim expired ones.
+    _maybeCleanup();
   }
-  
+
   @override
   void unregisterWidget(String? groupId, Object widget) {
     if (groupId == null) return;
-    
+
     _groupWidgets[groupId]?.remove(widget);
     final remaining = _groupWidgets[groupId]?.length ?? 0;
-    
+
     logv('TappableActionGroupManager: Unregistered widget from group "$groupId" ($remaining remaining)');
-    
+
     // Schedule auto-reset only if group is empty and disabled
     if (remaining == 0 && isGroupDisabled(groupId) && config.enableAutoReset) {
       _scheduleAutoReset(groupId);
     }
+
+    // A group going empty is exactly when it becomes eligible for TTL cleanup.
+    _maybeCleanup();
   }
   
   void _scheduleAutoReset(String groupId) {
@@ -1360,17 +1366,20 @@ class TappableActionGroupManager with WidgetsBindingObserver implements ITappabl
     }
   }
   
-  /// Start periodic cleanup timer for group lifetime management
-  void _startPeriodicCleanup() {
-    _cleanupTimer = config.timerFactory.createTimer(
-      config.maxGroupLifetime,
-      () {
-        _performCleanup();
-        if (!config.timerFactory.toString().contains('Mock')) {
-          _startPeriodicCleanup(); // Restart timer for production
-        }
-      },
-    );
+  /// Lazily reclaim expired groups, throttled to at most once per
+  /// maxGroupLifetime. Called from widget register/unregister (off the build
+  /// hot path) rather than from a background timer, so there is no timer to
+  /// leak in tests and no periodic event-loop wakeup in production.
+  void _maybeCleanup() {
+    final lifetime = config.maxGroupLifetime;
+    if (lifetime <= Duration.zero) return; // TTL disabled (e.g. .testing config)
+
+    final now = DateTime.now();
+    final last = _lastCleanupAt;
+    if (last != null && now.difference(last) < lifetime) return;
+
+    _lastCleanupAt = now;
+    _performCleanup();
   }
   
   /// Clean up oldest groups when limit is reached
@@ -1402,7 +1411,7 @@ class TappableActionGroupManager with WidgetsBindingObserver implements ITappabl
     }
   }
   
-  /// Perform periodic cleanup of expired groups
+  /// Remove groups whose lifetime has expired (called lazily via _maybeCleanup).
   void _performCleanup() {
     final now = DateTime.now();
     final expired = <String>[];
@@ -1411,8 +1420,12 @@ class TappableActionGroupManager with WidgetsBindingObserver implements ITappabl
       final groupId = entry.key;
       final creationTime = entry.value;
       
+      // Read the notifier value directly rather than via isGroupDisabled() —
+      // that path calls _getNotifier(), and since _performCleanup() now runs
+      // lazily from group access points, going through it would recurse.
+      final isDisabled = _groupNotifiers[groupId]?.value ?? false;
       if (now.difference(creationTime) > config.maxGroupLifetime &&
-          !isGroupDisabled(groupId) &&
+          !isDisabled &&
           (_groupWidgets[groupId]?.isEmpty ?? true)) {
         expired.add(groupId);
       }
@@ -1446,7 +1459,6 @@ class TappableActionGroupManager with WidgetsBindingObserver implements ITappabl
     return {
       'totalGroups': _groupNotifiers.length,
       'maxConcurrentGroups': config.maxConcurrentGroups,
-      'hasCleanupTimer': _cleanupTimer?.isActive ?? false,
       'config': {
         'autoResetDelay': config.autoResetDelay.inMilliseconds,
         'enableAutoReset': config.enableAutoReset,
@@ -2081,47 +2093,59 @@ class _TappableActionState extends State<TappableAction> {
   
   @override
   Widget build(BuildContext context) {
+    // Core build logic, parameterized on the resolved network/group state so it
+    // can run with or without an AppCubit provider in the tree.
+    Widget buildInner(
+        BuildContext context, bool isNetworkConnected, bool isGroupDisabled) {
+      final shouldDisable =
+          _shouldDisableTap(isNetworkConnected, isGroupDisabled);
+
+      VoidCallback? effectiveOnTap;
+      if (widget.onTap != null) {
+        if (shouldDisable) {
+          if (widget.config.disableVisuallyDuringDebouncing) {
+            effectiveOnTap = null; // Visually disabled
+          } else {
+            effectiveOnTap = () {
+              logd('TappableAction: Tap ignored - widget is disabled');
+            }; // Functionally disabled but visually enabled
+          }
+        } else {
+          // If debounceTaps is false, bypass the primitive handling
+          // and call the callback directly for backward compatibility
+          if (!widget.config.debounceTaps) {
+            effectiveOnTap = () {
+              if (widget.onTap != null) {
+                _executeTap();
+              }
+            };
+          } else {
+            // Use _handleTap which routes through the appropriate primitive
+            effectiveOnTap = _handleTap;
+          }
+        }
+      }
+
+      // Build directly without TapDebouncer wrapper
+      // The primitives now handle all debouncing/throttling internally
+      return widget.builder(context, effectiveOnTap);
+    }
+
     Widget buildAction(bool isGroupDisabled) {
+      // Only depend on AppCubit when the action actually gates on network.
+      // When requireNetwork is false, _shouldDisableTap ignores the network
+      // value, so we skip the BlocBuilder entirely and avoid requiring an
+      // AppCubit provider — letting isolated widget tests mount without one.
+      if (!widget.config.requireNetwork) {
+        return buildInner(context, true, isGroupDisabled);
+      }
       return BlocBuilder<AppCubit, AppState>(
         buildWhen: (previous, current) =>
-            widget.config.requireNetwork &&
             previous.networkStatus != current.networkStatus,
         builder: (context, state) {
           final isNetworkConnected =
               state.networkStatus == NetworkStatus.connected;
-
-          final shouldDisable =
-              _shouldDisableTap(isNetworkConnected, isGroupDisabled);
-
-          VoidCallback? effectiveOnTap;
-          if (widget.onTap != null) {
-            if (shouldDisable) {
-              if (widget.config.disableVisuallyDuringDebouncing) {
-                effectiveOnTap = null; // Visually disabled
-              } else {
-                effectiveOnTap = () {
-                  logd('TappableAction: Tap ignored - widget is disabled');
-                }; // Functionally disabled but visually enabled
-              }
-            } else {
-              // If debounceTaps is false, bypass the primitive handling
-              // and call the callback directly for backward compatibility
-              if (!widget.config.debounceTaps) {
-                effectiveOnTap = () {
-                  if (widget.onTap != null) {
-                    _executeTap();
-                  }
-                };
-              } else {
-                // Use _handleTap which routes through the appropriate primitive
-                effectiveOnTap = _handleTap;
-              }
-            }
-          }
-
-          // Build directly without TapDebouncer wrapper
-          // The primitives now handle all debouncing/throttling internally
-          return widget.builder(context, effectiveOnTap);
+          return buildInner(context, isNetworkConnected, isGroupDisabled);
         },
       );
     }
