@@ -60,6 +60,15 @@ export 'data/models/notification_permission_status.dart';
 export 'data/models/device_platform.dart';
 export 'data/models/device_info.dart';
 
+// Responsive
+// `show` clause is required (not cosmetic): `@visibleForTesting` is a lint-only
+// annotation and does not remove `classify` from the exported API, so a bare
+// export would leak it as a fifth symbol. The four §4 symbols are the entire
+// public surface; `classify` stays importable directly from the implementation
+// file for tests, and `_ResponsiveData` is private regardless.
+export 'presentation/responsive/responsive.dart'
+    show DeviceSize, Breakpoints, ResponsiveScope, ResponsiveContext;
+
 // URL Opener
 export 'presentation/helpers/url_opener/url_opener.dart';
 

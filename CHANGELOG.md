@@ -1,3 +1,39 @@
+## 0.7.5
+
+### New Feature: Responsive utilities (device-class detection + value-by-breakpoint)
+
+Adds a small, self-contained responsive toolkit — a zero third-party-dependency
+replacement for the thin slice of `responsive_framework` the app actually used
+(device-class detection and "pick a value by breakpoint"). It is **optional and
+non-breaking**: existing apps are unaffected and need no changes.
+
+The API exposes **two** reactivity models, kept distinct by name. Class-based
+reads resolve the `ResponsiveScope`'s whole-window device class and rebuild only
+when the class flips (segment-only). Viewport-width helpers read the nearest
+`MediaQuery` width at the call site and rebuild per-pixel; the `Viewport`
+qualifier marks "tracks the local width here, not the device class."
+
+**New API (optional, non-breaking):**
+
+* `DeviceSize` (`enum { mobile, tablet, desktop }`) — the current viewport-width
+  / layout class. Orthogonal to `DevicePlatform` (the OS) and the internal
+  device form factor.
+* `Breakpoints` — globally configurable device-class thresholds
+  (`Breakpoints.tablet` / `Breakpoints.desktop`, defaults 600 / 1024 logical px).
+  Configure once at startup before `runApp`; set `tablet < desktop`.
+* `ResponsiveScope` (`Widget`) — wrap the app once (top-level above `MaterialApp`
+  is supported) to publish the whole-window device class to the subtree.
+* `ResponsiveContext` (`extension on BuildContext`):
+  * `deviceSize` / `isMobile` / `isTablet` / `isDesktop` — the current layout
+    width class (not the OS platform).
+  * `responsive<T>({required T mobile, T? tablet, T? desktop})` — pick a value by
+    device class with fallback chaining toward the smaller class.
+  * `responsiveByViewportWidth<T>({required Map<double, T> breakpoints, required T fallback})`
+    — pick a value by call-site viewport width (highest matching threshold wins).
+  * `clampByViewportWidth({required double minValue, required double maxValue, double minW = 360, double maxW = 1200})`
+    — CSS `clamp()`-equivalent linear interpolation across a width range, clamped
+    at both ends.
+
 ## 0.7.4
 
 ### New Feature: Configurable Firestore database id (Enterprise-edition named databases)
