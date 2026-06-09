@@ -472,4 +472,74 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   });
+
+  group('BEH-11: unstable-child debug diagnostic', () {
+    /// Runs [body] with the global `debugPrint` redirected to a capturing sink,
+    /// then restores it. Restoration happens in a `finally` **inside** the test
+    /// body (not via addTearDown) because flutter_test's foundation-vars
+    /// invariant check runs at body-end, before tearDowns. Returns the captured
+    /// messages for assertion after restoration.
+    Future<List<String>> withCapturedDebugPrint(
+      Future<void> Function() body,
+    ) async {
+      final messages = <String>[];
+      final original = debugPrint;
+      debugPrint = (String? message, {int? wrapWidth}) {
+        if (message != null) messages.add(message);
+      };
+      try {
+        await body();
+      } finally {
+        debugPrint = original;
+      }
+      return messages;
+    }
+
+    testWidgets(
+        'a stable child across many within-class resizes never warns',
+        (tester) async {
+      final messages = await withCapturedDebugPrint(() async {
+        // A single const child, forwarded unchanged. The scope rebuilds
+        // per-pixel (it reads MediaQuery), but the identical child means
+        // segment-only rebuilds hold — so the diagnostic must stay silent.
+        const child = SizedBox.shrink();
+        _setWidth(tester, 700); // tablet
+        await tester.pumpWidget(const ResponsiveScope(child: child));
+
+        // Drive ~20 within-class (tablet) resizes via pump() — well past the
+        // warn threshold — with the same child instance throughout.
+        for (var w = 701; w <= 720; w++) {
+          _setWidth(tester, w.toDouble());
+          await tester.pump();
+        }
+      });
+
+      expect(messages, isEmpty);
+    });
+
+    testWidgets(
+        'a fresh child on every rebuild within a class warns once',
+        (tester) async {
+      final messages = await withCapturedDebugPrint(() async {
+        // Width is fixed (tablet throughout), so the device class never flips —
+        // yet a brand-new, non-const child arrives on every pumpWidget. That is
+        // the defeated-guarantee signature the diagnostic exists to catch.
+        _setWidth(tester, 700); // tablet, fixed
+
+        // Pump generously past _kUnstableChildWarnThreshold (currently 10); the
+        // streak is (pumps - 1), so 15 pumps → streak 14 → warns.
+        for (var i = 0; i < 15; i++) {
+          await tester
+              .pumpWidget(ResponsiveScope(child: SizedBox(width: i.toDouble())));
+        }
+      });
+
+      // Exactly one warning (it self-silences after firing), and it names the
+      // scope and the cause.
+      final warnings =
+          messages.where((m) => m.contains('ResponsiveScope')).toList();
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('no device-class change'));
+    });
+  });
 }

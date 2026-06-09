@@ -190,6 +190,16 @@ class _ResponsiveData extends InheritedWidget {
       old.deviceSize != deviceSize;
 }
 
+/// Debug-only threshold: how many **consecutive** rebuilds with a *fresh*
+/// [ResponsiveScope.child] instance, *without a device-class change*, before the
+/// scope warns (once) that segment-only rebuilds are being defeated.
+///
+/// Sized so a real per-pixel resize drag (~60 fps) trips it in a fraction of a
+/// second, while a one-off legitimate `child` swap (streak resets to 0 on the
+/// next stable rebuild) never does. Used only inside an `assert`, so it — and
+/// all the tracking it gates — is tree-shaken out of release builds.
+const int _kUnstableChildWarnThreshold = 10;
+
 /// Establishes the responsive device-class context for its subtree.
 ///
 /// Reads `MediaQuery.sizeOf(context).width`, classifies it via [classify], and
@@ -206,11 +216,23 @@ class _ResponsiveData extends InheritedWidget {
 /// runApp(const ResponsiveScope(child: MyApp()));
 /// ```
 ///
+/// **Why it is a [StatefulWidget].** The widget carries no runtime state — it is
+/// stateful purely so a **debug-only diagnostic** can track the `child` across
+/// rebuilds. If an ancestor rebuilds the scope on every resize frame while
+/// constructing the `child` inline (an unstable reference), the whole subtree
+/// rebuilds per-pixel and the segment-only guarantee is silently lost. To make
+/// that loud, [build] watches for the failure's exact signature — the `child`
+/// instance changing on a rebuild that did **not** change the device class — and
+/// after [_kUnstableChildWarnThreshold] consecutive such rebuilds emits a single
+/// `debugPrint`. It checks *identity*, not const-ness, so a non-const-but-stable
+/// `child` is fine; the entire check is inside an `assert` and costs nothing in
+/// release.
+///
 /// Top-level placement (above `MaterialApp`) is valid: `runApp` wraps the app
 /// in a root `View` that supplies a `MediaQuery` via `MediaQuery.fromView`, so
 /// the scope always resolves one. The one caveat: a `runWidget` / multi-view
 /// bootstrap must ensure a `View` / `MediaQuery` sits above the scope.
-class ResponsiveScope extends StatelessWidget {
+class ResponsiveScope extends StatefulWidget {
   const ResponsiveScope({super.key, required this.child});
 
   /// The subtree that reads the device class. Pass a **stable** reference
@@ -218,9 +240,46 @@ class ResponsiveScope extends StatelessWidget {
   final Widget child;
 
   @override
+  State<ResponsiveScope> createState() => _ResponsiveScopeState();
+}
+
+class _ResponsiveScopeState extends State<ResponsiveScope> {
+  // Debug-only churn tracking. Every field below is read/written only inside the
+  // `assert` block in [build], so the diagnostic is stripped from release.
+  Widget? _lastChild;
+  DeviceSize? _lastClass;
+  int _churnStreak = 0;
+  bool _warned = false;
+
+  @override
   Widget build(BuildContext context) {
     final deviceSize = classify(MediaQuery.sizeOf(context).width);
-    return _ResponsiveData(deviceSize: deviceSize, child: child);
+    assert(() {
+      // The failure signature: a fresh `child` arrived on a rebuild that did NOT
+      // change the device class — i.e. a within-class resize is rebuilding the
+      // whole subtree instead of preserving it (segment-only rebuilds defeated).
+      final churned = _lastChild != null &&
+          !identical(_lastChild, widget.child) &&
+          deviceSize == _lastClass;
+      if (churned) {
+        if (++_churnStreak >= _kUnstableChildWarnThreshold && !_warned) {
+          _warned = true;
+          debugPrint(
+            'WARNING (dreamic ResponsiveScope): `child` changed on $_churnStreak '
+            'consecutive rebuilds with no device-class change — the whole subtree '
+            'is rebuilding on every resize frame instead of only when the device '
+            'class flips. Pass a stable `child` (a `const` widget, or one hoisted '
+            'out of any ancestor that rebuilds during resize).',
+          );
+        }
+      } else {
+        _churnStreak = 0;
+      }
+      _lastChild = widget.child;
+      _lastClass = deviceSize;
+      return true;
+    }());
+    return _ResponsiveData(deviceSize: deviceSize, child: widget.child);
   }
 }
 
