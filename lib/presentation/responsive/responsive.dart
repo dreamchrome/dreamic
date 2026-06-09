@@ -229,7 +229,9 @@ class ResponsiveScope extends StatelessWidget {
 /// Two groups of members with **different reactivity models** — see the file
 /// header's structure-vs-dimensions split:
 ///
-/// - **Class-based reads** ([deviceSize], [isMobile], [isTablet], [isDesktop],
+/// - **Class-based reads** ([deviceSize]; the exact-match predicates [isMobile],
+///   [isTablet], [isDesktop]; the ordered-threshold predicates
+///   [isTabletOrLarger], [isTabletOrSmaller], [isAtLeast], [isAtMost]; and
 ///   [responsive]) resolve the [ResponsiveScope]'s whole-window class and
 ///   rebuild **only when the class flips**. They require a [ResponsiveScope]
 ///   ancestor.
@@ -264,6 +266,54 @@ extension ResponsiveContext on BuildContext {
   /// [ResponsiveScope] — **not** the OS / device platform. For desktop OS
   /// detection use [DevicePlatform.isDesktop].
   bool get isDesktop => deviceSize == DeviceSize.desktop;
+
+  /// Whether the current layout width class is [DeviceSize.tablet] or wider —
+  /// the ordered "larger than mobile" threshold.
+  ///
+  /// Equivalent to `!isMobile`, but reads as an ascending threshold rather than
+  /// a negation, mirroring the "the tablet value applies to tablet and larger"
+  /// semantics of [responsive]. Shorthand for `isAtLeast(DeviceSize.tablet)`.
+  ///
+  /// Reports the **layout width class** (window width), **not** the OS / device
+  /// platform — for "is this a phone OS?" use [DevicePlatform.isMobile] (see
+  /// [isMobile]).
+  bool get isTabletOrLarger => isAtLeast(DeviceSize.tablet);
+
+  /// Whether the current layout width class is [DeviceSize.tablet] or narrower —
+  /// the ordered "smaller than desktop" threshold.
+  ///
+  /// Equivalent to `!isDesktop`, but reads as a descending threshold. Shorthand
+  /// for `isAtMost(DeviceSize.tablet)`.
+  ///
+  /// Reports the **layout width class** (window width), **not** the OS / device
+  /// platform (see [DevicePlatform]).
+  bool get isTabletOrSmaller => isAtMost(DeviceSize.tablet);
+
+  /// Whether the current layout width class is at least [min] on the ordered
+  /// scale `mobile < tablet < desktop` (inclusive lower bound).
+  ///
+  /// The general test behind [isTabletOrLarger]; use it for an explicit
+  /// threshold at the call site — `context.isAtLeast(DeviceSize.tablet)` reads
+  /// as "tablet or wider." The two degenerate ends collapse into existing
+  /// getters: `isAtLeast(DeviceSize.mobile)` is always `true`, and
+  /// `isAtLeast(DeviceSize.desktop)` equals [isDesktop] — so [DeviceSize.tablet]
+  /// is the only threshold that adds expressiveness over [isMobile] /
+  /// [isDesktop].
+  ///
+  /// Compares [DeviceSize] declaration order via `index`, so it relies on the
+  /// enum staying declared in ascending-width order (mobile, tablet, desktop).
+  bool isAtLeast(DeviceSize min) => deviceSize.index >= min.index;
+
+  /// Whether the current layout width class is at most [max] on the ordered
+  /// scale `mobile < tablet < desktop` (inclusive upper bound).
+  ///
+  /// The general test behind [isTabletOrSmaller]. The two degenerate ends
+  /// collapse into existing getters: `isAtMost(DeviceSize.desktop)` is always
+  /// `true`, and `isAtMost(DeviceSize.mobile)` equals [isMobile].
+  ///
+  /// Compares [DeviceSize] declaration order via `index`, so it relies on the
+  /// enum staying declared in ascending-width order (mobile, tablet, desktop).
+  bool isAtMost(DeviceSize max) => deviceSize.index <= max.index;
 
   /// Picks a value by device class, with fallback chaining toward the smaller
   /// class.
