@@ -13,9 +13,11 @@ NotificationPayload _$NotificationPayloadFromJson(Map<String, dynamic> json) =>
       imageUrl: json['imageUrl'] as String?,
       route: json['route'] as String?,
       data: json['data'] as Map<String, dynamic>? ?? const {},
-      actions: (json['actions'] as List<dynamic>?)
+      actions:
+          (json['actions'] as List<dynamic>?)
               ?.map(
-                  (e) => NotificationAction.fromJson(e as Map<String, dynamic>))
+                (e) => NotificationAction.fromJson(e as Map<String, dynamic>),
+              )
               .toList() ??
           const [],
       id: (json['id'] as num?)?.toInt(),
@@ -28,19 +30,19 @@ NotificationPayload _$NotificationPayloadFromJson(Map<String, dynamic> json) =>
     );
 
 Map<String, dynamic> _$NotificationPayloadToJson(
-        NotificationPayload instance) =>
-    <String, dynamic>{
-      'title': instance.title,
-      'body': instance.body,
-      'imageUrl': instance.imageUrl,
-      'route': instance.route,
-      'data': instance.data,
-      'actions': instance.actions.map((e) => e.toJson()).toList(),
-      'id': instance.id,
-      'channelId': instance.channelId,
-      'category': instance.category,
-      'sound': instance.sound,
-      'badge': instance.badge,
-      'ttl': instance.ttl,
-      'priority': instance.priority,
-    };
+  NotificationPayload instance,
+) => <String, dynamic>{
+  'title': instance.title,
+  'body': instance.body,
+  'imageUrl': instance.imageUrl,
+  'route': instance.route,
+  'data': instance.data,
+  'actions': instance.actions.map((e) => e.toJson()).toList(),
+  'id': instance.id,
+  'channelId': instance.channelId,
+  'category': instance.category,
+  'sound': instance.sound,
+  'badge': instance.badge,
+  'ttl': instance.ttl,
+  'priority': instance.priority,
+};

@@ -214,7 +214,7 @@ class DreamicServices {
         PrioritizedCallback(
             notificationService.handleAuthenticated,
             priority: 0),
-      if (onAuthenticatedCallbacks != null) ...onAuthenticatedCallbacks,
+      ...?onAuthenticatedCallbacks,
     ];
 
     final onAboutToLogOutPrioritized =
@@ -225,12 +225,12 @@ class DreamicServices {
         PrioritizedCallback(
             notificationService.handleAboutToLogOut,
             priority: 0),
-      if (onAboutToLogOutCallbacks != null) ...onAboutToLogOutCallbacks,
+      ...?onAboutToLogOutCallbacks,
     ];
 
     final onLoggedOutPrioritized =
         <PrioritizedCallback<Future<void> Function()>>[
-      if (onLoggedOutCallbacks != null) ...onLoggedOutCallbacks,
+      ...?onLoggedOutCallbacks,
     ];
 
     logd('DreamicServices: Collected ${onAuthenticatedPrioritized.length} '

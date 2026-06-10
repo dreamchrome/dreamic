@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:bloc/bloc.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:equatable/equatable.dart';
 import 'package:firebase_core/firebase_core.dart';
 // import 'package:firebase_core/firebase_core.dart';
@@ -231,6 +232,10 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
         customCheckOptions: [
           InternetCheckOption(uri: Uri.parse(defaultHostingUrl)),
         ],
+        // v3 dropped the automatic connectivity_plus subscription; supply it as
+        // the trigger stream so onStatusChange reacts instantly to OS network
+        // changes (Wi-Fi/airplane toggles) instead of only on the 10s poll.
+        triggerStream: Connectivity().onConnectivityChanged,
       );
 
       // Check network with timeout

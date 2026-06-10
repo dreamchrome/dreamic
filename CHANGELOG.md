@@ -1,3 +1,41 @@
+## 0.8.0
+
+### Dependency upgrades and raised SDK baseline
+
+Brings the full dependency set up to current releases. **One breaking change for
+consumers:** the minimum SDK baseline has been raised — apps depending on
+`dreamic` must now be on **Flutter 3.41.0+ / Dart 3.11.0+** (previously Flutter
+3.38.1 / Dart 3.10). This was required to adopt `open_file` 4.0.0, which sets
+those minimums.
+
+**Breaking:**
+
+* Minimum environment raised to `sdk: ^3.11.0` and `flutter: ">=3.41.0"`.
+
+**Major upgrades:**
+
+* `flutter_local_notifications` 21 → 22 — adds web platform support (dormant
+  until wired up; all calls remain `kIsWeb`-guarded). No public API changes.
+* `internet_connection_checker_plus` 2 → 3 — now a pure-Dart package; the bundled
+  `connectivity_plus` listener was removed. `AppCubit` now passes
+  `Connectivity().onConnectivityChanged` as the `triggerStream` so connectivity
+  changes are detected instantly (preserving the v2 behavior) rather than only on
+  the periodic poll.
+* `open_file` 3 → 4 — Android drops the `REQUEST_INSTALL_PACKAGES` permission
+  check; the `OpenFile.open` API is unchanged.
+
+**Firebase suite:** `firebase_core` 4.10.0, `firebase_auth` 6.5.2,
+`firebase_storage` 13.4.2, `cloud_firestore` 6.5.0, `cloud_functions` 6.3.2,
+`firebase_messaging` 16.3.0, `firebase_remote_config` 6.5.2,
+`firebase_crashlytics` 5.2.3. Note: `firebase_core` 4.10.0 bumps the native
+Firebase SDKs (iOS 12.14.0 / Android 34.14.0) — run `pod install --repo-update`
+on iOS when adopting.
+
+**Minor / patch:** `adaptive_dialog` 2.8.0, `app_badge_plus` 1.3.1, `bloc` 9.2.1,
+`device_info_plus` 13.1.0, `flutter_timezone` 5.1.0, `json_annotation` 4.12.0,
+`json_serializable` 6.14.0, `package_info_plus` 10.1.0, `permission_handler`
+12.0.3, `wakelock_plus` 1.6.1, `build_runner` (dev) 2.15.0.
+
 ## 0.7.5
 
 ### New Feature: Responsive utilities (device-class detection + value-by-breakpoint)
