@@ -102,10 +102,15 @@ Map<String, dynamic> buildValidatedRemoteConfigDefaults(
 }
 
 Future<void> _initLiveRemoteConfig(Map<String, dynamic> allDefaults) async {
-  // Remote config
-  GetIt.I.registerLazySingleton<RemoteConfigRepoInt>(
-    () => RemoteConfigRepoLiveImpl(),
-  );
+  // Remote config — `isRegistered`-guard the registration so a gate-retry
+  // re-run does not throw "Object already registered" (Issue 39, live site).
+  // The setDefaults/setConfigSettings/fetchAndActivate below are all
+  // overwrite/refetch idempotent and safe to re-run.
+  if (!GetIt.I.isRegistered<RemoteConfigRepoInt>()) {
+    GetIt.I.registerLazySingleton<RemoteConfigRepoInt>(
+      () => RemoteConfigRepoLiveImpl(),
+    );
+  }
 
   final fetchInterval = kDebugMode
       ? const Duration(seconds: 10) // 10 seconds in debug mode
@@ -216,9 +221,14 @@ Future<void> _attemptFirebaseFetch() async {
 
 Future<void> _initFakeRemoteConfig(Map<String, dynamic> allDefaults) async {
   // Remote config — store the already-merged, validated defaults.
-  GetIt.I.registerLazySingleton<RemoteConfigRepoInt>(
-    () => RemoteConfigRepoMockImpl(allDefaults),
-  );
+  // `isRegistered`-guard the registration so a dev/emulator gate-retry re-run
+  // does not throw "already registered" (Issue 39, fake/mock site — the path
+  // taken when Firebase is not initialized OR the backend emulator is in use).
+  if (!GetIt.I.isRegistered<RemoteConfigRepoInt>()) {
+    GetIt.I.registerLazySingleton<RemoteConfigRepoInt>(
+      () => RemoteConfigRepoMockImpl(allDefaults),
+    );
+  }
 }
 
 /// Force refresh Remote Config values (useful for debugging)

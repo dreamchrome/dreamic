@@ -1,3 +1,106 @@
+## 0.9.0
+
+### Splash-first startup gate + bootstrap pipeline (breaking)
+
+Inverts cold-start so a **branded splash paints on the first frame** and the init
+chain runs behind it, eliminating the multi-second white launch screen. Adds a
+router-agnostic app-init gate, a retry-host, a branded splash widget with a
+seamless native→Flutter handoff, a bootstrap pipeline with two-phase error
+handling, and consolidates version gating onto the shell. This is a breaking 0.x
+minor — consumers opt in by bumping to `^0.9.0`.
+
+**Raised SDK baseline (breaking):** the minimum is now **Flutter 3.44.0+ /
+Dart 3.12.0+** (previously Flutter 3.41.0 / Dart 3.11.0). This was required by the
+new `flutter_native_splash 2.4.8` runtime dependency, which needs `meta ^1.18.0` —
+a constraint Flutter 3.41.x's `flutter_test` (pinned `meta 1.17.0`) cannot satisfy.
+Apps depending on `dreamic` must now be on Flutter 3.44.0+ / Dart 3.12.0+.
+
+* Minimum environment raised to `sdk: ^3.12.0` and `flutter: ">=3.44.0"`.
+
+**New public API:**
+
+* `DreamicAppInitHost` — the canonical `runApp()` argument. Shows a `splash` while
+  the bootstrap `Future` runs, mounts `child` (your `*App.router`) on success, and
+  shows error UI with a `retry` on failure. Owns the retry state (a fresh `Key` +
+  `Future` per generation; `initFutureFactory` is called once per generation, never
+  on a plain rebuild). `errorBuilder` is optional — omitted, the gate shows a
+  built-in default error widget (`ErrorWidget` in debug, `SizedBox.shrink()` in
+  release).
+* `DreamicAppInitGate` — the single-shot gate primitive (relocated from
+  `router_arc`, router-agnostic). Holds the splash until
+  `max(initFuture, minimumSplashDuration)` on success, but shows the error widget
+  **immediately** on failure/timeout (the min-hold gates only success→child). On
+  init error it `loge()`s + reports before showing the error widget (a handled
+  `.then(onError:)` async error otherwise bypasses the global handlers). Wraps its
+  splash/error branches in a default `Directionality` so they render above your
+  `*App.router` with no inherited localizations.
+* `DreamicSplash` — a plain, branded splash widget that owns the native→Flutter
+  handoff. Removes the native launch screen once its logo is **decoded** (no
+  background-only flash), bounded by a safety timeout, routed through a single
+  at-most-once guard across its three trigger paths (decode listener, timeout,
+  `dispose`). `const DreamicSplash()` works with zero config when both it and your
+  `flutter_native_splash:` codegen point at `assets/splash_logo.png`. Supports a
+  custom `child`, an animated-logo `Widget`, and an optional `removeNativeSplashWhen`
+  readiness hook.
+* `dreamicBootstrap()` — runs the init chain (Firebase → error backend attach +
+  buffer flush → remote config → app configs → emulator → `DreamicServices.initialize`
+  → `appInitAppCubit`) **behind the splash**, with four ordered hook seams
+  (`afterFirebaseInit`, `registerBeforeServices`, `registerAfterServices`,
+  `captureEntryIntents`). Composes an outer hang-timeout (`bootstrapTimeout`,
+  default 45s, nullable to disable). Every dreamic-core step is idempotent so a
+  gate retry recovers. `appInitAppCubit` now runs inside `dreamicBootstrap()` — you
+  no longer call it yourself.
+* `installEarlyErrorHandlers()` — synchronous pre-`runApp` early error handlers
+  that buffer errors (bounded, drop-oldest, ~50 cap) before Crashlytics attaches;
+  `appInitErrorHandling()` flushes the buffer to the reporter once it attaches.
+
+**Removed (breaking):**
+
+* `appRunIfValidVersion` (the `runApp`-wrapper) and `OutdatedApp` / `OutdatedAppPage`
+  (the startup-gate page) are **deleted**, along with their barrel exports. A too-old
+  app is now blocked by the shell's existing `AppStatus.updateRequired` →
+  `AppUpdateDialog` path (reading the same `minimumAppVersionRequired*` Remote Config
+  keys), which now also fires at cold start. `appIsVersionValid` is retained (it
+  backs `AppVersionUpdateService`).
+
+**Contract changes:**
+
+* **Sticky `updateRequired`.** The version-update emission now reaches a live
+  listener at cold start (the `AppCubit` version-update subscriber is attached
+  **before** `AppVersionUpdateService().initialize()`), and `AppStatus.updateRequired`
+  is now **sticky**: no startup-status downgrade (`_finalizeAppStartup`'s `normal`,
+  both `networkError` emits, the `error` emits) overwrites it — so a too-old app
+  stays blocked even offline. A mid-session Remote Config change that lowers the
+  minimum lifts the block in-session (a `VersionUpdateType.none` event transitions
+  `updateRequired → normal`). Without this, deleting `appRunIfValidVersion` would
+  have left too-old users unblocked at launch.
+* **`DreamicServices.initialize` re-entrancy.** On a failure it now disposes **and
+  unregisters** its just-constructed/early-registered services before rethrowing, and
+  early-returns the cached result when already initialized — so a gate retry recovers
+  cleanly without accumulating duplicate `authStateChanges`/FCM/lifecycle
+  subscriptions and resolves the retry's live (not disposed) instances.
+  `NotificationService.initialize()` recreates its `_badgeCountController` if a prior
+  `dispose()` closed it (so `badgeCountStream` is live post-recovery), and
+  `DeviceServiceImpl` gains a public `dispose()` teardown.
+* **`addOnAuthenticatedCallback` replay-on-register.** A callback added *after* the
+  initial auth event has been delivered while a user is authenticated is now invoked
+  once (via `scheduleMicrotask`) with the current uid — so an auth-lifecycle callback
+  registered behind the gate (e.g. in `registerAfterServices`) still fires for an
+  already-signed-in user on warm start. `onAuthenticated`-only (logout is not
+  replayed).
+
+**Dependencies:**
+
+* `flutter_native_splash: ^2.4.8` added under `dependencies:` (runtime
+  `preserve`/`remove` API used by `DreamicSplash`). Apps that run the native splash
+  codegen also add it as a direct `dev_dependency`.
+
+**Consumer migration (one-liner):** replace
+`appRunIfValidVersion(() => const MyApp());` with
+`runApp(DreamicAppInitHost(initFutureFactory: () => dreamicBootstrap(...), splash: const DreamicSplash(), child: const MyApp()));`
+and wire `AppVersionUpdateService` on your shell for the too-old block. See
+`dreamic-initial-setup.md` Section 6 for the full canonical `main.dart`.
+
 ## 0.8.0
 
 ### Dependency upgrades and raised SDK baseline

@@ -26,6 +26,16 @@ Future<AppCubit> appInitAppCubit({
   bool networkRequired = true,
   Uri? entranceUri,
 }) async {
+  // Idempotency (gate-retry re-run): if an AppCubit is already registered,
+  // early-return it. Do NOT construct a throwaway cubit or redundantly re-run
+  // getInitialData()'s network check — getInitialData() is `_hasInitialized`-
+  // guarded internally, so a second call would be a wasted network round-trip
+  // and a bare re-`registerSingleton` would throw "already registered"
+  // (Issue 17/39 idempotency).
+  if (GetIt.I.isRegistered<AppCubit>()) {
+    return GetIt.I.get<AppCubit>();
+  }
+
   final appCubit = AppCubit(
     networkRequired: networkRequired,
     entranceUri: entranceUri,

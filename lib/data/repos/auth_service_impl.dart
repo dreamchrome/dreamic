@@ -48,6 +48,35 @@ class AuthServiceImpl implements AuthServiceInt {
     int priority = 0,
   }) {
     _onAuthenticatedByPriority.putIfAbsent(priority, () => []).add(callback);
+
+    // Replay-on-register (BehaviorSubject semantics, Issue 99).
+    //
+    // When the init chain moved behind the app-init gate, a callback registered
+    // AFTER DreamicServices.initialize (because its target services are
+    // constructed post-init — e.g. a RevenueCat / tiering / user-doc service)
+    // could miss the warm-start auth event, which is delivered DURING
+    // initialize's await. To keep a late onAuthenticated subscriber working, if
+    // the initial auth event has already been delivered AND a user is currently
+    // authenticated, replay it once for this callback.
+    //
+    // Gate on the STREAM-EVENT flags (_hasAuthStateChangeListenerRunAtLeastOnce
+    // + _lastDeliveredAuthUid), NOT on currentFbUser — FirebaseAuth.currentUser
+    // is populated synchronously from cache before the stream's first event, so
+    // gating on it would replay AND then the listener event would fire again
+    // (double-invoke). onAuthenticated ONLY — replaying logout (see
+    // addOnLoggedOutCallback) would destructively tear down un-set-up state.
+    if (_hasAuthStateChangeListenerRunAtLeastOnce &&
+        _lastDeliveredAuthUid != null) {
+      final uid = _lastDeliveredAuthUid;
+      scheduleMicrotask(() async {
+        try {
+          await callback(uid);
+        } catch (e, stackTrace) {
+          loge(e, 'onAuthenticated replay-on-register callback failed',
+              stackTrace);
+        }
+      });
+    }
   }
 
   @override
@@ -104,6 +133,24 @@ class AuthServiceImpl implements AuthServiceInt {
 
   // bool _hasGottenUserPrivate = false;
   bool _hasAuthStateChangeListenerRunAtLeastOnce = false;
+
+  /// The uid of the most recently DELIVERED auth event (set from `fbUser.uid`
+  /// in [handleAuthStateChanges]'s non-null branch; cleared to `null` on the
+  /// null/logout branch). Backs the replay-on-register gate in
+  /// [addOnAuthenticatedCallback] (Issue 99) — distinct from
+  /// [currentFbUser]/`FirebaseAuth.currentUser` which is populated synchronously
+  /// from cache before the stream's first event.
+  String? _lastDeliveredAuthUid;
+
+  /// Resets the replay-on-register gate fields so idempotency/replay unit tests
+  /// are order-independent (module-level statics persist across cases in one VM;
+  /// see Issue 63). Call from the relevant tests' `setUp()`.
+  @visibleForTesting
+  void resetReplayOnRegisterStateForTest() {
+    _hasAuthStateChangeListenerRunAtLeastOnce = false;
+    _lastDeliveredAuthUid = null;
+  }
+
   String? _accessCodeCached;
   final StreamController<bool> _isLoggedInStreamController = StreamController<bool>.broadcast();
 
@@ -358,6 +405,9 @@ class AuthServiceImpl implements AuthServiceInt {
       logd('fbUser is null during handleAuthStateChanges');
       _updateCachedState(false);
       _hasAuthStateChangeListenerRunAtLeastOnce = true;
+      // Clear the delivered-uid so a later addOnAuthenticatedCallback does NOT
+      // replay onAuthenticated while logged out (Issue 99).
+      _lastDeliveredAuthUid = null;
 
       // Emit to the stream
       _isLoggedInStreamController.add(false);
@@ -372,6 +422,9 @@ class AuthServiceImpl implements AuthServiceInt {
       logd('fbUser is NOT null during handleAuthStateChanges');
       _updateCachedState(true);
       _hasAuthStateChangeListenerRunAtLeastOnce = true;
+      // Carry the uid from the DELIVERED event (not currentFbUser) so a later
+      // addOnAuthenticatedCallback replays with the correct uid (Issue 99).
+      _lastDeliveredAuthUid = fbUser.uid;
 
       // Emit to the stream
       _isLoggedInStreamController.add(true);

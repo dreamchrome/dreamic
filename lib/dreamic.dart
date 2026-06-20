@@ -3,10 +3,15 @@ export 'app/app_cubit.dart';
 export 'app/app_root_widget.dart';
 export 'app/app_config_base.dart';
 
+// App Startup
+export 'app/startup/dreamic_app_init_gate.dart';
+export 'app/startup/dreamic_app_init_host.dart';
+export 'app/startup/dreamic_splash.dart';
+export 'app/startup/dreamic_bootstrap.dart';
+
 // Presentation Components
 export 'presentation/network_error_widget.dart';
 export 'presentation/app_state_wrapper.dart';
-export 'presentation/outdated_app_page.dart';
 
 // Presentation Elements
 export 'presentation/elements/error_message_widget.dart';
@@ -37,7 +42,6 @@ export 'presentation/helpers/adaptive_icons.dart';
 export 'versioning/app_version_update_service.dart';
 export 'app/helpers/app_lifecycle_service.dart';
 export 'app/helpers/app_remote_config_init.dart';
-export 'app/helpers/app_version_handler.dart';
 export 'error_reporting/error_reporter_interface.dart';
 export 'app/helpers/app_errorhandling_init.dart';
 export 'app/helpers/app_configs_init.dart';

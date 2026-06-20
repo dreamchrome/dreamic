@@ -179,6 +179,18 @@ class DreamicServices {
   }) async {
     logd('DreamicServices: Starting initialization');
 
+    // Re-entrancy — early-return the cached result when already fully
+    // initialized (Issue 47 part 2). The app-init gate retry re-runs the whole
+    // bootstrap chain; a fatal failure in a LATER bootstrap step (after
+    // DreamicServices itself succeeded) must not re-construct/re-subscribe these
+    // services. Backed by a static cache (reset via
+    // [resetDreamicServicesInitializedForTest] / the dreamic bootstrap reset,
+    // Issue 75) so it survives `GetIt.reset()`-independent re-runs in one VM.
+    if (_cachedResult != null) {
+      logd('DreamicServices: Already initialized — returning cached result');
+      return _cachedResult!;
+    }
+
     // 1. Create services first (no auth connection yet)
     final DeviceServiceImpl? deviceService =
         enableDeviceService ? DeviceServiceImpl() : null;
@@ -200,125 +212,204 @@ class DreamicServices {
       }
     }
 
-    // 3. Collect callbacks with priorities
-    //    Device and Notification services provide public handlers that can be
-    //    passed directly to AuthService constructor.
-    //
-    //    Default priority is 0 for core services. Custom callbacks can specify
-    //    their own priority via PrioritizedCallback.
-    final onAuthenticatedPrioritized =
-        <PrioritizedCallback<Future<void> Function(String? uid)>>[
-      if (deviceService != null)
-        PrioritizedCallback(deviceService.handleAuthenticated, priority: 0),
-      if (notificationService != null)
-        PrioritizedCallback(
-            notificationService.handleAuthenticated,
-            priority: 0),
-      ...?onAuthenticatedCallbacks,
-    ];
+    // Re-entrancy — on ANY failure from here on, dispose AND unregister the
+    // just-constructed/early-registered services before rethrowing (Issue
+    // 47/52/56), so a gate retry re-registers fresh, live instances rather than
+    // accumulating orphaned auth/FCM/lifecycle subscriptions or serving disposed
+    // ones. The unregister is load-bearing: device/notif register EARLY (above)
+    // while auth registers LAST (step 6), so the canonical `Future.wait` failure
+    // leaves device/notif registered — dispose-only would make the retry's
+    // `isRegistered` guard serve disposed instances. Auth needs no unregister
+    // (it registers after the failure point, so it was never registered).
+    // Holds the AuthService once constructed, so the catch handler can dispose
+    // it on a post-construction failure.
+    AuthServiceImpl? auth;
+    try {
+      // 3. Collect callbacks with priorities
+      //    Device and Notification services provide public handlers that can be
+      //    passed directly to AuthService constructor.
+      //
+      //    Default priority is 0 for core services. Custom callbacks can specify
+      //    their own priority via PrioritizedCallback.
+      final onAuthenticatedPrioritized =
+          <PrioritizedCallback<Future<void> Function(String? uid)>>[
+        if (deviceService != null)
+          PrioritizedCallback(deviceService.handleAuthenticated, priority: 0),
+        if (notificationService != null)
+          PrioritizedCallback(
+              notificationService.handleAuthenticated,
+              priority: 0),
+        ...?onAuthenticatedCallbacks,
+      ];
 
-    final onAboutToLogOutPrioritized =
-        <PrioritizedCallback<Future<void> Function()>>[
-      if (deviceService != null)
-        PrioritizedCallback(deviceService.handleAboutToLogOut, priority: 0),
-      if (notificationService != null)
-        PrioritizedCallback(
-            notificationService.handleAboutToLogOut,
-            priority: 0),
-      ...?onAboutToLogOutCallbacks,
-    ];
+      final onAboutToLogOutPrioritized =
+          <PrioritizedCallback<Future<void> Function()>>[
+        if (deviceService != null)
+          PrioritizedCallback(deviceService.handleAboutToLogOut, priority: 0),
+        if (notificationService != null)
+          PrioritizedCallback(
+              notificationService.handleAboutToLogOut,
+              priority: 0),
+        ...?onAboutToLogOutCallbacks,
+      ];
 
-    final onLoggedOutPrioritized =
-        <PrioritizedCallback<Future<void> Function()>>[
-      ...?onLoggedOutCallbacks,
-    ];
+      final onLoggedOutPrioritized =
+          <PrioritizedCallback<Future<void> Function()>>[
+        ...?onLoggedOutCallbacks,
+      ];
 
-    logd('DreamicServices: Collected ${onAuthenticatedPrioritized.length} '
-        'onAuthenticated callbacks, ${onAboutToLogOutPrioritized.length} '
-        'onAboutToLogOut callbacks, ${onLoggedOutPrioritized.length} '
-        'onLoggedOut callbacks');
+      logd('DreamicServices: Collected ${onAuthenticatedPrioritized.length} '
+          'onAuthenticated callbacks, ${onAboutToLogOutPrioritized.length} '
+          'onAboutToLogOut callbacks, ${onLoggedOutPrioritized.length} '
+          'onLoggedOut callbacks');
 
-    // 4. Create AuthService with callbacks pre-registered
-    //    CRITICAL: Callbacks are registered in AuthService constructor BEFORE
-    //    Firebase listeners attach. This ensures no auth events are missed,
-    //    even on warm start when user is already logged in.
-    final auth = AuthServiceImpl(
-      firebaseApp: firebaseApp,
-      onAuthenticatedPrioritized: onAuthenticatedPrioritized,
-      onAboutToLogOutPrioritized: onAboutToLogOutPrioritized,
-      onLoggedOutPrioritized: onLoggedOutPrioritized,
-    );
+      // 4. Create AuthService with callbacks pre-registered
+      //    CRITICAL: Callbacks are registered in AuthService constructor BEFORE
+      //    Firebase listeners attach. This ensures no auth events are missed,
+      //    even on warm start when user is already logged in.
+      auth = AuthServiceImpl(
+        firebaseApp: firebaseApp,
+        onAuthenticatedPrioritized: onAuthenticatedPrioritized,
+        onAboutToLogOutPrioritized: onAboutToLogOutPrioritized,
+        onLoggedOutPrioritized: onLoggedOutPrioritized,
+      );
 
-    logd('DreamicServices: Created AuthService with pre-registered callbacks');
+      logd('DreamicServices: Created AuthService with pre-registered callbacks');
 
-    // 5. Initialize services with auth reference IN PARALLEL
-    //    CRITICAL: All initialize() calls must START synchronously before any awaits.
-    //    This ensures all services have _authService set before microtasks can run.
-    //
-    //    See: "Constraint 2: Parallel service initialization" in plan.auth-race.md
-    //
-    //    WRONG (race condition):
-    //      await deviceService.initialize(authService: auth);     // Yields here!
-    //      await notificationService.initialize(authService: auth); // Too late
-    //
-    //    RIGHT (race-free):
-    //      await Future.wait([
-    //        deviceService.initialize(authService: auth),
-    //        notificationService.initialize(authService: auth),
-    //      ]);
-    // Resolve the effective FCM token-changed callback.
-    //
-    // When the consuming app didn't provide one explicitly AND both
-    // DeviceService and NotificationService are enabled, default to delegating
-    // to DeviceService.persistFcmToken. Without this, the silent FCM-token
-    // capture path in NotificationService._handleLogin (when the user has
-    // already granted permission and fcmAutoInitialize is false) would never
-    // persist the token to the device document.
-    final effectiveOnTokenChanged = onTokenChanged ??
-        (deviceService != null && notificationService != null
-            ? defaultTokenChangedCallback(deviceService)
-            : null);
+      // 5. Initialize services with auth reference IN PARALLEL
+      //    CRITICAL: All initialize() calls must START synchronously before any awaits.
+      //    This ensures all services have _authService set before microtasks can run.
+      //
+      //    See: "Constraint 2: Parallel service initialization" in plan.auth-race.md
+      //
+      //    WRONG (race condition):
+      //      await deviceService.initialize(authService: auth);     // Yields here!
+      //      await notificationService.initialize(authService: auth); // Too late
+      //
+      //    RIGHT (race-free):
+      //      await Future.wait([
+      //        deviceService.initialize(authService: auth),
+      //        notificationService.initialize(authService: auth),
+      //      ]);
+      // Resolve the effective FCM token-changed callback.
+      //
+      // When the consuming app didn't provide one explicitly AND both
+      // DeviceService and NotificationService are enabled, default to delegating
+      // to DeviceService.persistFcmToken. Without this, the silent FCM-token
+      // capture path in NotificationService._handleLogin (when the user has
+      // already granted permission and fcmAutoInitialize is false) would never
+      // persist the token to the device document.
+      final effectiveOnTokenChanged = onTokenChanged ??
+          (deviceService != null && notificationService != null
+              ? defaultTokenChangedCallback(deviceService)
+              : null);
 
-    final futures = <Future<void>>[];
-    if (deviceService != null) {
-      futures.add(deviceService.initialize(authService: auth));
+      final futures = <Future<void>>[];
+      if (deviceService != null) {
+        futures.add(deviceService.initialize(authService: auth));
+      }
+      if (notificationService != null) {
+        futures.add(notificationService.initialize(
+          authService: auth,
+          onNotificationTapped: onNotificationTapped,
+          onNotificationAction: onNotificationAction,
+          onForegroundMessage: onForegroundMessage,
+          onError: onError,
+          onTokenChanged: effectiveOnTokenChanged,
+          showNotificationsInForeground: showNotificationsInForeground,
+          reminderIntervalDays: reminderIntervalDays,
+          // We're handling auth connection directly, disable legacy auto-connect
+          // ignore: deprecated_member_use_from_same_package
+          autoConnectAuth: false,
+        ));
+      }
+
+      if (futures.isNotEmpty) {
+        await Future.wait(futures);
+        logd('DreamicServices: Completed parallel service initialization');
+      }
+
+      // 6. Register auth in GetIt (after services are initialized)
+      //    Auth is registered last because services may need to be resolved
+      //    during AuthService's initial auth state callbacks.
+      if (registerInGetIt && !GetIt.I.isRegistered<AuthServiceInt>()) {
+        GetIt.I.registerSingleton<AuthServiceInt>(auth);
+        logd('DreamicServices: Registered AuthServiceInt in GetIt');
+      }
+
+      logd('DreamicServices: Initialization complete');
+
+      final result = DreamicServicesResult(
+        auth: auth,
+        deviceService: deviceService,
+        notificationService: notificationService,
+      );
+      // Cache for the already-initialized early-return on a later-step retry.
+      _cachedResult = result;
+      return result;
+    } catch (e, stackTrace) {
+      loge(e, 'DreamicServices: initialization failed — disposing and '
+          'unregistering partially-initialized services before rethrow',
+          stackTrace);
+
+      // Dispose the just-constructed services to cancel their auth/FCM/lifecycle
+      // subscriptions, so a retry does not accumulate orphaned listeners.
+      try {
+        await notificationService?.dispose();
+      } catch (disposeErr) {
+        loge(disposeErr, 'DreamicServices: NotificationService.dispose failed '
+            'during init-failure cleanup');
+      }
+      try {
+        await deviceService?.dispose();
+      } catch (disposeErr) {
+        loge(disposeErr, 'DreamicServices: DeviceServiceImpl.dispose failed '
+            'during init-failure cleanup');
+      }
+      // Auth registers LAST (step 6), so on the canonical Future.wait failure it
+      // was never registered; dispose it anyway if it was constructed.
+      try {
+        auth?.dispose();
+      } catch (disposeErr) {
+        loge(disposeErr, 'DreamicServices: AuthServiceImpl.dispose failed '
+            'during init-failure cleanup');
+      }
+
+      // Unregister the EARLY-registered device/notif so the retry's
+      // `isRegistered` guard re-registers fresh, live instances rather than
+      // serving the disposed ones (Issue 52). Only unregister if the registered
+      // instance is the one we just constructed (guards against unregistering an
+      // already-good instance from a prior successful run).
+      if (registerInGetIt) {
+        if (deviceService != null &&
+            GetIt.I.isRegistered<DeviceServiceInt>() &&
+            identical(GetIt.I<DeviceServiceInt>(), deviceService)) {
+          GetIt.I.unregister<DeviceServiceInt>();
+          logd('DreamicServices: Unregistered DeviceServiceInt after failure');
+        }
+        if (notificationService != null &&
+            GetIt.I.isRegistered<NotificationService>() &&
+            identical(GetIt.I<NotificationService>(), notificationService)) {
+          GetIt.I.unregister<NotificationService>();
+          logd('DreamicServices: Unregistered NotificationService after failure');
+        }
+      }
+
+      rethrow;
     }
-    if (notificationService != null) {
-      futures.add(notificationService.initialize(
-        authService: auth,
-        onNotificationTapped: onNotificationTapped,
-        onNotificationAction: onNotificationAction,
-        onForegroundMessage: onForegroundMessage,
-        onError: onError,
-        onTokenChanged: effectiveOnTokenChanged,
-        showNotificationsInForeground: showNotificationsInForeground,
-        reminderIntervalDays: reminderIntervalDays,
-        // We're handling auth connection directly, disable legacy auto-connect
-        // ignore: deprecated_member_use_from_same_package
-        autoConnectAuth: false,
-      ));
-    }
+  }
 
-    if (futures.isNotEmpty) {
-      await Future.wait(futures);
-      logd('DreamicServices: Completed parallel service initialization');
-    }
+  /// Cached result of a successful [initialize], backing the re-entrancy
+  /// early-return (Issue 47). `null` until the first successful init.
+  static DreamicServicesResult? _cachedResult;
 
-    // 6. Register auth in GetIt (after services are initialized)
-    //    Auth is registered last because services may need to be resolved
-    //    during AuthService's initial auth state callbacks.
-    if (registerInGetIt && !GetIt.I.isRegistered<AuthServiceInt>()) {
-      GetIt.I.registerSingleton<AuthServiceInt>(auth);
-      logd('DreamicServices: Registered AuthServiceInt in GetIt');
-    }
-
-    logd('DreamicServices: Initialization complete');
-
-    return DreamicServicesResult(
-      auth: auth,
-      deviceService: deviceService,
-      notificationService: notificationService,
-    );
+  /// Resets the "already-initialized" early-return cache so idempotency /
+  /// re-entrancy unit tests are order-independent (Issue 75). The documented
+  /// `@visibleForTesting` entry point is `resetDreamicBootstrapIdempotencyForTest()`
+  /// (which calls this) — not `@visibleForTesting` itself so the combined reset
+  /// can call it without a cross-file visibility-lint warning.
+  static void resetDreamicServicesInitializedForTest() {
+    _cachedResult = null;
   }
 
   /// Builds the default FCM token-changed callback used by [initialize] when

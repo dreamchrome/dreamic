@@ -138,7 +138,12 @@ class NotificationService {
   // Streams
   StreamSubscription<RemoteMessage>? _foregroundSubscription;
   StreamSubscription<RemoteMessage>? _openedAppSubscription;
-  final StreamController<int> _badgeCountController = StreamController<int>.broadcast();
+  // Not `final`: [dispose] closes this controller and [initialize] recreates it
+  // when it has been closed, so the factory-singleton survives a dispose→re-init
+  // recovery cycle (app-init gate retry, Issue 56). Without recreation,
+  // [badgeCountStream] would be dead post-recovery and a later
+  // [updateBadgeCount] `add()` would throw on the closed controller.
+  StreamController<int> _badgeCountController = StreamController<int>.broadcast();
   int _currentBadgeCount = 0;
 
   // Permission helper (owns all permission-related SharedPreferences keys)
@@ -350,6 +355,13 @@ class NotificationService {
       _isConnectedToAuthService = true;
       logd('NotificationService: Initialized with auth service (race-free path)');
     }
+
+    // Re-init recovery (Issue 56): this is a factory-singleton reused across
+    // app-init gate retries; a prior [dispose] (on the dispose-on-failure path)
+    // closes [_badgeCountController]. Recreate it before re-running setup so
+    // [badgeCountStream] is live post-recovery and a later [updateBadgeCount]
+    // `add()` does not throw on the closed controller.
+    _recreateBadgeControllerIfClosed();
 
     if (_initialized) {
       logi('NotificationService already initialized');
@@ -2476,6 +2488,18 @@ class NotificationService {
     return _currentBadgeCount;
   }
 
+  /// Recreates [_badgeCountController] when a prior [dispose] closed it, so the
+  /// factory-singleton survives a dispose→re-init recovery cycle (app-init gate
+  /// retry, Issue 56). Without recreation, [badgeCountStream] would be dead
+  /// post-recovery and a later [updateBadgeCount] `add()` would silently drop
+  /// (the `isClosed` guard) on the closed controller.
+  void _recreateBadgeControllerIfClosed() {
+    if (_badgeCountController.isClosed) {
+      _badgeCountController = StreamController<int>.broadcast();
+      logd('NotificationService: Recreated closed badge-count controller');
+    }
+  }
+
   /// Disposes of the service and cleans up resources.
   Future<void> dispose() async {
     await _foregroundSubscription?.cancel();
@@ -2580,6 +2604,15 @@ class NotificationService {
   @visibleForTesting
   static void resetForTesting() {
     _instance = null;
+  }
+
+  /// Runs the badge-controller re-init recovery (Issue 56) in isolation so the
+  /// dispose→re-init contract is unit-testable without the platform-heavy full
+  /// [initialize] (FCM + local-notifications channels). Mirrors exactly what
+  /// [initialize] does at its top.
+  @visibleForTesting
+  void recreateBadgeControllerIfClosedForTesting() {
+    _recreateBadgeControllerIfClosed();
   }
 
   // -- Test overrides for Firebase-dependent methods --

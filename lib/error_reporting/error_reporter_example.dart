@@ -92,7 +92,16 @@ void exampleMainSentryWrapper() async {
         options.release = await AppConfigBase.getReleaseId();
         options.tracesSampleRate = 1.0;
       },
-      appRunner: () => appRunIfValidVersion(() => MyApp()),
+      // Bootstrap runs behind the branded splash via DreamicAppInitHost; the
+      // too-old-version block is now handled by the shell AppStatus.updateRequired
+      // path (appRunIfValidVersion / OutdatedApp were removed in 0.9.0).
+      appRunner: () => runApp(
+        DreamicAppInitHost(
+          initFutureFactory: () => dreamicBootstrap(/* firebaseOptions, hooks, ... */),
+          splash: const DreamicSplash(),
+          child: MyApp(),
+        ),
+      ),
     );
   }
   */
@@ -238,7 +247,16 @@ void exampleMain() async {
       options.release = await AppConfigBase.getReleaseId();
       options.tracesSampleRate = 1.0;
     },
-    appRunner: () => appRunIfValidVersion(() => MyApp()),
+    // Bootstrap runs behind the branded splash via DreamicAppInitHost; the
+    // too-old-version block is now handled by the shell AppStatus.updateRequired
+    // path (appRunIfValidVersion / OutdatedApp were removed in 0.9.0).
+    appRunner: () => runApp(
+      DreamicAppInitHost(
+        initFutureFactory: () => dreamicBootstrap(/* firebaseOptions, hooks, ... */),
+        splash: const DreamicSplash(),
+        child: MyApp(),
+      ),
+    ),
   );
   return; // Exit main - app is running
   */

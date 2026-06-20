@@ -1468,6 +1468,16 @@ class DeviceServiceImpl implements DeviceServiceInt {
     logd('DeviceService: Disconnected from lifecycle service');
   }
 
+  /// Public teardown that cancels the lifecycle subscription (Issue 56).
+  ///
+  /// Needed so the dispose-on-failure path in [DreamicServices.initialize] has a
+  /// callable teardown for a freshly-constructed device service — previously
+  /// only the private [_disconnectFromLifecycleService] existed. Idempotent
+  /// (cancelling an already-cancelled subscription is a no-op).
+  Future<void> dispose() async {
+    await _disconnectFromLifecycleService();
+  }
+
   /// Handles app lifecycle state changes.
   ///
   /// On resume from background:

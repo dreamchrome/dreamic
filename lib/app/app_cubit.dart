@@ -123,7 +123,9 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       }
     } catch (e) {
       loge(e, 'Error in getInitialData');
-      emitSafe(state.copyWith(
+      // Sticky-guarded (Issue 91): defensively, a too-old block must survive a
+      // startup error path too.
+      _emitStartupStatus(state.copyWith(
         appStatus: AppStatus.error,
         networkErrorMessage: 'Failed to initialize app: ${e.toString()}',
       ));
@@ -134,10 +136,15 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
     try {
       logd('Initializing version update service');
 
-      // Initialize the version update service
-      await AppVersionUpdateService().initialize();
-
-      // Subscribe to version update notifications
+      // Subscribe to version update notifications BEFORE initialize() (Issue 80).
+      //
+      // updateStream is a `.broadcast()` controller that drops events with no
+      // listener at emit time. The startup `checkVersionUpdate()` emission fires
+      // *inside* initialize(); subscribing afterwards (the previous ordering)
+      // sent the cold-start emission to zero listeners and lost it, so a too-old
+      // app was never blocked at cold start once `appRunIfValidVersion` is gone.
+      // The stream getter is valid from controller field-init, so early
+      // subscription is safe; this attaches a live listener before the emit.
       _versionUpdateSubscription = AppVersionUpdateService().updateStream.listen(
         (versionUpdateInfo) {
           _handleVersionUpdate(versionUpdateInfo);
@@ -146,9 +153,45 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
           loge('Error in version update stream: $error');
         },
       );
+
+      // Initialize the version update service (emits the startup version check
+      // to the now-live listener above).
+      await AppVersionUpdateService().initialize();
     } catch (e) {
       loge('Error initializing version update service: $e');
     }
+  }
+
+  /// Sticky-`updateRequired` guarded status setter for the **startup**
+  /// status-machine downgrade sites (Issues 88/91).
+  ///
+  /// Once a too-old version sets [AppStatus.updateRequired] at cold start, no
+  /// startup-path emit may downgrade it — otherwise `_finalizeAppStartup()`'s
+  /// `normal`, either `_initializeNetworkChecking` `networkError` emit (incl.
+  /// the network-init-exception `catch`-branch — load-bearing: its retry would
+  /// otherwise unblock a too-old offline app, Issue 91), or the two `error`
+  /// emits would clobber the block deterministically (the async-broadcast
+  /// version emission is delivered before these continuations run; microtask
+  /// FIFO).
+  ///
+  /// All such startup downgrade sites route through this single setter rather
+  /// than scattering per-site `if (state.appStatus == updateRequired)` clauses,
+  /// because per-site enumeration demonstrably misses a site (Issue 91). The
+  /// **only** sanctioned exit from `updateRequired` is the version-now-valid
+  /// transition in [_handleVersionUpdate]'s `none` branch (Issue 114), which
+  /// emits directly and is intentionally NOT routed through this guard.
+  ///
+  /// Runtime/overlay emits (retry/reload/overlay methods) need no guard —
+  /// `AppUpdateDialog` replaces the whole tree once `updateRequired` is set, so
+  /// they are unreachable while blocked.
+  void _emitStartupStatus(AppState newState) {
+    if (state.appStatus == AppStatus.updateRequired &&
+        newState.appStatus != AppStatus.updateRequired) {
+      logd('🔒 Refusing startup-status downgrade from updateRequired to '
+          '${newState.appStatus} (sticky version block)');
+      return;
+    }
+    emitSafe(newState);
   }
 
   void _handleVersionUpdate(VersionUpdateInfo updateInfo) {
@@ -171,14 +214,47 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
         showVersionUpdateBanner: true,
       ));
     } else {
-      // No update needed, clear any previous update state
+      // No update needed, clear any previous update state.
       logv('✨ No update needed, clearing version update state');
-      emitSafe(state.copyWith(
-        versionUpdateInfo: updateInfo,
-        showVersionUpdateBanner: false,
-      ));
+      // Version-now-valid exit (Issue 114): the sticky guard's single exempted
+      // transition. A mid-session Remote Config change lowering
+      // `minimumAppVersionRequired*` makes a running too-old app retroactively
+      // valid; dreamic's RC-update listener re-runs checkVersionUpdate() →
+      // VersionUpdateType.none. Lift the block in-session ONLY when currently
+      // blocked (conditional, so it cannot clobber networkError/overlay/error),
+      // and emit directly — this is the guard's exempted exit, never routed
+      // through _emitStartupStatus.
+      if (state.appStatus == AppStatus.updateRequired) {
+        logd('✅ Version now valid - lifting updateRequired block in-session');
+        emitSafe(state.copyWith(
+          appStatus: AppStatus.normal,
+          versionUpdateInfo: updateInfo,
+          showVersionUpdateBanner: false,
+        ));
+      } else {
+        emitSafe(state.copyWith(
+          versionUpdateInfo: updateInfo,
+          showVersionUpdateBanner: false,
+        ));
+      }
     }
   }
+
+  /// Test-only seam: deliver a [VersionUpdateInfo] to the version-update handler
+  /// without driving the real (platform-coupled) [AppVersionUpdateService].
+  ///
+  /// Exercises the required / recommended / none branches and the
+  /// version-now-valid sticky-guard-exempt exit (Issue 114).
+  @visibleForTesting
+  void handleVersionUpdateForTest(VersionUpdateInfo updateInfo) =>
+      _handleVersionUpdate(updateInfo);
+
+  /// Test-only seam: emit a startup-path status through the sticky-`updateRequired`
+  /// guarded setter (Issues 88/91), modelling the cold-start sequence where the
+  /// version microtask sets `updateRequired` before a startup downgrade runs.
+  @visibleForTesting
+  void emitStartupStatusForTest(AppState newState) =>
+      _emitStartupStatus(newState);
 
   Future<void> checkForAppUpdates() async {
     try {
@@ -219,7 +295,7 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
               'Either call appInitFirebase() before creating AppCubit, or set '
               'AppConfigBase.connectionCheckerUrlOverride to a valid health check URL.',
         );
-        emitSafe(state.copyWith(
+        _emitStartupStatus(state.copyWith(
           appStatus: AppStatus.error,
           networkErrorMessage:
               'Network checking configuration error. Please contact support.',
@@ -247,7 +323,9 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
         await _finalizeAppStartup();
       } else {
         logd('Network connection failed during startup');
-        emitSafe(state.copyWith(
+        // Sticky-guarded (Issue 88/89): too-old wins over offline — a too-old
+        // app stays blocked even with no network.
+        _emitStartupStatus(state.copyWith(
           appStatus: AppStatus.networkError,
           networkStatus: NetworkStatus.none,
           networkErrorMessage:
@@ -260,7 +338,11 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
       _subscribeToNetworkChanges();
     } catch (e) {
       loge(e, 'Error initializing network checking');
-      emitSafe(state.copyWith(
+      // Sticky-guarded (Issue 91, load-bearing): on a too-old offline start
+      // where network *init throws* (rather than cleanly returning no-network),
+      // an unguarded downgrade to networkError would show a retry that
+      // (retryNetworkConnection → normal) fully unblocks the too-old app.
+      _emitStartupStatus(state.copyWith(
         appStatus: AppStatus.networkError,
         networkStatus: NetworkStatus.none,
         networkErrorMessage: 'Network initialization failed. Please try again.',
@@ -301,7 +383,9 @@ class AppCubit extends Cubit<AppState> with SafeEmitMixin<AppState> {
 
   Future<void> _finalizeAppStartup() async {
     logd('Initial data fetched, setting app status to normal');
-    emitSafe(state.copyWith(
+    // Sticky-guarded (Issue 88): must not downgrade a cold-start updateRequired
+    // block to normal — the version emission is delivered before this runs.
+    _emitStartupStatus(state.copyWith(
       appStatus: AppStatus.normal,
       showNetworkRetry: false,
       networkErrorMessage: '',

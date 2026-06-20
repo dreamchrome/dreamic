@@ -9,7 +9,9 @@ Future<void> appInitAppConfigsBase() async {
   // ignore: avoid_print
   print('App version info: $version');
   // ignore: avoid_print
-  print('Environment: ${AppConfigBase.environmentTypeString}, Region: ${AppConfigBase.backendRegion}');
+  print(
+    'Environment: ${AppConfigBase.environmentTypeString}, Region: ${AppConfigBase.backendRegion}',
+  );
 
   await AppConfigBase.init();
 

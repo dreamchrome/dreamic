@@ -1,26 +1,26 @@
 name: dreamic
 description: "A general-purpose package for Flutter/Firebase apps."
-version: 0.8.0
+version: 0.9.0
 repository: https://github.com/dreamchrome/dreamic
 issue_tracker: https://github.com/dreamchrome/dreamic/issues
 
 environment:
-  sdk: ^3.11.0
-  flutter: ">=3.41.0"
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
-  firebase_auth: ^6.5.2
-  firebase_storage: ^13.4.2
-  cloud_firestore: ^6.5.0
-  cloud_functions: ^6.3.2
-  firebase_core: ^4.10.0
+  firebase_auth: ^6.5.3
+  firebase_storage: ^13.4.3
+  cloud_firestore: ^6.6.0
+  cloud_functions: ^6.3.3
+  firebase_core: ^4.11.0
 
-  firebase_messaging: ^16.3.0
-  firebase_remote_config: ^6.5.2
-  firebase_crashlytics: ^5.2.3
+  firebase_messaging: ^16.4.0
+  firebase_remote_config: ^6.5.3
+  firebase_crashlytics: ^5.2.4
 
   get_it: ^9.2.1
   bloc: ^9.2.1
@@ -49,6 +49,12 @@ dependencies:
   path: ^1.9.1
   permission_handler: ^12.0.3
   uuid: ^4.5.3
+  # Runtime native-splash preserve()/remove() API consumed by DreamicSplash
+  # (library code), so it is a runtime dependency — NOT a dev_dependency.
+  # Each consuming app that runs `flutter_native_splash:create` additionally
+  # declares it as its own direct dev_dependency (the codegen CLI is only
+  # runnable from a direct dependency, not the transitive copy). (Issue 62)
+  flutter_native_splash: ^2.4.8
 
 dev_dependencies:
   flutter_test:
@@ -62,7 +68,12 @@ dev_dependencies:
   # (e.g. asserting helper methods swallow SP errors). Transitively pulled
   # in via shared_preferences; declared here to make the test-only
   # dependency explicit.
-  shared_preferences_platform_interface: ^2.4.0
+  shared_preferences_platform_interface: ^2.4.2
+  # `setupFirebaseCoreMocks()` for the bootstrap idempotency / timeout tests
+  # (so `Firebase.initializeApp` works under the test runner). Transitively
+  # pulled in via firebase_core; declared here to make the test-only dependency
+  # explicit (same pattern as shared_preferences_platform_interface above).
+  firebase_core_platform_interface: ^7.1.0
 
 
 # For information on the generic Dart part of this file, see the

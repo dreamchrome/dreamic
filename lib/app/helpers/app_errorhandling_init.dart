@@ -9,6 +9,149 @@ import 'package:dreamic/utils/logger.dart';
 /// Global error reporting configuration
 ErrorReportingConfig? _errorReportingConfig;
 
+/// One buffered error captured by the early handlers before the reporter is
+/// attached.
+class _BufferedError {
+  _BufferedError(this.error, this.stackTrace);
+  final Object error;
+  final StackTrace? stackTrace;
+}
+
+/// Maximum number of errors held in the early buffer. A pre-attach crash loop
+/// must not grow the buffer without bound, so the buffer drops the OLDEST
+/// entry once it exceeds this cap (Issue 16/82).
+const int _earlyErrorBufferCap = 50;
+
+/// Module-level, always-initialized (never lazy/nullable) buffer of errors the
+/// early handlers caught BEFORE the reporter attached (Issue 36).
+///
+/// Always-present so the flush at [appInitErrorHandling] is a safe no-op for
+/// apps that call `appInitErrorHandling` WITHOUT [installEarlyErrorHandlers]
+/// (e.g. `mypurposeplan_admin`): the buffer is simply empty and the flush
+/// returns immediately. A lazy/nullable buffer would NPE on their startup.
+/// Capped at [_earlyErrorBufferCap] with drop-oldest semantics.
+final List<_BufferedError> _earlyErrorBuffer = <_BufferedError>[];
+
+/// Apply-once guard for the isolate error-listener registration (Issue 31).
+///
+/// `Isolate.current.addErrorListener` ALLOWS multiple listeners, so each retry
+/// re-run of [appInitErrorHandling] would otherwise accumulate another listener
+/// (a leak — uncaught isolate errors then reported N times). Setting
+/// `FlutterError.onError` / `PlatformDispatcher.onError` is overwrite-idempotent
+/// and needs no guard; only the listener ADD does. Module-level so it survives
+/// across the gate-retry re-runs; reset for tests via
+/// [resetDreamicBootstrapIdempotencyForTest].
+bool _isolateErrorListenerAdded = false;
+
+void _bufferEarlyError(Object error, StackTrace? stackTrace) {
+  _earlyErrorBuffer.add(_BufferedError(error, stackTrace));
+  // Drop-oldest beyond the cap so an unbounded pre-attach crash loop cannot
+  // grow the buffer (Issue 16). removeAt(0) keeps the most-recent [cap] entries.
+  while (_earlyErrorBuffer.length > _earlyErrorBufferCap) {
+    _earlyErrorBuffer.removeAt(0);
+  }
+}
+
+/// Installs synchronous, dependency-free error handlers that BUFFER caught
+/// errors into a bounded module-level list until the reporter attaches.
+///
+/// **Call this as an explicit `main()` line, pre-`runApp`, right after
+/// `WidgetsFlutterBinding.ensureInitialized()`** — never fold it into the
+/// gate/host/bootstrap. A widget's `initState` and the async bootstrap both run
+/// AFTER `runApp`, so folding would install these handlers too late to capture
+/// pre-mount / pre-attach errors (e.g. a `FlutterError` thrown while painting
+/// the splash frame, or an error before Crashlytics attaches inside
+/// `dreamicBootstrap()`).
+///
+/// When [appInitErrorHandling] later runs it FLUSHES (and clears) this buffer
+/// to the attached reporter on every one of its code paths, so nothing caught
+/// in the pre-attach window is lost.
+///
+/// Idempotent: a second call (e.g. a gate-retry re-run of any `main()`-shaped
+/// code) re-installs the same overwrite-idempotent `FlutterError.onError` /
+/// `PlatformDispatcher.onError` handlers and does not duplicate state.
+void installEarlyErrorHandlers() {
+  FlutterError.onError = (FlutterErrorDetails details) {
+    debugPrint('Early Flutter Error: ${details.exceptionAsString()}');
+    debugPrint('Stack trace:\n${details.stack}');
+    _bufferEarlyError(details.exception, details.stack);
+  };
+
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stackTrace) {
+    debugPrint('Early Platform Error: $error');
+    debugPrint('Stack trace:\n$stackTrace');
+    _bufferEarlyError(error, stackTrace);
+    return true;
+  };
+}
+
+/// Flushes every buffered early error to the now-attached reporter, then clears
+/// the buffer.
+///
+/// Routes each buffered error through `loge()` so a single reporting path
+/// (`Logger.error` → `_crashReport` → Crashlytics / custom reporter) covers the
+/// flush — matching how the app-init gate reports its own `onError` (Issue 51).
+///
+/// Safe no-op when [installEarlyErrorHandlers] was never called: the buffer is
+/// always-present and empty in that case (Issue 36).
+void _flushAndClearEarlyErrorBuffer() {
+  if (_earlyErrorBuffer.isEmpty) {
+    return;
+  }
+  // Snapshot then clear FIRST, so a reporter that re-enters (or a concurrent
+  // early handler) cannot re-flush the same entries.
+  final buffered = List<_BufferedError>.of(_earlyErrorBuffer);
+  _earlyErrorBuffer.clear();
+  for (final entry in buffered) {
+    loge(entry.error, 'Buffered early error (pre-reporter-attach)', entry.stackTrace);
+  }
+}
+
+/// Drops every buffered early error WITHOUT reporting (error reporting is
+/// disabled on this path) and clears the buffer.
+///
+/// Safe no-op when [installEarlyErrorHandlers] was never called (Issue 36).
+void _logAndClearEarlyErrorBuffer(String reason) {
+  if (_earlyErrorBuffer.isEmpty) {
+    return;
+  }
+  debugPrint(
+    'Discarding ${_earlyErrorBuffer.length} buffered early error(s) — $reason',
+  );
+  _earlyErrorBuffer.clear();
+}
+
+/// Resets the early-error buffer state for tests. The buffer and the
+/// installed-flag are module-level statics that persist across test cases in
+/// one VM, so without a reset the buffer/flush assertions become order-
+/// dependent (Issue 63).
+@visibleForTesting
+void resetEarlyErrorHandlersForTest() {
+  _earlyErrorBuffer.clear();
+}
+
+/// Resets the isolate error-listener apply-once flag (Issue 31/63) so the
+/// "added at most once across retries" assertion is order-independent. Internal
+/// test-support seam invoked only by the combined
+/// `resetDreamicBootstrapIdempotencyForTest()` (the documented
+/// `@visibleForTesting` entry point) — not `@visibleForTesting` itself so the
+/// combined reset can call it without a cross-file visibility-lint warning.
+void resetIsolateErrorListenerFlag() {
+  _isolateErrorListenerAdded = false;
+}
+
+/// Test-only access to the current buffered-error count (Issue 16/82).
+@visibleForTesting
+int get earlyErrorBufferLengthForTest => _earlyErrorBuffer.length;
+
+/// Test-only seam to push an error into the buffer as the early handlers would,
+/// so the bounded-buffer / flush tests do not need to drive real
+/// `FlutterError.onError` (Issue 16/82).
+@visibleForTesting
+void bufferEarlyErrorForTest(Object error, [StackTrace? stackTrace]) {
+  _bufferEarlyError(error, stackTrace);
+}
+
 /// Configure error reporting before calling appInitErrorHandling()
 ///
 /// Example with Sentry:
@@ -54,6 +197,10 @@ Future<void> appInitErrorHandling() async {
   if (AppConfigBase.doDisableErrorReporting) {
     debugPrint('Error Reporting DISABLED via DO_DISABLE_ERROR_REPORTING');
     _setupMinimalErrorHandlers();
+    // (b) Kill-switch path — reporting is disabled, so the early buffer cannot
+    // be flushed anywhere; drop+clear it (a no-op when the installer was never
+    // called). MUST run before the early `return`, or the buffer leaks (Issue 35).
+    _logAndClearEarlyErrorBuffer('error reporting disabled (kill switch)');
     return;
   }
 
@@ -123,6 +270,13 @@ Future<void> appInitErrorHandling() async {
       }
       return true;
     };
+
+    // (c) Emulator-blocked / debug-no-reporting branch. The minimal handlers
+    // above replaced the early buffering handlers; reporting is suppressed on
+    // this path, so drop+clear the early buffer (a no-op when the installer was
+    // never called). This branch does NOT early-return — the buffer would
+    // otherwise leak (Issue 35).
+    _logAndClearEarlyErrorBuffer('error reporting blocked (emulator/debug)');
   } else {
     // Setup error handlers for production
     // Note: If using Firebase Crashlytics, Firebase must be initialized first
@@ -178,7 +332,11 @@ Future<void> appInitErrorHandling() async {
     // Only for non-web platforms
     // Note: When customReporter manages error handlers (e.g., Sentry's init),
     // they typically set up their own isolate error listeners
-    if (!kIsWeb) {
+    //
+    // Apply-once across gate-retry re-runs: `addErrorListener` allows multiple
+    // listeners, so an unguarded re-run would accumulate them (Issue 31).
+    if (!kIsWeb && !_isolateErrorListenerAdded) {
+      _isolateErrorListenerAdded = true;
       if (!config.customReporterManagesErrorHandlers) {
         // Standard approach: we set up the isolate listener
         Isolate.current.addErrorListener(
@@ -213,5 +371,10 @@ Future<void> appInitErrorHandling() async {
         );
       }
     }
+
+    // (a) Production branch — the reporter is now attached. Flush every error
+    // buffered by the early handlers before this point to it, then clear the
+    // buffer (a no-op when the installer was never called — the buffer is empty).
+    _flushAndClearEarlyErrorBuffer();
   }
 }
