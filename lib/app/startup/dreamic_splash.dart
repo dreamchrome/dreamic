@@ -30,6 +30,36 @@ const Duration _defaultSafetyTimeout = Duration(seconds: 2);
 /// a safe no-op on the non-web VM test runner per Issue 66).
 typedef NativeSplashRemove = void Function();
 
+/// Holds the native OS launch splash up until [DreamicSplash] tears it down,
+/// giving a **flash-free** native→Flutter handoff.
+///
+/// Call this **once, as early as possible** in `main()` — right after
+/// `WidgetsFlutterBinding.ensureInitialized()` (pass the binding it returns) and
+/// before `runApp`. It calls `FlutterNativeSplash.preserve()`, which defers
+/// Flutter's first *presented* frame so the OS splash stays composited until
+/// `DreamicSplash` calls `FlutterNativeSplash.remove()`.
+///
+/// **This is the load-bearing half of the handoff.** `DreamicSplash` already
+/// gates `remove()` on its logo bitmap being decoded (the `ImageProvider` decode
+/// listener, or [DreamicSplash.removeNativeSplashWhen] for a `Widget` logo). But
+/// `remove()` (= `WidgetsBinding.allowFirstFrame()`) is a **no-op unless
+/// `preserve()` was called first** — without this, the OS splash dismisses on
+/// its own schedule (at the natural first frame), which can expose a white frame
+/// before the Flutter logo is painted (the handoff "blink"). With this in place,
+/// the OS splash is not removed until the Flutter logo frame is ready, so the
+/// transition is logo→logo with nothing white between.
+///
+/// Safe by construction: `DreamicSplash` also calls `remove()` from its
+/// [DreamicSplash.safetyTimeout] and from `dispose()`, so the first frame is
+/// always eventually allowed even if the decode never completes.
+///
+/// **Web no-op** — `preserve()`/`remove()` are web no-ops in
+/// `flutter_native_splash`; the `index.html` loader is the web analog.
+void dreamicPreserveNativeSplash(WidgetsBinding binding) {
+  if (kIsWeb) return;
+  FlutterNativeSplash.preserve(widgetsBinding: binding);
+}
+
 /// A branded, **plain** splash widget that paints on the first Flutter frame and
 /// owns the native→Flutter splash handoff.
 ///
