@@ -389,7 +389,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
       final json = jsonDecode(jsonString) as Map<String, dynamic>;
       final payload = _PendingDevicePayload.fromJson(json);
 
-      logd('DeviceService: Loaded pending payload: $payload');
+      logv('DeviceService: Loaded pending payload: $payload');
       return payload;
     } catch (e) {
       logw('DeviceService: Failed to load pending payload: $e');
@@ -412,7 +412,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
       if (payload == null) {
         // Clear the pending payload
         final removed = await prefs.remove(_kPendingPayloadKey);
-        logd('DeviceService: Cleared pending payload');
+        logv('DeviceService: Cleared pending payload');
         return removed;
       }
 
@@ -420,7 +420,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
       final saved = await prefs.setString(_kPendingPayloadKey, jsonString);
 
       if (saved) {
-        logd('DeviceService: Saved pending payload: $payload');
+        logv('DeviceService: Saved pending payload: $payload');
       } else {
         logw('DeviceService: Failed to save pending payload to SharedPreferences');
       }
@@ -498,7 +498,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
   Future<void> _clearPendingPayload() async {
     _pendingPayload = null;
     await _savePendingPayload(null);
-    logd('DeviceService: Pending payload cleared after successful sync');
+    logv('DeviceService: Pending payload cleared after successful sync');
   }
 
   /// Attempts to flush the pending payload to the backend.
@@ -516,14 +516,14 @@ class DeviceServiceImpl implements DeviceServiceInt {
   Future<bool> _flushPendingPayload({bool bypassBackoff = false}) async {
     // Prevent concurrent flushes
     if (_isFlushingPayload) {
-      logd('DeviceService: Flush already in progress, skipping');
+      logv('DeviceService: Flush already in progress, skipping');
       return true;
     }
 
     await _ensurePendingPayloadLoaded();
 
     if (_pendingPayload == null || !_pendingPayload!.hasDataToSync) {
-      logd('DeviceService: No pending payload to flush');
+      logv('DeviceService: No pending payload to flush');
       return true;
     }
 
@@ -531,7 +531,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
     if (!bypassBackoff) {
       final backoffMinutes = AppConfigBase.devicePendingBackoffMinutes;
       if (_pendingPayload!.shouldBackoff(backoffMinutes)) {
-        logd('DeviceService: Flush backoff active, skipping (last attempt: ${_pendingPayload!.lastAttemptAt})');
+        logv('DeviceService: Flush backoff active, skipping (last attempt: ${_pendingPayload!.lastAttemptAt})');
         return true; // Not an error, just throttled
       }
     }
@@ -579,7 +579,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         action = 'touch';
       } else {
         // Nothing to sync after all
-        logd('DeviceService: Pending payload has no actionable data');
+        logv('DeviceService: Pending payload has no actionable data');
         await _clearPendingPayload();
         return true;
       }
@@ -671,7 +671,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
       if (storedId != null && storedId.isNotEmpty) {
         _deviceId = storedId;
-        logd('DeviceService: Loaded existing device ID: $_deviceId');
+        logv('DeviceService: Loaded existing device ID: $_deviceId');
         return _deviceId!;
       }
 
@@ -806,7 +806,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
   @override
   Future<Either<RepositoryFailure, Unit>> registerDevice() async {
-    logd('DeviceService: registerDevice called');
+    logv('DeviceService: registerDevice called');
 
     try {
       final deviceId = await getDeviceId();
@@ -944,7 +944,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
   @override
   Future<Either<RepositoryFailure, bool>> updateTimezoneOrOffsetIfChanged() async {
-    logd('DeviceService: updateTimezoneOrOffsetIfChanged called');
+    logv('DeviceService: updateTimezoneOrOffsetIfChanged called');
 
     try {
       // Fast local checks (no network)
@@ -983,13 +983,13 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
       // Apply throttling logic
       if (didChange && withinChangeDebounce) {
-        logd(
+        logv(
             'DeviceService: Timezone/offset changed but within debounce window, skipping sync');
         return const Right(false);
       }
 
       if (!didChange && recentlySyncedUnchanged && !exceededMaxInterval) {
-        logd(
+        logv(
             'DeviceService: Timezone/offset unchanged and recently synced, skipping sync');
         // Try to flush any pending payload on this lifecycle event (if authenticated)
         if (_isUserAuthenticated()) {
@@ -1129,7 +1129,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
   @override
   Future<Either<RepositoryFailure, Unit>> touchDevice() async {
-    logd('DeviceService: touchDevice called');
+    logv('DeviceService: touchDevice called');
 
     try {
       final now = DateTime.now();
@@ -1138,7 +1138,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
       // Apply throttle
       if (_lastTouchAt != null &&
           now.difference(_lastTouchAt!) < Duration(minutes: throttleMinutes)) {
-        logd('DeviceService: Touch throttled, last touch was ${now.difference(_lastTouchAt!).inMinutes} minutes ago');
+        logv('DeviceService: Touch throttled, last touch was ${now.difference(_lastTouchAt!).inMinutes} minutes ago');
         // Try to flush any pending payload on this lifecycle event (if authenticated)
         if (_isUserAuthenticated()) {
           await _flushPendingPayload();
@@ -1215,7 +1215,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
   Future<Either<RepositoryFailure, Unit>> persistFcmToken({
     required String? fcmToken,
   }) async {
-    logd('DeviceService: persistFcmToken called with token: ${fcmToken != null ? '***' : 'null'}');
+    logv('DeviceService: persistFcmToken called with token: ${fcmToken != null ? '***' : 'null'}');
 
     try {
       final deviceId = await getDeviceId();
@@ -1290,7 +1290,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
   @override
   Future<Either<RepositoryFailure, Unit>> unregisterDevice() async {
-    logd('DeviceService: unregisterDevice called');
+    logv('DeviceService: unregisterDevice called');
 
     try {
       final deviceId = await getDeviceId();
@@ -1321,7 +1321,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
   @override
   Future<Either<RepositoryFailure, List<DeviceInfo>>> getMyDevices() async {
-    logd('DeviceService: getMyDevices called');
+    logv('DeviceService: getMyDevices called');
 
     try {
       final deviceId = await getDeviceId();
@@ -1364,7 +1364,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
     Future<void> Function(String? uid)? onAuthenticated,
     Future<void> Function()? onAboutToLogOut,
   }) async {
-    logd('DeviceService: connectToAuthService called');
+    logv('DeviceService: connectToAuthService called');
 
     // Resolve auth service if not provided
     AuthServiceInt? resolvedAuthService = authService;
@@ -1379,7 +1379,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
     // Remove old callbacks if already connected (idempotency)
     if (_isConnectedToAuthService && _authService != null) {
-      logd('DeviceService: Removing existing callbacks before reconnecting');
+      logv('DeviceService: Removing existing callbacks before reconnecting');
       _disconnectFromAuthService();
     }
 
@@ -1438,7 +1438,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
   /// The lifecycle wiring is automatic and requires no consuming-app setup.
   void _connectToLifecycleService() {
     if (_isLifecycleConnected) {
-      logd('DeviceService: Already connected to lifecycle service');
+      logv('DeviceService: Already connected to lifecycle service');
       return;
     }
 
@@ -1457,7 +1457,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
     );
 
     _isLifecycleConnected = true;
-    logd('DeviceService: Connected to lifecycle service');
+    logv('DeviceService: Connected to lifecycle service');
   }
 
   /// Disconnects from app lifecycle service.
@@ -1465,7 +1465,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
     await _lifecycleSubscription?.cancel();
     _lifecycleSubscription = null;
     _isLifecycleConnected = false;
-    logd('DeviceService: Disconnected from lifecycle service');
+    logv('DeviceService: Disconnected from lifecycle service');
   }
 
   /// Public teardown that cancels the lifecycle subscription (Issue 56).
@@ -1490,7 +1490,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
       return;
     }
 
-    logd('DeviceService: App resumed, checking for timezone/offset changes');
+    logv('DeviceService: App resumed, checking for timezone/offset changes');
 
     // Only perform updates if connected to auth (user is logged in)
     if (!_isConnectedToAuthService) {
@@ -1506,7 +1506,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
         (failure) => logw('DeviceService: Timezone update on resume failed: $failure'),
         (didUpdate) {
           if (didUpdate) {
-            logd('DeviceService: Timezone/offset synced on resume');
+            logv('DeviceService: Timezone/offset synced on resume');
           }
         },
       );
@@ -1520,7 +1520,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
       final touchResult = await touchDevice();
       touchResult.fold(
         (failure) => logw('DeviceService: Touch on resume failed: $failure'),
-        (_) => logd('DeviceService: Device touched on resume'),
+        (_) => logv('DeviceService: Device touched on resume'),
       );
     } catch (e) {
       logw('DeviceService: Unexpected error during touch on resume: $e');
@@ -1551,14 +1551,14 @@ class DeviceServiceImpl implements DeviceServiceInt {
           'This indicates an initialization ordering issue - see Constraint 2 in plan.auth-race.md');
     }
 
-    logd('DeviceService: handleAuthenticated called, uid=$uid');
+    logv('DeviceService: handleAuthenticated called, uid=$uid');
     await _flushPendingPayload(bypassBackoff: true);
     await registerDevice();
   }
 
   @override
   Future<void> handleAboutToLogOut() async {
-    logd('DeviceService: handleAboutToLogOut called');
+    logv('DeviceService: handleAboutToLogOut called');
     await unregisterDevice();
   }
 
@@ -1587,7 +1587,7 @@ class DeviceServiceImpl implements DeviceServiceInt {
 
   /// Default callback for authenticated event.
   Future<void> _defaultOnAuthenticated(String? uid) async {
-    logd('DeviceService: onAuthenticated triggered for uid: $uid');
+    logv('DeviceService: onAuthenticated triggered for uid: $uid');
     if (uid != null) {
       // First, try to flush any pending payload from before authentication
       await _flushPendingPayload(bypassBackoff: true);
@@ -1596,19 +1596,19 @@ class DeviceServiceImpl implements DeviceServiceInt {
       final result = await registerDevice();
       result.fold(
         (failure) => logw('DeviceService: registerDevice failed on auth: $failure'),
-        (_) => logd('DeviceService: registerDevice succeeded on auth'),
+        (_) => logv('DeviceService: registerDevice succeeded on auth'),
       );
     }
   }
 
   /// Default callback for about-to-logout event.
   Future<void> _defaultOnAboutToLogOut() async {
-    logd('DeviceService: onAboutToLogOut triggered');
+    logv('DeviceService: onAboutToLogOut triggered');
     // Unregister device on logout (best-effort)
     final result = await unregisterDevice();
     result.fold(
       (failure) => logw('DeviceService: unregisterDevice failed on logout: $failure'),
-      (_) => logd('DeviceService: unregisterDevice succeeded on logout'),
+      (_) => logv('DeviceService: unregisterDevice succeeded on logout'),
     );
   }
 
