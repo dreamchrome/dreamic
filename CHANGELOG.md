@@ -1,3 +1,12 @@
+## 0.9.1
+
+- Fixed: the example model (`enum_example.dart`) now acquires Firestore via the
+  canonical `AppConfigBase.firestore` getter instead of `FirebaseFirestore.instance`,
+  so apps configured to use a non-default Firestore database are respected. The field
+  is now `late` so it resolves on first use (after Firebase initialization).
+- Added: a guard test ensuring `lib/` acquires Firestore via `AppConfigBase.firestore`
+  (no direct `FirebaseFirestore.instance` outside `app_config_base.dart`).
+
 ## 0.9.0
 
 ### Splash-first startup gate + bootstrap pipeline (breaking)

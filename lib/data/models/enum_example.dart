@@ -374,7 +374,7 @@ class NotificationModel extends BaseFirestoreModel {
 
 /// Example service showing how these models handle enum updates gracefully
 class SocialMediaService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  late final FirebaseFirestore _firestore = AppConfigBase.firestore;
 
   // Scenario 1: Server adds new UserRole "superAdmin"
   // Old app doesn't know about "superAdmin", but won't crash
