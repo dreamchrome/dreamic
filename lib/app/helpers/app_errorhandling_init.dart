@@ -52,6 +52,22 @@ void _bufferEarlyError(Object error, StackTrace? stackTrace) {
   }
 }
 
+/// In debug builds, forwards [details] to Flutter's default error presenter
+/// ([FlutterError.presentError]) so the error still reaches DevTools / the IDE
+/// runtime-error inspector and the console still gets the standard, fully
+/// formatted block (including the "relevant error-causing widget" attribution).
+///
+/// Every error handler below REPLACES [FlutterError.onError]. Without this call
+/// the framework's default presentation is lost and debug tooling goes blind to
+/// framework errors — they surface only through our own `loge()` / `debugPrint`
+/// dump, with no structured DevTools event and no widget attribution. No-op in
+/// release so production consoles / crash reporters are unaffected.
+void _presentErrorInDebugConsole(FlutterErrorDetails details) {
+  if (kDebugMode) {
+    FlutterError.presentError(details);
+  }
+}
+
 /// Installs synchronous, dependency-free error handlers that BUFFER caught
 /// errors into a bounded module-level list until the reporter attaches.
 ///
@@ -72,6 +88,7 @@ void _bufferEarlyError(Object error, StackTrace? stackTrace) {
 /// `PlatformDispatcher.onError` handlers and does not duplicate state.
 void installEarlyErrorHandlers() {
   FlutterError.onError = (FlutterErrorDetails details) {
+    _presentErrorInDebugConsole(details);
     debugPrint('Early Flutter Error: ${details.exceptionAsString()}');
     debugPrint('Stack trace:\n${details.stack}');
     _bufferEarlyError(details.exception, details.stack);
@@ -175,6 +192,7 @@ ErrorReportingConfig get errorReportingConfig =>
 /// loops through loge -> _crashReport.
 void _setupMinimalErrorHandlers() {
   FlutterError.onError = (details) {
+    _presentErrorInDebugConsole(details);
     debugPrint('Flutter Error: ${details.exceptionAsString()}');
     debugPrint('Stack trace:\n${details.stack}');
   };
@@ -253,6 +271,7 @@ Future<void> appInitErrorHandling() async {
   // Disable analytics and crashlytics for web or emulator (unless configured otherwise)
   if (!shouldUseErrorReporting) {
     FlutterError.onError = (details) {
+      _presentErrorInDebugConsole(details);
       loge(details.stack ?? StackTrace.current, details.exceptionAsString());
 
       // Still report to custom reporter if it was initialized (enabled on web/debug)
@@ -287,6 +306,7 @@ Future<void> appInitErrorHandling() async {
     if (!config.customReporterManagesErrorHandlers) {
       // Setup Flutter error handler for non-async exceptions
       FlutterError.onError = (FlutterErrorDetails details) {
+        _presentErrorInDebugConsole(details);
         if (canUseFirebaseCrashlytics) {
           FirebaseCrashlytics.instance.recordFlutterError(details);
         }
@@ -315,6 +335,7 @@ Future<void> appInitErrorHandling() async {
 
         // Set up handlers that report to both Firebase and the custom reporter
         FlutterError.onError = (FlutterErrorDetails details) {
+          _presentErrorInDebugConsole(details);
           FirebaseCrashlytics.instance.recordFlutterError(details);
           // Call the custom reporter's handler if it was set
           originalFlutterErrorHandler?.call(details);

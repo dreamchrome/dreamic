@@ -1,3 +1,16 @@
+## 0.9.2
+
+- Fixed: error handlers no longer blind debug tooling. Every `FlutterError.onError`
+  handler installed by `appInitErrorHandling` / `installEarlyErrorHandlers` /
+  `_setupMinimalErrorHandlers` now forwards to `FlutterError.presentError` in debug
+  builds. Previously these branches (notably the emulator / no-reporting branch used
+  during normal local dev) replaced `onError` with a handler that only called
+  `loge()`, which suppressed the framework's structured error event. As a result
+  DevTools / the IDE runtime-error inspector saw nothing, and the console lost the
+  standard error block including the "relevant error-causing widget" attribution.
+  The change is debug-only (`kDebugMode`), so release consoles and crash reporters
+  are unaffected.
+
 ## 0.9.1
 
 - Fixed: the example model (`enum_example.dart`) now acquires Firestore via the

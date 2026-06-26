@@ -300,11 +300,10 @@ class _PendingDevicePayload {
 ///
 /// ## Backend Requirements
 ///
-/// This implementation requires the Firebase Functions scaffolding deployed
-/// to your project. The callable function name is configured via
-/// [AppConfigBase.deviceActionFunction] (default: `"deviceAction"`).
-///
-/// See `scaffolding/firebase_functions/device/README.md` for setup.
+/// This implementation requires a compatible device-management callable
+/// Cloud Function deployed to your Firebase project. The callable function
+/// name is configured via [AppConfigBase.deviceActionFunction]
+/// (default: `"deviceAction"`).
 ///
 /// ## See Also
 ///

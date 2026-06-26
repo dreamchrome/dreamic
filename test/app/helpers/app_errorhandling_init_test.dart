@@ -167,4 +167,35 @@ void main() {
       resetIsolateErrorListenerFlag();
     });
   });
+
+  group('debug error presentation — DevTools / IDE visibility', () {
+    test(
+        'emulator/no-reporting branch forwards to FlutterError.presentError in debug',
+        () async {
+      // The branch used during normal local dev (emulator on, reporting off) —
+      // !shouldUseErrorReporting. Before this guard it replaced onError with a
+      // loge()-only handler, suppressing the structured error event so DevTools /
+      // get_runtime_errors / the "relevant error-causing widget" block went blind.
+      AppConfigBase.doUseBackendEmulatorOverride = true;
+      AppConfigBase.doForceErrorReportingOverride = false;
+      AppConfigBase.doDisableErrorReportingOverride = false;
+      Logger.setErrorReportingConfig(const ErrorReportingConfig());
+
+      await appInitErrorHandling();
+
+      // Capture the framework's default presentation calls. `presentError` is
+      // read dynamically inside the installed handler, so overriding it after
+      // appInitErrorHandling still intercepts the call.
+      final presented = <FlutterErrorDetails>[];
+      final originalPresentError = FlutterError.presentError;
+      FlutterError.presentError = presented.add;
+      addTearDown(() => FlutterError.presentError = originalPresentError);
+
+      // Fire the installed handler as the framework would on a build/layout error.
+      final details = FlutterErrorDetails(exception: StateError('boom'));
+      FlutterError.onError!(details);
+
+      expect(presented, contains(details));
+    });
+  });
 }
