@@ -1,6 +1,5 @@
 import 'dart:isolate';
 
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:dreamic/app/app_config_base.dart';
 import 'package:dreamic/error_reporting/error_reporter_interface.dart';
@@ -31,6 +30,25 @@ const int _earlyErrorBufferCap = 50;
 /// returns immediately. A lazy/nullable buffer would NPE on their startup.
 /// Capped at [_earlyErrorBufferCap] with drop-oldest semantics.
 final List<_BufferedError> _earlyErrorBuffer = <_BufferedError>[];
+
+/// Whether [appInitErrorHandling] has run (reporter attached, or reporting
+/// determined disabled). Gates [reportBootstrapDiagnostic]: before this, a
+/// bootstrap diagnostic is DEFERRED; after, it reports immediately.
+bool _errorHandlingAttached = false;
+
+/// One bootstrap diagnostic (error + message + stack) captured BEFORE the
+/// reporter attached.
+class _DeferredBootstrapReport {
+  _DeferredBootstrapReport(this.error, this.message, this.stackTrace);
+  final Object error;
+  final String message;
+  final StackTrace? stackTrace;
+}
+
+/// Bootstrap diagnostics reported before the reporter attached — flushed when
+/// [appInitErrorHandling] attaches. Capped like the early buffer (drop-oldest).
+final List<_DeferredBootstrapReport> _deferredBootstrapReports =
+    <_DeferredBootstrapReport>[];
 
 /// Apply-once guard for the isolate error-listener registration (Issue 31).
 ///
@@ -138,6 +156,49 @@ void _logAndClearEarlyErrorBuffer(String reason) {
   _earlyErrorBuffer.clear();
 }
 
+/// Reports a bootstrap-time diagnostic that may fire BEFORE the error reporter
+/// is attached, ensuring every consumer's backend captures it.
+///
+/// The `appInitFirebase` hang-recovery fires at the Firebase step. A custom
+/// reporter that attaches before Firebase (e.g. Sentry via
+/// `attachErrorReportingFirst`) is already live then, so this reports
+/// immediately. A Firebase Crashlytics consumer does not attach until the
+/// post-Firebase step, so this DEFERS the report and [appInitErrorHandling]
+/// flushes it on attach — closing the "Crashlytics recovers silently" gap.
+///
+/// Non-throwing; safe to call any number of times. Deferred reports are capped
+/// (drop-oldest) like the early buffer so a pre-attach loop can't grow it
+/// unbounded.
+void reportBootstrapDiagnostic(Object error, String message, [StackTrace? stackTrace]) {
+  if (_errorHandlingAttached) {
+    loge(error, message, stackTrace);
+    return;
+  }
+  _deferredBootstrapReports.add(_DeferredBootstrapReport(error, message, stackTrace));
+  while (_deferredBootstrapReports.length > _earlyErrorBufferCap) {
+    _deferredBootstrapReports.removeAt(0);
+  }
+}
+
+/// Flushes every deferred bootstrap diagnostic to the now-attached reporter via
+/// `loge`, then clears them. No-op when none were deferred.
+void _flushDeferredBootstrapReports() {
+  if (_deferredBootstrapReports.isEmpty) {
+    return;
+  }
+  final reports = List<_DeferredBootstrapReport>.of(_deferredBootstrapReports);
+  _deferredBootstrapReports.clear();
+  for (final r in reports) {
+    loge(r.error, r.message, r.stackTrace);
+  }
+}
+
+/// Drops deferred bootstrap diagnostics WITHOUT reporting (reporting disabled on
+/// this path).
+void _dropDeferredBootstrapReports() {
+  _deferredBootstrapReports.clear();
+}
+
 /// Resets the early-error buffer state for tests. The buffer and the
 /// installed-flag are module-level statics that persist across test cases in
 /// one VM, so without a reset the buffer/flush assertions become order-
@@ -145,6 +206,8 @@ void _logAndClearEarlyErrorBuffer(String reason) {
 @visibleForTesting
 void resetEarlyErrorHandlersForTest() {
   _earlyErrorBuffer.clear();
+  _deferredBootstrapReports.clear();
+  _errorHandlingAttached = false;
 }
 
 /// Resets the isolate error-listener apply-once flag (Issue 31/63) so the
@@ -219,6 +282,10 @@ Future<void> appInitErrorHandling() async {
     // be flushed anywhere; drop+clear it (a no-op when the installer was never
     // called). MUST run before the early `return`, or the buffer leaks (Issue 35).
     _logAndClearEarlyErrorBuffer('error reporting disabled (kill switch)');
+    // Reporting is off — drop any deferred bootstrap diagnostics and mark
+    // attached so later ones short-circuit (loge no-ops under the kill switch).
+    _errorHandlingAttached = true;
+    _dropDeferredBootstrapReports();
     return;
   }
 
@@ -241,15 +308,10 @@ Future<void> appInitErrorHandling() async {
       !isBlockedByEmulator &&
       ((config.enableInDebug || !kDebugMode) && (config.enableOnWeb || !kIsWeb));
 
-  // Firebase Crashlytics requires Firebase to be initialized and doesn't support web
-  final canUseFirebaseCrashlytics = config.useFirebaseCrashlytics &&
-      AppConfigBase.isFirebaseInitialized &&
-      !kIsWeb;
-
   debugPrint('Error Reporting Configuration: '
-      'useFirebaseCrashlytics=${config.useFirebaseCrashlytics}, '
       'customReporter=${config.customReporter != null}, '
       'customReporterManagesErrorHandlers=${config.customReporterManagesErrorHandlers}, '
+      'reporterRequiresFirebase=${config.reporterRequiresFirebase}, '
       'enableInDebug=${config.enableInDebug}, '
       'enableOnWeb=${config.enableOnWeb}, '
       'doUseBackendEmulator=${AppConfigBase.doUseBackendEmulator}, '
@@ -296,98 +358,48 @@ Future<void> appInitErrorHandling() async {
     // never called). This branch does NOT early-return — the buffer would
     // otherwise leak (Issue 35).
     _logAndClearEarlyErrorBuffer('error reporting blocked (emulator/debug)');
+    // Reporting suppressed on this path — drop deferred bootstrap diagnostics
+    // and mark attached (later ones short-circuit; loge no-ops here).
+    _errorHandlingAttached = true;
+    _dropDeferredBootstrapReports();
   } else {
-    // Setup error handlers for production
-    // Note: If using Firebase Crashlytics, Firebase must be initialized first
-    // via appInitFirebase() before calling appInitErrorHandling()
+    // Production branch. dreamic ships no built-in reporter, so the handlers
+    // route to the single registered reporter (if any).
 
-    // Only set up error handlers if the custom reporter doesn't manage them
-    // (e.g., Sentry with SentryFlutter.init sets up its own handlers)
+    // Only install handlers if the reporter doesn't manage its own (e.g. Sentry
+    // via SentryFlutter.init with appRunner). When it does, dreamic leaves
+    // FlutterError.onError / PlatformDispatcher.onError / the isolate listener to
+    // the reporter and just wires loge() + flushes the buffers below.
     if (!config.customReporterManagesErrorHandlers) {
-      // Setup Flutter error handler for non-async exceptions
+      // Flutter-framework (non-async) errors.
       FlutterError.onError = (FlutterErrorDetails details) {
         _presentErrorInDebugConsole(details);
-        if (canUseFirebaseCrashlytics) {
-          FirebaseCrashlytics.instance.recordFlutterError(details);
-        }
         if (shouldUseCustomReporter) {
           config.customReporter!.recordFlutterError(details);
         }
       };
 
-      // Setup async error handler
+      // Async / platform errors.
       PlatformDispatcher.instance.onError = (error, stack) {
-        if (canUseFirebaseCrashlytics) {
-          FirebaseCrashlytics.instance.recordError(error, stack);
-        }
         if (shouldUseCustomReporter) {
           config.customReporter!.recordError(error, stack);
         }
         return true;
       };
-    } else {
-      // Custom reporter manages error handlers, but we still need to
-      // chain Firebase Crashlytics if enabled
-      if (canUseFirebaseCrashlytics) {
-        // Save the custom reporter's error handler
-        final originalFlutterErrorHandler = FlutterError.onError;
-        final originalPlatformErrorHandler = PlatformDispatcher.instance.onError;
 
-        // Set up handlers that report to both Firebase and the custom reporter
-        FlutterError.onError = (FlutterErrorDetails details) {
-          _presentErrorInDebugConsole(details);
-          FirebaseCrashlytics.instance.recordFlutterError(details);
-          // Call the custom reporter's handler if it was set
-          originalFlutterErrorHandler?.call(details);
-        };
-
-        PlatformDispatcher.instance.onError = (error, stack) {
-          FirebaseCrashlytics.instance.recordError(error, stack);
-          // Call the custom reporter's handler if it exists
-          return originalPlatformErrorHandler?.call(error, stack) ?? true;
-        };
-      }
-    }
-
-    // Catch errors outside of the Flutter framework (isolates)
-    // Only for non-web platforms
-    // Note: When customReporter manages error handlers (e.g., Sentry's init),
-    // they typically set up their own isolate error listeners
-    //
-    // Apply-once across gate-retry re-runs: `addErrorListener` allows multiple
-    // listeners, so an unguarded re-run would accumulate them (Issue 31).
-    if (!kIsWeb && !_isolateErrorListenerAdded) {
-      _isolateErrorListenerAdded = true;
-      if (!config.customReporterManagesErrorHandlers) {
-        // Standard approach: we set up the isolate listener
+      // Errors outside the Flutter framework (isolates), non-web only.
+      // Apply-once across gate-retry re-runs: `addErrorListener` allows multiple
+      // listeners, so an unguarded re-run would accumulate them (Issue 31).
+      if (!kIsWeb && !_isolateErrorListenerAdded) {
+        _isolateErrorListenerAdded = true;
         Isolate.current.addErrorListener(
-          RawReceivePort((pair) async {
+          RawReceivePort((pair) {
             final List<dynamic> errorAndStacktrace = pair;
             final error = errorAndStacktrace.first;
             final stackTrace = errorAndStacktrace.last as StackTrace;
-
-            if (canUseFirebaseCrashlytics) {
-              await FirebaseCrashlytics.instance.recordError(error, stackTrace);
-            }
             if (shouldUseCustomReporter) {
               config.customReporter!.recordError(error, stackTrace);
             }
-          }).sendPort,
-        );
-      } else if (canUseFirebaseCrashlytics) {
-        // Custom reporter manages handlers, but we need Firebase to catch isolate errors
-        // Chain with any existing listener that the custom reporter may have set
-        Isolate.current.addErrorListener(
-          RawReceivePort((pair) async {
-            final List<dynamic> errorAndStacktrace = pair;
-            final error = errorAndStacktrace.first;
-            final stackTrace = errorAndStacktrace.last as StackTrace;
-
-            // Report to Firebase
-            await FirebaseCrashlytics.instance.recordError(error, stackTrace);
-
-            // Note: Custom reporter's isolate listener (if any) will also catch this
-            // since multiple listeners can be added to the same isolate
           }).sendPort,
         );
       }
@@ -397,5 +409,10 @@ Future<void> appInitErrorHandling() async {
     // buffered by the early handlers before this point to it, then clear the
     // buffer (a no-op when the installer was never called — the buffer is empty).
     _flushAndClearEarlyErrorBuffer();
+    // Reporter attached: deliver any deferred bootstrap diagnostics (e.g. the
+    // appInitFirebase recovery, which fired at the Firebase step before this
+    // attach), then route future ones immediately.
+    _errorHandlingAttached = true;
+    _flushDeferredBootstrapReports();
   }
 }

@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Spy reporter that captures errors routed through `loge()` (and therefore the
 /// early-buffer flush, which flushes via `loge()`).
-class _SpyErrorReporter implements ErrorReporter {
+class _SpyErrorReporter extends ErrorReporter {
   final List<Object> recordedErrors = [];
 
   @override

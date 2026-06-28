@@ -3,15 +3,34 @@ import 'dart:async';
 import 'package:dreamic/app/app_config_base.dart';
 import 'package:dreamic/app/app_cubit.dart';
 import 'package:dreamic/app/helpers/app_cubit_init.dart';
+import 'package:dreamic/app/helpers/app_errorhandling_init.dart';
 import 'package:dreamic/app/helpers/app_firebase_init.dart';
 import 'package:dreamic/app/helpers/app_remote_config_init.dart';
 import 'package:dreamic/app/startup/dreamic_bootstrap.dart';
 import 'package:dreamic/data/repos/dreamic_services.dart';
 import 'package:dreamic/data/repos/remote_config_repo_int.dart';
+import 'package:dreamic/error_reporting/error_reporter_interface.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_platform_interface/test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
+
+/// A no-op custom reporter (Sentry-like) used to exercise the early-attach
+/// derivation from [ErrorReportingConfig].
+class _StubReporter extends ErrorReporter {
+  @override
+  void recordError(Object error, StackTrace? stackTrace) {}
+}
+
+/// Records every error routed to it (via `loge` → the attached reporter), so a
+/// test can assert that the registered-app recovery actually REPORTS.
+class _RecordingReporter extends ErrorReporter {
+  final List<Object> recordedErrors = [];
+
+  @override
+  void recordError(Object error, StackTrace? stackTrace) => recordedErrors.add(error);
+}
 
 /// Minimal Firebase options for `appInitFirebase` under the mocked core host.
 const _testOptions = FirebaseOptions(
@@ -83,6 +102,142 @@ void main() {
       // timeout was not applied.
       await expectLater(future, throwsA(same(sentinel)));
     });
+
+    test('the TimeoutException names the step that was in flight when it hung',
+        () async {
+      final future = dreamicBootstrap(
+        firebaseOptions: _testOptions,
+        servicesInitializer: _noopServices,
+        afterFirebaseInit: () => Completer<void>().future, // never completes
+        bootstrapTimeout: const Duration(milliseconds: 50),
+      );
+
+      await expectLater(
+        future,
+        throwsA(isA<TimeoutException>().having(
+          (e) => e.message,
+          'message',
+          contains('afterFirebaseInit hook'),
+        )),
+      );
+    });
+
+    test(
+        'attachErrorReportingFirst:true still names the hung step (early attach does not disrupt the sequence)',
+        () async {
+      final future = dreamicBootstrap(
+        firebaseOptions: _testOptions,
+        servicesInitializer: _noopServices,
+        // Hangs AFTER the step-0 early attach + the mocked appInitFirebase.
+        afterFirebaseInit: () => Completer<void>().future,
+        bootstrapTimeout: const Duration(milliseconds: 50),
+        attachErrorReportingFirst: true,
+      );
+
+      await expectLater(
+        future,
+        throwsA(isA<TimeoutException>().having(
+          (e) => e.message,
+          'message',
+          contains('afterFirebaseInit hook'),
+        )),
+      );
+    });
+
+    test(
+        'firebaseInitTimeout does not trip on a healthy (fast) Firebase init — the sequence advances past step 1',
+        () async {
+      final future = dreamicBootstrap(
+        firebaseOptions: _testOptions,
+        servicesInitializer: _noopServices,
+        // Hangs in the step AFTER Firebase init; if the per-step Firebase
+        // timeout false-fired, the message would name "appInitFirebase" instead.
+        afterFirebaseInit: () => Completer<void>().future,
+        bootstrapTimeout: const Duration(milliseconds: 80),
+        firebaseInitTimeout: const Duration(seconds: 5), // generous; mock is fast
+      );
+
+      await expectLater(
+        future,
+        throwsA(isA<TimeoutException>().having(
+          (e) => e.message,
+          'message',
+          contains('afterFirebaseInit hook'),
+        )),
+      );
+    });
+  });
+
+  group('resolveAttachErrorReportingFirst — great default derived from config', () {
+    tearDown(() {
+      // Reset the module-global config so other groups see the default.
+      configureErrorReporting(const ErrorReportingConfig());
+    });
+
+    test('explicit override wins over the config (true / false)', () {
+      configureErrorReporting(const ErrorReportingConfig()); // no reporter
+      expect(resolveAttachErrorReportingFirst(true), isTrue);
+      expect(resolveAttachErrorReportingFirst(false), isFalse);
+    });
+
+    test('self-contained reporter (no Firebase needed) → attaches early', () {
+      configureErrorReporting(
+        ErrorReportingConfig.customOnly(reporter: _StubReporter()),
+      );
+      expect(resolveAttachErrorReportingFirst(null), isTrue);
+    });
+
+    test('Firebase-dependent reporter (requiresFirebase) → does NOT attach early',
+        () {
+      configureErrorReporting(
+        ErrorReportingConfig.customOnly(
+          reporter: _StubReporter(),
+          requiresFirebase: true,
+        ),
+      );
+      expect(resolveAttachErrorReportingFirst(null), isFalse);
+    });
+
+    test('unconfigured (no reporter) → does NOT attach early', () {
+      configureErrorReporting(const ErrorReportingConfig());
+      expect(resolveAttachErrorReportingFirst(null), isFalse);
+    });
+  });
+
+  group('runBoundedNonCritical — bounds + swallows non-critical hook work', () {
+    test('completes normally when the work succeeds quickly', () async {
+      var ran = false;
+      await runBoundedNonCritical(
+        () async {
+          ran = true;
+        },
+        timeout: const Duration(seconds: 1),
+        label: 'ok',
+      );
+      expect(ran, isTrue);
+    });
+
+    test('swallows a throwing work — never rethrows', () async {
+      await expectLater(
+        runBoundedNonCritical(
+          () async => throw StateError('boom'),
+          timeout: const Duration(seconds: 1),
+          label: 'throws',
+        ),
+        completes,
+      );
+    });
+
+    test('swallows a hang — times out and returns instead of stalling', () async {
+      await expectLater(
+        runBoundedNonCritical(
+          () => Completer<void>().future, // never completes
+          timeout: const Duration(milliseconds: 20),
+          label: 'hangs',
+        ),
+        completes,
+      );
+    });
   });
 
   group('per-task fatal policy (Issues 81/84)', () {
@@ -106,6 +261,162 @@ void main() {
       final b = await appInitFirebase(_testOptions);
       expect(a.name, b.name); // same default app reused
       expect(AppConfigBase.isFirebaseInitialized, isTrue);
+    });
+
+    test('settleTimeout does not trip a healthy (fast) init', () async {
+      // A generous bound on a fast-settling (mocked) init never fires, so the
+      // app initializes normally — the recovery/throw branches only engage when
+      // the init actually hangs (validated in production via the reported
+      // error, which the mock cannot reproduce).
+      final app = await appInitFirebase(
+        _testOptions,
+        settleTimeout: const Duration(seconds: 5),
+      );
+      expect(app.name, isNotEmpty);
+      expect(AppConfigBase.isFirebaseInitialized, isTrue);
+    });
+
+    test('two-tier (settleTimeout + recoverIfRegisteredAfter) does not trip a healthy init',
+        () async {
+      // The short grace + outer bound both pass through a fast (mocked) init
+      // without engaging the recover/throw branches.
+      final app = await appInitFirebase(
+        _testOptions,
+        settleTimeout: const Duration(seconds: 5),
+        recoverIfRegisteredAfter: const Duration(seconds: 1),
+      );
+      expect(app.name, isNotEmpty);
+      expect(AppConfigBase.isFirebaseInitialized, isTrue);
+    });
+  });
+
+  group('appInitFirebase — two-tier recovery (awaitFirebaseInitForTest)', () {
+    // A real (mocked) FirebaseApp to hand back from the recovery branches; the
+    // registration probe is injected, so these exercise the recover/throw logic
+    // WITHOUT a real hung native initializeApp.
+    late FirebaseApp fakeApp;
+
+    setUp(() async {
+      fakeApp = Firebase.apps.isNotEmpty
+          ? Firebase.app()
+          : await Firebase.initializeApp(options: _testOptions);
+    });
+
+    // Clear any diagnostic the recovery deferred into the early-error machinery.
+    tearDown(resetEarlyErrorHandlersForTest);
+
+    test('grace trips + app registered → recovers via the registered app (tier 1)',
+        () async {
+      final result = await awaitFirebaseInitForTest(
+        Completer<FirebaseApp>().future, // never settles (the confirmed hang)
+        settleTimeout: const Duration(milliseconds: 400),
+        recoverIfRegisteredAfter: const Duration(milliseconds: 20),
+        isRegistered: () => true,
+        registeredApp: () => fakeApp,
+      );
+      expect(result, same(fakeApp));
+    });
+
+    test(
+        'grace trips + NOT registered → waits the remainder, returns the late-settling init',
+        () async {
+      final c = Completer<FirebaseApp>();
+      // Settle AFTER the grace (so the grace trips with no registration) but
+      // within the remaining settle budget → the fall-through returns it.
+      Future<void>.delayed(const Duration(milliseconds: 50), () => c.complete(fakeApp));
+      final result = await awaitFirebaseInitForTest(
+        c.future,
+        settleTimeout: const Duration(milliseconds: 600),
+        recoverIfRegisteredAfter: const Duration(milliseconds: 20),
+        isRegistered: () => false,
+        registeredApp: () => fakeApp,
+      );
+      expect(result, same(fakeApp));
+    });
+
+    test('settle bound trips + app registered → recovers via the registered app (tier 2)',
+        () async {
+      final result = await awaitFirebaseInitForTest(
+        Completer<FirebaseApp>().future,
+        settleTimeout: const Duration(milliseconds: 40),
+        recoverIfRegisteredAfter: null, // no grace → single settle bound
+        isRegistered: () => true,
+        registeredApp: () => fakeApp,
+      );
+      expect(result, same(fakeApp));
+    });
+
+    test(
+        'settle bound trips + NOT registered → throws a diagnosable, named TimeoutException',
+        () async {
+      await expectLater(
+        awaitFirebaseInitForTest(
+          Completer<FirebaseApp>().future,
+          settleTimeout: const Duration(milliseconds: 40),
+          recoverIfRegisteredAfter: null,
+          isRegistered: () => false,
+          registeredApp: () => fakeApp,
+        ),
+        throwsA(isA<TimeoutException>().having(
+          (e) => e.message,
+          'message',
+          allOf(contains('did not settle within'), contains('no app was registered')),
+        )),
+      );
+    });
+
+    test('grace + settle both trip with nothing registered → throws (no false recovery)',
+        () async {
+      await expectLater(
+        awaitFirebaseInitForTest(
+          Completer<FirebaseApp>().future,
+          settleTimeout: const Duration(milliseconds: 60),
+          recoverIfRegisteredAfter: const Duration(milliseconds: 20),
+          isRegistered: () => false,
+          registeredApp: () => fakeApp,
+        ),
+        throwsA(isA<TimeoutException>()),
+      );
+    });
+
+    test('a registered-app recovery is REPORTED (not silently swallowed)', () async {
+      // Attach a recording reporter so the recovery's reportBootstrapDiagnostic
+      // routes to it immediately (post-attach), proving the recovery is visible.
+      final reporter = _RecordingReporter();
+      final savedFlutterOnError = FlutterError.onError;
+      final savedPlatformOnError = PlatformDispatcher.instance.onError;
+      AppConfigBase.doUseBackendEmulatorOverride = false;
+      AppConfigBase.doDisableErrorReportingOverride = false;
+      AppConfigBase.doForceErrorReportingOverride = true; // report under the debug runner
+      resetEarlyErrorHandlersForTest();
+      configureErrorReporting(
+        ErrorReportingConfig.customOnly(
+          reporter: reporter,
+          enableInDebug: true,
+          enableOnWeb: true,
+        ),
+      );
+      await appInitErrorHandling(); // attach → reportBootstrapDiagnostic reports now
+
+      try {
+        final result = await awaitFirebaseInitForTest(
+          Completer<FirebaseApp>().future,
+          settleTimeout: const Duration(milliseconds: 400),
+          recoverIfRegisteredAfter: const Duration(milliseconds: 20),
+          isRegistered: () => true,
+          registeredApp: () => fakeApp,
+        );
+        expect(result, same(fakeApp));
+        expect(reporter.recordedErrors.whereType<TimeoutException>(), isNotEmpty);
+      } finally {
+        FlutterError.onError = savedFlutterOnError;
+        PlatformDispatcher.instance.onError = savedPlatformOnError;
+        AppConfigBase.doUseBackendEmulatorOverride = null;
+        AppConfigBase.doDisableErrorReportingOverride = null;
+        AppConfigBase.doForceErrorReportingOverride = null;
+        configureErrorReporting(const ErrorReportingConfig());
+        resetEarlyErrorHandlersForTest();
+      }
     });
   });
 

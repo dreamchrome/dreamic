@@ -46,6 +46,7 @@ export 'error_reporting/error_reporter_interface.dart';
 export 'app/helpers/app_errorhandling_init.dart';
 export 'app/helpers/app_configs_init.dart';
 export 'app/helpers/app_firebase_init.dart';
+export 'app/helpers/app_check_init.dart';
 export 'app/helpers/app_cubit_init.dart';
 
 // Notification Helpers

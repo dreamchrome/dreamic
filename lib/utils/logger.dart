@@ -1,4 +1,3 @@
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 
 import '../app/app_config_base.dart';
@@ -75,6 +74,18 @@ class Logger {
     _crashReport(error, trace: stackTrace);
   }
 
+  /// Records a breadcrumb to the configured reporter (no-op if none is
+  /// registered; the reporter's [ErrorReporter.addBreadcrumb] defaults to a
+  /// no-op if it doesn't support breadcrumbs). Never throws into the caller —
+  /// breadcrumbs are diagnostic and must not perturb the code they trace.
+  static void breadcrumb(String message, {String? category, Map<String, dynamic>? data}) {
+    try {
+      _customErrorReporter?.addBreadcrumb(message, category: category, data: data);
+    } catch (_) {
+      // Diagnostics must never break the traced code path.
+    }
+  }
+
   static bool _shouldLog(LogLevel messageLevel) {
     try {
       final configLevel = AppConfigBase.logLevel;
@@ -103,17 +114,10 @@ class Logger {
         (config.enableInDebug || !kDebugMode) &&
         (config.enableOnWeb || !kIsWeb);
 
-    // Report to Firebase Crashlytics if enabled, initialized, and conditions are met
-    // Note: Firebase Crashlytics does not support web - only call on native platforms
-    if (shouldUseErrorReporting &&
-        config.useFirebaseCrashlytics &&
-        AppConfigBase.isFirebaseInitialized &&
-        !kIsWeb) {
-      FirebaseCrashlytics.instance.recordError(error, stackTrace);
-    }
-
-    // Report to custom error reporter if configured
-    // Custom reporter follows the same rules - blocked by emulator and respects config
+    // Report to the single registered reporter, if any. dreamic ships no
+    // built-in reporter — the consuming app supplies one (Crashlytics, Sentry,
+    // …) via configureErrorReporting(). It follows the same gates: blocked by
+    // emulator/kill-switch and respects enableInDebug/enableOnWeb.
     if (_customErrorReporter != null && shouldUseErrorReporting) {
       _customErrorReporter!.recordError(error, stackTrace);
     }
@@ -127,3 +131,5 @@ void logi(String message) => Logger.log(LogLevel.info, message);
 void logw(String message) => Logger.log(LogLevel.warn, message);
 void loge(Object error, [String? message, StackTrace? trace]) =>
     Logger.error(error, message, trace);
+void logBreadcrumb(String message, {String? category, Map<String, dynamic>? data}) =>
+    Logger.breadcrumb(message, category: category, data: data);

@@ -74,6 +74,7 @@ void main() {
             return c.future;
           },
           minimumSplashDuration: Duration.zero,
+          autoRetryCount: 0, // exercise the manual-retry path, not auto-retry
           splash: const _PlainSplash(),
           errorBuilder: (context, retry) {
             capturedRetry = retry;
@@ -113,6 +114,7 @@ void main() {
             return c.future;
           },
           minimumSplashDuration: Duration.zero,
+          autoRetryCount: 0, // exercise the manual-retry path, not auto-retry
           splash: const _PlainSplash(),
           errorBuilder: (context, retry) {
             capturedRetry = retry;
@@ -157,6 +159,7 @@ void main() {
             return c.future;
           },
           minimumSplashDuration: Duration.zero,
+          autoRetryCount: 0, // exercise the manual-retry path, not auto-retry
           splash: const _PlainSplash(),
           errorBuilder: (context, retry) {
             capturedRetry = retry;
@@ -183,6 +186,151 @@ void main() {
     });
   });
 
+  group('DreamicAppInitHost — auto-retry', () {
+    testWidgets(
+        'autoRetryCount:1 — first Future errors, host silently re-runs (no error screen) and the retry Future succeeds → child mounts',
+        (tester) async {
+      var factoryCalls = 0;
+      final completers = <Completer<void>>[];
+
+      await tester.pumpWidget(
+        DreamicAppInitHost(
+          initFutureFactory: () {
+            factoryCalls++;
+            final c = Completer<void>();
+            completers.add(c);
+            return c.future;
+          },
+          minimumSplashDuration: Duration.zero,
+          autoRetryCount: 1,
+          autoRetryDelay: const Duration(milliseconds: 10),
+          splash: const _PlainSplash(),
+          errorBuilder: (context, retry) =>
+              const Text('error', textDirection: TextDirection.ltr),
+          child: const Text('child', textDirection: TextDirection.ltr),
+        ),
+      );
+      expect(factoryCalls, 1);
+
+      // First generation fails. The host consumes one auto-retry, keeps the
+      // splash up (NO error screen flashed), and schedules the re-mount.
+      completers[0].completeError(Exception('boom-1'));
+      await tester.pump();
+      expect(find.text('error'), findsNothing);
+      expect(find.text('splash'), findsOneWidget);
+      expect(factoryCalls, 1); // not re-run until the delay elapses
+
+      // After autoRetryDelay the gate re-mounts and the factory re-runs.
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(factoryCalls, 2);
+      expect(find.text('splash'), findsOneWidget);
+
+      // The retry generation succeeds → child mounts, error never shown.
+      completers[1].complete();
+      await tester.pumpAndSettle();
+      expect(find.text('child'), findsOneWidget);
+      expect(find.text('error'), findsNothing);
+    });
+
+    testWidgets(
+        'autoRetryCount:1 — budget exhausted: first errors (auto-retry), retry ALSO errors → manual error screen shown',
+        (tester) async {
+      var factoryCalls = 0;
+      final completers = <Completer<void>>[];
+
+      await tester.pumpWidget(
+        DreamicAppInitHost(
+          initFutureFactory: () {
+            factoryCalls++;
+            final c = Completer<void>();
+            completers.add(c);
+            return c.future;
+          },
+          minimumSplashDuration: Duration.zero,
+          autoRetryCount: 1,
+          autoRetryDelay: const Duration(milliseconds: 10),
+          splash: const _PlainSplash(),
+          errorBuilder: (context, retry) =>
+              const Text('error', textDirection: TextDirection.ltr),
+          child: const Text('child', textDirection: TextDirection.ltr),
+        ),
+      );
+
+      // First failure → silent auto-retry.
+      completers[0].completeError(Exception('boom-1'));
+      await tester.pump();
+      expect(find.text('error'), findsNothing);
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(factoryCalls, 2);
+
+      // Second failure → budget exhausted → the manual error screen shows.
+      completers[1].completeError(Exception('boom-2'));
+      await tester.pumpAndSettle();
+      expect(find.text('error'), findsOneWidget);
+      expect(find.text('child'), findsNothing);
+    });
+
+    testWidgets(
+        'default autoRetryCount is 1 — first failure silently retries with no explicit count',
+        (tester) async {
+      var factoryCalls = 0;
+      final completers = <Completer<void>>[];
+
+      await tester.pumpWidget(
+        DreamicAppInitHost(
+          initFutureFactory: () {
+            factoryCalls++;
+            final c = Completer<void>();
+            completers.add(c);
+            return c.future;
+          },
+          minimumSplashDuration: Duration.zero,
+          autoRetryDelay: const Duration(milliseconds: 10),
+          // autoRetryCount omitted → dreamic default (1).
+          splash: const _PlainSplash(),
+          errorBuilder: (context, retry) =>
+              const Text('error', textDirection: TextDirection.ltr),
+          child: const Text('child', textDirection: TextDirection.ltr),
+        ),
+      );
+
+      completers[0].completeError(Exception('boom-1'));
+      await tester.pump();
+      expect(find.text('error'), findsNothing); // splash held, not error
+      await tester.pump(const Duration(milliseconds: 10));
+      expect(factoryCalls, 2); // retried once by default
+    });
+
+    testWidgets(
+        'autoRetryCount:0 — first Future errors → error screen shown immediately, no silent retry',
+        (tester) async {
+      var factoryCalls = 0;
+      final completers = <Completer<void>>[];
+
+      await tester.pumpWidget(
+        DreamicAppInitHost(
+          initFutureFactory: () {
+            factoryCalls++;
+            final c = Completer<void>();
+            completers.add(c);
+            return c.future;
+          },
+          minimumSplashDuration: Duration.zero,
+          autoRetryCount: 0, // opt out of the new default (1)
+          splash: const _PlainSplash(),
+          errorBuilder: (context, retry) =>
+              const Text('error', textDirection: TextDirection.ltr),
+          child: const Text('child', textDirection: TextDirection.ltr),
+        ),
+      );
+
+      completers[0].completeError(Exception('boom'));
+      await tester.pumpAndSettle();
+      expect(find.text('error'), findsOneWidget);
+      expect(factoryCalls, 1);
+    });
+  });
+
   group('DreamicAppInitHost — optional errorBuilder (Issue 112)', () {
     testWidgets('no errorBuilder → gate falls back to its default error widget',
         (tester) async {
@@ -191,6 +339,7 @@ void main() {
         DreamicAppInitHost(
           initFutureFactory: () => completer.future,
           minimumSplashDuration: Duration.zero,
+          autoRetryCount: 0, // show the error path on first failure
           splash: const _PlainSplash(),
           // No errorBuilder supplied → host forwards null → gate default.
           child: const Text('child', textDirection: TextDirection.ltr),

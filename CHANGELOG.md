@@ -1,3 +1,193 @@
+## 0.10.0
+
+### Backend-agnostic error reporting (breaking) + Firebase App Check + startup resilience
+
+Three themes:
+
+1. **Breaking — error reporting is now fully backend-agnostic.** dreamic drops the
+   `firebase_crashlytics` dependency and ships **no** built-in reporter; you
+   register one `ErrorReporter` and dreamic routes every signal to it. Apps that
+   relied on the built-in Crashlytics default must wire a reporter (drop-in
+   template provided).
+2. **Firebase App Check** becomes a first-class, opt-in capability — attestation
+   with no app-specific activation code.
+3. **Startup resilience & diagnosability** — the 0.9 splash-first startup is
+   hardened against transient cold-start failures and a true hang is made
+   diagnosable. Two default behaviors change here (auto-retry once; bounded
+   Firebase init).
+
+#### ⚠️ Breaking: error reporting is backend-agnostic
+
+* **`firebase_crashlytics` removed from dreamic's dependencies.** dreamic no
+  longer references any crash SDK, so it is no longer forced onto every consumer.
+* **dreamic ships no concrete reporter** and routes every signal — uncaught
+  Flutter / platform / isolate errors, `loge()`, the early-error buffer, bootstrap
+  diagnostics, and breadcrumbs — to the **one** `ErrorReporter` you register via
+  `configureErrorReporting(...)`. (Previously it dual-routed to Crashlytics **and**
+  a custom reporter; now it routes to a single sink.)
+* **`ErrorReporter` — breadcrumbs and user-context folded in.** `recordError` is
+  now the only required member; `initialize`, `recordFlutterError` (defaults to
+  forwarding to `recordError`), `addBreadcrumb`, `setUser`, and `clearUser` all
+  have default bodies. **Use `extends ErrorReporter`** so you override only what
+  you support — `implements ErrorReporter` now requires all six. The separate
+  `ErrorReporterUserContext` and `ErrorReporterBreadcrumbs` interfaces are
+  **removed** (folded into `ErrorReporter`).
+* **`ErrorReportingConfig` changes.** Removed `useFirebaseCrashlytics` and the
+  `ErrorReportingConfig.firebaseOnly` / `.both` constructors. Added
+  `reporterRequiresFirebase` (`bool`, default `false`) — set `true` for a reporter
+  that needs Firebase initialized first (e.g. Crashlytics) so dreamic attaches it
+  **after** Firebase init; `customOnly(...)` gains a matching `requiresFirebase`
+  parameter. A `null` `customReporter` (the default) means **no reporting**
+  (console only).
+
+**Migration:**
+
+* **Crashlytics users:** add `firebase_crashlytics` to **your** pubspec and
+  implement a small `ErrorReporter` backed by `FirebaseCrashlytics` (override
+  `recordError` → `recordError`, `recordFlutterError`, `addBreadcrumb` → `log`,
+  `setUser` → `setUserIdentifier`), then register it with `requiresFirebase: true`:
+  `configureErrorReporting(ErrorReportingConfig.customOnly(reporter: MyCrashlyticsReporter(), requiresFirebase: true, enableOnWeb: false))`.
+* **Sentry / custom reporters:** change `implements ErrorReporter` →
+  `extends ErrorReporter`; turn any `ErrorReporterUserContext` `setUser`/`clearUser`
+  and breadcrumb methods into `@override`s of the now-built-in members and drop the
+  `implements ErrorReporterUserContext` / `ErrorReporterBreadcrumbs` clauses.
+* **No reporting:** omit `configureErrorReporting(...)` (or pass a `null`
+  reporter) — dreamic logs to the console only.
+
+**New: Firebase App Check (opt-in, off by default):**
+
+* dreamic now owns App Check activation as a first-class bootstrap capability
+  (like Remote Config). Opt in by passing an `AppCheckConfig` to
+  `dreamicBootstrap(appCheck: …)`; `null` (the default) skips App Check entirely,
+  so existing apps are unaffected and need no changes. No app-specific activation
+  code is required.
+* `AppCheckConfig` selects the right provider per platform (debug providers vs.
+  `AndroidPlayIntegrityProvider` / `AppleAppAttestWithDeviceCheckFallbackProvider`
+  / reCAPTCHA) with a **keyless-web guard** (an empty site key falls back to
+  `WebDebugProvider` rather than throwing "Missing required parameters: sitekey"
+  on a keyless release web build). Fields: `webRecaptchaSiteKey`,
+  `webRecaptchaEnterprise` (default `true` → reCAPTCHA Enterprise, else v3),
+  `webProviderOverride` / `androidProviderOverride` / `appleProviderOverride`
+  (advanced — used verbatim), `tokenAutoRefreshEnabled` (default `true`), and
+  `activationTimeout` (default 8s).
+* **First-class, environment-aware config (no per-call wiring).** The
+  environment-varying inputs now resolve from `AppConfigBase` (dart-define →
+  programmatic default — NOT Remote Config, since App Check activates before RC),
+  so the typical call is `appCheck: const AppCheckConfig()`:
+  * **`APP_CHECK_DEBUG`** → `AppConfigBase.appCheckUseDebugProviders` decides
+    debug-vs-**real** attestation **independently of `kDebugMode`** — so a debug
+    build can attest for real against staging/prod (e.g. `flutter run
+    --dart-define=ENVIRONMENT_TYPE=staging --dart-define=APP_CHECK_DEBUG=false`).
+    Default when unset: **real everywhere except the emulator** (`emulator`
+    environment / `doUseBackendEmulator`), because the emulator bypasses App Check
+    so real attestation there is pointless.
+  * **`APP_CHECK_RECAPTCHA_SITE_KEY`** → `AppConfigBase.appCheckRecaptchaSiteKey`
+    is used when `AppCheckConfig.webRecaptchaSiteKey` is empty (reCAPTCHA site keys
+    are public, so a dart-define / per-flavor value is not a secret).
+  * **`APP_CHECK_ENABLED`** → `AppConfigBase.appCheckEnabled` (default `true`) is a
+    per-build kill switch: disable activation for a single build without removing
+    the config from `main()`. (App Check is still entirely off when no config is
+    passed.)
+  The `*Override` fields remain the verbatim escape hatch. (App Check enforcement
+  is a server/console-side setting per project; activating on the client only
+  attests — it does not enforce.)
+* Activation is **bounded + never fatal.** App Check is consumed lazily (the
+  token is fetched on the first attested backend call; enforcement is handled by
+  Firebase, not the client), so hard-blocking boot on activation would brick the
+  app on a transient reCAPTCHA/network hiccup for zero security gain. A timeout or
+  failure is reported (via the deferred-diagnostic path below, so a post-Firebase
+  reporter such as Crashlytics sees it too) and boot continues; App Check then
+  attests lazily. Activated early (right after `afterFirebaseInit`, before remote
+  config / services) so it is in place before any attested call.
+
+**New API (optional, non-breaking):**
+
+* `DreamicAppInitHost.autoRetryCount` (`int`, default `1`) and `.autoRetryDelay`
+  (`Duration`, default 800ms) — on a bootstrap failure the host silently re-runs
+  the bootstrap, keeping the **same** splash up (no error-screen flash), up to
+  `autoRetryCount` times before falling back to the manual `errorBuilder`. A
+  transient cold-start failure (a contended IndexedDB lock on web, a flaky first
+  network call) self-heals the same way a manual Retry tends to. The budget is
+  per host lifetime and is **not** replenished by a manual retry. **Behavior
+  change:** with the default `1`, a *deterministic* failure surfaces the error
+  screen one bootstrap cycle later than before. Set `autoRetryCount: 0` to
+  restore the previous show-error-on-first-failure behavior.
+* `dreamicBootstrap(firebaseInitTimeout: …)` (`Duration?`, default 30s) and
+  `dreamicBootstrap(firebaseRecoverIfRegisteredAfter: …)` (`Duration?`, default
+  4s) — a **two-tier** bound on Firebase init alone, threaded into
+  `appInitFirebase` as `settleTimeout` + `recoverIfRegisteredAfter`. Targets a
+  **confirmed** returning-device **iOS WebKit** cold-start hang:
+  `Firebase.initializeApp()` registers the app, then `firebase_auth_web`'s
+  `onWaitInitState` permanently blocks on the persisted-session IndexedDB read of
+  `firebaseLocalStorageDb` (whose callback never fires on iOS WebKit), so
+  `initializeApp` hangs forever. **Tier 1 (grace, 4s):** if init hasn't settled
+  but the app IS registered, recover immediately via `Firebase.app()` — the same
+  short-circuit a manual retry takes — catching the permanent hang fast. **Tier 2
+  (settle, 30s):** if the app is NOT yet registered at the grace (a slow-but-
+  healthy SDK load), keep waiting the remainder rather than false-tripping a slow
+  cold start into a retry; on the bound, recover if finally registered, else throw
+  a diagnosable `TimeoutException` into the host's auto-retry / error path. A
+  registered-app recovery is **reported** (not swallowed). 30s never legitimately
+  trips. Pass `firebaseInitTimeout: null` to disable (the grace is then ignored).
+* `appInitFirebase(options, {Duration? settleTimeout, Duration? recoverIfRegisteredAfter})`
+  — the underlying two-tier bound. Both `null` (the defaults for direct callers)
+  preserve the prior unbounded await, so direct callers are unaffected.
+* `dreamicBootstrap(attachErrorReportingFirst: …)` (`bool?`, default `null`) —
+  controls whether the error reporter attaches **before** Firebase init
+  (catching a step-1 / `afterFirebaseInit` failure, including the outer
+  hang-timeout firing during them) or after it. The default `null` **derives**
+  the right choice from the configured error-reporting config: attach early
+  **iff** there is a reporter that does **not** require Firebase
+  (`reporterRequiresFirebase: false`, e.g. Sentry). So a self-contained
+  (Sentry-style) consumer gets maximal startup error coverage for free, while a
+  Firebase-dependent reporter (e.g. Crashlytics with `requiresFirebase: true`)
+  keeps the post-Firebase attach. Pass an explicit `true`/`false` to override the
+  derivation. For the derivation to see your config, call
+  `configureErrorReporting(...)` before `dreamicBootstrap` (the canonical
+  pre-`runApp` `main()` line).
+* `runBoundedNonCritical(work, {required timeout, required label})` — a public
+  helper that runs **non-critical** post-init hook work with a hard timeout,
+  swallowing a throw OR a timeout (reported via the deferred-diagnostic path,
+  tagged with `label`) so it can never abort or stall the bootstrap. Use it for
+  fire-and-settle setup (an analytics warm-up, a timezone service, …) inside a
+  hook; the in-flight Future is **not** cancelled (Dart cannot) and completes in
+  the background. (App Check no longer needs this — it is now first-class above.)
+* `DreamicAppInitGate.onInitError` (`void Function(Object)?`) — a notification
+  fired once when the init Future errors, after the error is `loge`'d and before
+  the gate transitions to its error branch. It does **not** suppress
+  `errorWidget`; it lets a parent re-mount the gate before the error branch
+  paints. This is how `DreamicAppInitHost` drives its auto-retry.
+* Breadcrumbs: `logBreadcrumb(message, {category, data})` (and `Logger.breadcrumb`)
+  records a trail event to the registered reporter for context leading up to a
+  later error (e.g. the Firebase-init sequence before a startup-hang report). It
+  routes to `ErrorReporter.addBreadcrumb` — a reporter that doesn't override it
+  (or no reporter at all) is a silent no-op. dreamic emits bootstrap breadcrumbs
+  internally.
+
+**Diagnosability:**
+
+* The outer `bootstrapTimeout` now throws a `TimeoutException` that **names the
+  step in flight** (`dreamicBootstrap hung for 45s during step "…"`) instead of a
+  bare "Future not completed" — so a hang (which has no stack trace of its own) is
+  diagnosable. With the early reporter attach, even a hang during Firebase init
+  reaches the backend.
+* **Deferred bootstrap diagnostics close the "silent post-Firebase recovery"
+  gap.** A diagnostic that fires *before* the reporter attaches — the
+  `appInitFirebase` registered-app recovery (Firebase step) and an App Check
+  activation failure (right after) — is now buffered (bounded, drop-oldest) and
+  flushed to the reporter the instant `appInitErrorHandling` attaches; later ones
+  report immediately. Previously these reached only a reporter attached **before**
+  Firebase; a reporter attached **after** Firebase (e.g. Crashlytics) now sees
+  them too.
+
+**Dependencies:**
+
+* **Removed `firebase_crashlytics`** (breaking — see above). dreamic no longer
+  depends on any crash SDK.
+* Added `firebase_app_check: ^0.4.5` under `dependencies:` — powers the new
+  first-class App Check capability; inert unless you pass an `AppCheckConfig` to
+  `dreamicBootstrap`.
+
 ## 0.9.2
 
 - Fixed: error handlers no longer blind debug tooling. Every `FlutterError.onError`

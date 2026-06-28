@@ -10,7 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// Spy that captures errors routed through `loge()` (both the logged message
 /// and the reported error object). Wired via `Logger.setCustomErrorReporter`
 /// + `Logger.setErrorReportingConfig`.
-class _SpyErrorReporter implements ErrorReporter {
+class _SpyErrorReporter extends ErrorReporter {
   final List<Object> recordedErrors = [];
 
   @override
@@ -155,6 +155,33 @@ void main() {
       // The handled `.then(onError:)` async error is reported via `loge()`,
       // which routes to the error backend (the spy reporter here).
       expect(spy.recordedErrors, contains(error));
+    });
+
+    testWidgets(
+        'onInitError is called with the error on Future throw (host auto-retry hook)',
+        (tester) async {
+      final completer = Completer<void>();
+      final error = Exception('init-failed');
+      final received = <Object>[];
+
+      await tester.pumpWidget(
+        DreamicAppInitGate(
+          initFuture: completer.future,
+          minimumSplashDuration: Duration.zero,
+          splash: const _PlainSplash(),
+          errorWidget: const _PlainError(),
+          onInitError: received.add,
+          child: const Text('child', textDirection: TextDirection.ltr),
+        ),
+      );
+
+      completer.completeError(error);
+      await tester.pumpAndSettle();
+
+      // The hook fired once with the error; the gate still showed its error
+      // branch (the hook is a notification, not a suppressor).
+      expect(received, [error]);
+      expect(find.text('custom-error'), findsOneWidget);
     });
   });
 

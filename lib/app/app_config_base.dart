@@ -1063,6 +1063,97 @@ class AppConfigBase {
     return _backendFirestoreDatabaseId;
   }
 
+  // ---------------------------------------------------------------------------
+  // Firebase App Check (first-class, early-resolved config)
+  //
+  // App Check activates at bootstrap step 1b — BEFORE Remote Config (step 3) —
+  // so these knobs resolve from the dart-define → programmatic-default tiers
+  // only (never RC), mirroring [backendFirestoreDatabaseId]. See AppCheckConfig.
+  // ---------------------------------------------------------------------------
+
+  static String? _appCheckRecaptchaSiteKeyDefault;
+
+  /// Programmatic default for [appCheckRecaptchaSiteKey]. Set this from your
+  /// app's config (before bootstrap). Overridden by the
+  /// `APP_CHECK_RECAPTCHA_SITE_KEY` dart-define when provided.
+  ///
+  /// NOTE: reCAPTCHA **site** keys are public by design (they ship in the web
+  /// page), so a dart-define or per-flavor hardcode here is not a secret leak —
+  /// only the reCAPTCHA *secret* (server/console-side) must stay private.
+  static set appCheckRecaptchaSiteKeyDefault(String? value) =>
+      _appCheckRecaptchaSiteKeyDefault = value;
+
+  static String? _appCheckRecaptchaSiteKey;
+
+  /// The web reCAPTCHA site key App Check uses on web. Empty ⇒ web falls back to
+  /// the debug provider (keyless-web guard in [AppCheckConfig.resolveWebProvider]).
+  ///
+  /// Set via `--dart-define=APP_CHECK_RECAPTCHA_SITE_KEY=…` or programmatically
+  /// via [appCheckRecaptchaSiteKeyDefault]. Resolved once on first read.
+  static String get appCheckRecaptchaSiteKey {
+    if (_appCheckRecaptchaSiteKey == null) {
+      const envValue = String.fromEnvironment('APP_CHECK_RECAPTCHA_SITE_KEY');
+      _appCheckRecaptchaSiteKey =
+          envValue.isNotEmpty ? envValue : (_appCheckRecaptchaSiteKeyDefault ?? '');
+    }
+    return _appCheckRecaptchaSiteKey!;
+  }
+
+  /// For testing only: override the resolved [appCheckRecaptchaSiteKey].
+  @visibleForTesting
+  static set appCheckRecaptchaSiteKeyOverride(String? value) =>
+      _appCheckRecaptchaSiteKey = value;
+
+  static bool? _appCheckUseDebugProviders;
+
+  /// Whether App Check uses the DEBUG attestation providers instead of the real
+  /// ones (Play Integrity / App Attest / reCAPTCHA).
+  ///
+  /// Deliberately decoupled from `kDebugMode`: build mode and attestation target
+  /// are different axes — a *debug build* may need *real* attestation (e.g. when
+  /// run against staging). Resolution:
+  ///   1. `--dart-define=APP_CHECK_DEBUG=true|false` if provided, else
+  ///   2. derived — debug providers ONLY when the app is pointed at the Firebase
+  ///      emulator ([doUseBackendEmulator], or [environmentType] == `emulator`);
+  ///      **real** attestation in every real-backend environment (development /
+  ///      test / staging / production). Enforcing real attestation against an
+  ///      emulated backend is pointless (the emulator bypasses App Check), so the
+  ///      emulator is the one environment that defaults to debug providers.
+  static bool get appCheckUseDebugProviders {
+    if (_appCheckUseDebugProviders == null) {
+      const raw = String.fromEnvironment('APP_CHECK_DEBUG');
+      if (raw.isNotEmpty) {
+        _appCheckUseDebugProviders = raw == 'true';
+      } else {
+        _appCheckUseDebugProviders =
+            doUseBackendEmulator || environmentType == EnvironmentType.emulator;
+      }
+    }
+    return _appCheckUseDebugProviders!;
+  }
+
+  /// For testing only: override [appCheckUseDebugProviders].
+  @visibleForTesting
+  static set appCheckUseDebugProvidersOverride(bool? value) =>
+      _appCheckUseDebugProviders = value;
+
+  static bool? _appCheckEnabled;
+
+  /// Per-build enable gate for App Check. Default `true` — when an
+  /// [AppCheckConfig] is passed to `dreamicBootstrap`, App Check activates. Set
+  /// `--dart-define=APP_CHECK_ENABLED=false` to disable activation for a single
+  /// build (e.g. local debugging) WITHOUT removing the config from `main()`.
+  /// (App Check is still entirely off when no config is passed at all.)
+  static bool get appCheckEnabled {
+    _appCheckEnabled ??=
+        const String.fromEnvironment('APP_CHECK_ENABLED', defaultValue: 'true') == 'true';
+    return _appCheckEnabled!;
+  }
+
+  /// For testing only: override [appCheckEnabled].
+  @visibleForTesting
+  static set appCheckEnabledOverride(bool? value) => _appCheckEnabled = value;
+
   static bool? _doUseBackendEmulator;
   static bool get doUseBackendEmulator {
     _doUseBackendEmulator ??= const String.fromEnvironment('DO_USE_BACKEND_EMULATOR',

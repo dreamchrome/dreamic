@@ -79,6 +79,7 @@ class DreamicAppInitGate extends StatefulWidget {
     required this.splash,
     required this.child,
     this.errorWidget,
+    this.onInitError,
     this.minimumSplashDuration = const Duration(milliseconds: 800),
   });
 
@@ -113,6 +114,16 @@ class DreamicAppInitGate extends StatefulWidget {
   /// have it trigger a `Key` change to re-mount the gate. [DreamicAppInitHost]
   /// provides this.
   final Widget? errorWidget;
+
+  /// Optional callback fired (once) when [initFuture] errors, after the error
+  /// is `loge`'d and before/as the gate transitions to its error branch.
+  ///
+  /// Lets a parent (e.g. [DreamicAppInitHost]) react to a bootstrap failure —
+  /// notably to auto-retry by re-mounting the gate via a `Key` change before
+  /// the [errorWidget] is shown. The gate still transitions to its error state
+  /// regardless; if the parent re-mounts, that errored State is disposed before
+  /// it paints. This is a notification only — it does not suppress [errorWidget].
+  final void Function(Object error)? onInitError;
 
   /// The minimum time the [splash] is held before the success→[child]
   /// transition, defaulting to `const Duration(milliseconds: 800)`.
@@ -170,6 +181,10 @@ class _DreamicAppInitGateState extends State<DreamicAppInitGate> {
         // swallowed in release. `loge()` both logs AND reports to the error
         // backend (Crashlytics / custom reporter) when attached.
         loge(error, 'DreamicAppInitGate: initialization failed', stackTrace);
+        // Notify the parent (e.g. the host's auto-retry) BEFORE transitioning,
+        // so it can re-mount this gate via a `Key` change and the errored State
+        // is disposed before its error branch ever paints.
+        widget.onInitError?.call(error);
         // The min-hold gates only the success→child transition; show the
         // error immediately without waiting out `minimumSplashDuration` — and
         // cancel the pending min-hold timer (its only purpose was the

@@ -2,8 +2,10 @@ import 'package:dreamic/error_reporting/error_reporter_interface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Mock error reporter for testing
-class MockErrorReporter implements ErrorReporter {
+/// Mock error reporter for testing. `extends ErrorReporter` so it inherits the
+/// default no-op `addBreadcrumb` / `setUser` / `clearUser`, overriding only what
+/// it cares about.
+class MockErrorReporter extends ErrorReporter {
   bool initializeCalled = false;
   final List<Object> recordedErrors = [];
   final List<FlutterErrorDetails> recordedFlutterErrors = [];
@@ -30,20 +32,17 @@ class MockErrorReporter implements ErrorReporter {
   }
 }
 
+/// A minimal reporter that overrides ONLY [recordError] — proving the other
+/// members have working defaults.
+class MinimalErrorReporter extends ErrorReporter {
+  final List<Object> recordedErrors = [];
+
+  @override
+  void recordError(Object error, StackTrace? stackTrace) => recordedErrors.add(error);
+}
+
 void main() {
   group('ErrorReportingConfig', () {
-    test('firebaseOnly creates correct configuration', () {
-      const config = ErrorReportingConfig.firebaseOnly(
-        enableInDebug: true,
-        enableOnWeb: false,
-      );
-
-      expect(config.customReporter, isNull);
-      expect(config.useFirebaseCrashlytics, isTrue);
-      expect(config.enableInDebug, isTrue);
-      expect(config.enableOnWeb, isFalse);
-    });
-
     test('customOnly creates correct configuration', () {
       final reporter = MockErrorReporter();
       final config = ErrorReportingConfig.customOnly(
@@ -53,32 +52,53 @@ void main() {
       );
 
       expect(config.customReporter, equals(reporter));
-      expect(config.useFirebaseCrashlytics, isFalse);
       expect(config.enableInDebug, isFalse);
       expect(config.enableOnWeb, isTrue);
+      expect(config.reporterRequiresFirebase, isFalse);
+      expect(config.customReporterManagesErrorHandlers, isFalse);
     });
 
-    test('both creates correct configuration', () {
+    test('customOnly honors requiresFirebase + managesOwnErrorHandlers', () {
       final reporter = MockErrorReporter();
-      final config = ErrorReportingConfig.both(
+      final config = ErrorReportingConfig.customOnly(
         reporter: reporter,
-        enableInDebug: true,
-        enableOnWeb: true,
+        requiresFirebase: true,
+        managesOwnErrorHandlers: true,
       );
 
-      expect(config.customReporter, equals(reporter));
-      expect(config.useFirebaseCrashlytics, isTrue);
-      expect(config.enableInDebug, isTrue);
-      expect(config.enableOnWeb, isTrue);
+      expect(config.reporterRequiresFirebase, isTrue);
+      expect(config.customReporterManagesErrorHandlers, isTrue);
     });
 
-    test('default configuration uses Firebase only', () {
+    test('default configuration has no reporter (no reporting)', () {
       const config = ErrorReportingConfig();
 
       expect(config.customReporter, isNull);
-      expect(config.useFirebaseCrashlytics, isTrue);
       expect(config.enableInDebug, isFalse);
       expect(config.enableOnWeb, isFalse);
+      expect(config.reporterRequiresFirebase, isFalse);
+    });
+  });
+
+  group('ErrorReporter defaults (folded-in members)', () {
+    test('minimal reporter: addBreadcrumb / setUser / clearUser are no-op', () {
+      final reporter = MinimalErrorReporter();
+
+      // None of the default members throw, and none route to recordError.
+      reporter.addBreadcrumb('crumb', category: 'bootstrap', data: {'k': 'v'});
+      reporter.setUser('uid-1', email: 'a@b.c', username: 'ab');
+      reporter.clearUser();
+
+      expect(reporter.recordedErrors, isEmpty);
+    });
+
+    test('minimal reporter: recordFlutterError defaults to recordError', () {
+      final reporter = MinimalErrorReporter();
+      final ex = Exception('flutter');
+
+      reporter.recordFlutterError(FlutterErrorDetails(exception: ex));
+
+      expect(reporter.recordedErrors, equals([ex]));
     });
   });
 

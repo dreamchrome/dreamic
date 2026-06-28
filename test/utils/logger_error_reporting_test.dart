@@ -1,11 +1,13 @@
 import 'package:dreamic/app/app_config_base.dart';
+import 'package:dreamic/app/helpers/app_errorhandling_init.dart';
 import 'package:dreamic/error_reporting/error_reporter_interface.dart';
 import 'package:dreamic/utils/logger.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Mock error reporter for testing logger behavior
-class MockLoggerErrorReporter implements ErrorReporter {
+/// Mock error reporter for testing logger behavior. `extends ErrorReporter` so it
+/// inherits the default no-op breadcrumb/user-context members.
+class MockLoggerErrorReporter extends ErrorReporter {
   final List<Object> recordedErrors = [];
   final List<FlutterErrorDetails> recordedFlutterErrors = [];
 
@@ -25,6 +27,16 @@ class MockLoggerErrorReporter implements ErrorReporter {
   void reset() {
     recordedErrors.clear();
     recordedFlutterErrors.clear();
+  }
+}
+
+/// A reporter that overrides the (now first-class) [ErrorReporter.addBreadcrumb].
+class MockBreadcrumbReporter extends MockLoggerErrorReporter {
+  final List<String> breadcrumbs = [];
+
+  @override
+  void addBreadcrumb(String message, {String? category, Map<String, dynamic>? data}) {
+    breadcrumbs.add(message);
   }
 }
 
@@ -51,11 +63,10 @@ void main() {
     });
 
     test('Scenario 1: No custom reporter - logs to console only', () {
-      // Config with no custom reporter, Firebase disabled
-      // (we can't mock Firebase in unit tests)
+      // Config with no custom reporter — dreamic has no built-in reporter, so
+      // nothing is recorded (console only).
       Logger.setErrorReportingConfig(
         const ErrorReportingConfig(
-          useFirebaseCrashlytics: false,
           enableInDebug: true,
         ),
       );
@@ -154,6 +165,97 @@ void main() {
       loge(Exception('Error 3'));
 
       expect(mockReporter.recordedErrors, hasLength(3));
+    });
+  });
+
+  group('Logger.breadcrumb — routes to the reporter', () {
+    test('routes to a reporter that overrides addBreadcrumb', () {
+      final reporter = MockBreadcrumbReporter();
+      Logger.setCustomErrorReporter(reporter);
+
+      logBreadcrumb('step: appInitFirebase', category: 'bootstrap');
+
+      expect(reporter.breadcrumbs, ['step: appInitFirebase']);
+    });
+
+    test('is a silent no-op for a reporter that does NOT override it', () {
+      // The plain mock inherits ErrorReporter's default no-op addBreadcrumb —
+      // this must not throw.
+      Logger.setCustomErrorReporter(MockLoggerErrorReporter());
+      expect(() => logBreadcrumb('ignored'), returnsNormally);
+    });
+
+    test('is a silent no-op when there is no custom reporter', () {
+      Logger.setCustomErrorReporter(null);
+      expect(() => logBreadcrumb('ignored'), returnsNormally);
+    });
+  });
+
+  group('reportBootstrapDiagnostic — defer before attach, flush on attach', () {
+    late MockLoggerErrorReporter reporter;
+    FlutterExceptionHandler? savedFlutterOnError;
+    late final savedPlatformOnError = PlatformDispatcher.instance.onError;
+
+    setUp(() {
+      resetEarlyErrorHandlersForTest();
+      reporter = MockLoggerErrorReporter();
+      Logger.setErrorReportingConfig(null);
+      Logger.setCustomErrorReporter(null);
+      configureErrorReporting(const ErrorReportingConfig());
+      // Force reporting on under the debug test runner.
+      AppConfigBase.doUseBackendEmulatorOverride = false;
+      AppConfigBase.doDisableErrorReportingOverride = false;
+      AppConfigBase.doForceErrorReportingOverride = true;
+      // appInitErrorHandling installs global handlers — save to restore.
+      savedFlutterOnError = FlutterError.onError;
+    });
+
+    tearDown(() {
+      FlutterError.onError = savedFlutterOnError;
+      PlatformDispatcher.instance.onError = savedPlatformOnError;
+      AppConfigBase.doUseBackendEmulatorOverride = null;
+      AppConfigBase.doDisableErrorReportingOverride = null;
+      AppConfigBase.doForceErrorReportingOverride = null;
+      Logger.setErrorReportingConfig(null);
+      Logger.setCustomErrorReporter(null);
+      configureErrorReporting(const ErrorReportingConfig());
+      resetEarlyErrorHandlersForTest();
+    });
+
+    test('a diagnostic reported BEFORE attach is delivered when the reporter attaches',
+        () async {
+      configureErrorReporting(
+        ErrorReportingConfig.customOnly(
+          reporter: reporter,
+          enableInDebug: true,
+          enableOnWeb: true,
+        ),
+      );
+
+      final err = Exception('firebase-init-recovered');
+      // Pre-attach (mirrors appInitFirebase recovery at step 1 on a Crashlytics
+      // consumer, before the reporter attaches at step 2): must be deferred.
+      reportBootstrapDiagnostic(err, 'recovery');
+      expect(reporter.recordedErrors, isEmpty);
+
+      // Attaching the reporter flushes the deferred diagnostic to it.
+      await appInitErrorHandling();
+      expect(reporter.recordedErrors, contains(err));
+    });
+
+    test('a diagnostic reported AFTER attach reports immediately', () async {
+      configureErrorReporting(
+        ErrorReportingConfig.customOnly(
+          reporter: reporter,
+          enableInDebug: true,
+          enableOnWeb: true,
+        ),
+      );
+      await appInitErrorHandling();
+
+      final err = Exception('later');
+      reportBootstrapDiagnostic(err, 'after');
+      expect(reporter.recordedErrors, contains(err));
     });
   });
 }
