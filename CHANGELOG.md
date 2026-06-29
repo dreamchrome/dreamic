@@ -1,3 +1,184 @@
+## 0.11.0
+
+### Error-reporting hardening: capture completeness, breadcrumb gating, fail-closed redaction, multi-backend fan-out
+
+All changes are **additive / non-breaking** — existing call sites are unchanged
+and `ErrorReporter` gained only default-bodied members, not new abstract
+requirements. Consumers raise their `dreamic` constraint to `^0.11.0` and
+reconcile their reporter against the canonical commented example
+(`lib/error_reporting/error_reporter_example.dart`). This CHANGELOG entry is the
+sync mechanism — **there is no automated parity test** (ERH-024, ERH-025).
+
+This release funnels **every** error signal (Flutter-framework, async/platform,
+isolate, explicit `loge()`, and — on web under Path A′ — JS
+`window.onerror`/`unhandledrejection`) through one Dart chokepoint, fans out to
+one or more backends, gates + redacts breadcrumbs, and makes the capture path
+non-throwing and re-entrancy-safe.
+
+#### New API (all optional / additive)
+
+* **`DreamicErrorHandling`** (`lib/error_reporting/dreamic_error_handling.dart`) —
+  the public, backend-agnostic capture facade a consumer `main()` wires up:
+  * `DreamicErrorHandling.runGuarded(body, [onError])` — the lifelong, outermost
+    `runZonedGuarded` wrap around `runApp`. `onError` defaults to
+    `recordZoneError`, so the common case is
+    `DreamicErrorHandling.runGuarded(() => runApp(...))` (ERH-001 / BEH-1).
+  * `DreamicErrorHandling.recordZoneError(error, stackTrace)` — the public record
+    entry the zone's `onError` (and the web-JS handlers) route through; forwards
+    into the private chokepoint.
+  * `DreamicErrorHandling.installEarlyWebErrorHandlers()` — apply-once install of
+    the Dart `window` `'error'`/`'unhandledrejection'` listeners (no-op on
+    VM/mobile via a conditional import). Call at boot-step-3 **only under Path A′**
+    (see Web capture below). Web errors are serialized to a typed `WebJsError`
+    (`message` verbatim for redaction; `stack` via `StackTrace.fromString` with a
+    `StackTrace.current` fallback) and routed through the chokepoint; each handler
+    suppresses the browser default via `event.preventDefault()`.
+  * `recordCapturedError(error, stackTrace)` (top-level in
+    `app/helpers/app_errorhandling_init.dart`) — the public forwarder into the
+    still-private `_recordErrorSafe` chokepoint.
+* **`CompositeErrorReporter(List<ErrorReporter> reporters)`**
+  (`lib/error_reporting/composite_error_reporter.dart`) — a dreamic-public
+  primitive that runs multiple backends concurrently (e.g. Sentry + Crashlytics).
+  Fans every call (`recordError`, `recordFlutterError`, `addBreadcrumb`,
+  `setUser`, `clearUser`) to each child in its **own** try/catch (one child's
+  failure never blocks the others — BEH-2, BEH-11). `initialize()` uses
+  `Future.wait(..., eagerError: false)` over `Future.sync(() => child.initialize())`
+  so a child that throws **synchronously** is caught too; a failed child is logged
+  (console only) and skipped on every subsequent call (ERH-023, ERH-043). The
+  flags (`reporterRequiresFirebase` / `customReporterManagesErrorHandlers`) still
+  live on `ErrorReportingConfig`; the consumer passes the **OR'd** values across
+  the children it composes (ERH-007).
+* **`AppConfigBase.breadcrumbLevel`** — a new `LogLevel` getter mirroring
+  `logLevel` (dart-define `breadcrumbLevel` → Remote Config `breadcrumbLevel` →
+  default `info`), evaluated at breadcrumb-**emit** time and **independent of the
+  console `logLevel`**. The valid domain is restricted to `{debug, info, warn,
+  error}` — validated **inline in the getter** (an out-of-domain value, incl.
+  `debugVerbose`, falls back to `info` with a one-time console warning), NOT via
+  `configBounds` (ERH-008, ERH-019, ERH-027). `breadcrumbLevelDefault` setter
+  added. Lowering it to `debug` via Remote Config promotes `logd` to breadcrumbs
+  with no redeploy (BEH-3, BEH-4). **Deferred deployment step (ERH-044):** seed
+  the `breadcrumbLevel` RC key (default `info`, domain `{debug,info,warn,error}`)
+  per environment to exercise BEH-4; until seeded the getter falls back to `info`
+  (no key ⇒ default, not an error).
+* **`Logger.breadcrumb()` / `logBreadcrumb()`** gained an optional
+  `LogLevel level = LogLevel.info` param (ERH-031). Existing call sites are
+  unchanged (non-breaking). A breadcrumb below `breadcrumbLevel` is dropped at
+  emit time; gating uses **`LogLevel` only** — never a backend level type
+  (the `LogLevel`→`SentryLevel` map is Sentry-side — ERH-026).
+
+#### Behavior changes (internal, no API change for existing callers)
+
+* **Central fail-closed redaction in `Logger`** (`redactErrorForReporting` +
+  breadcrumb redaction). The message **and every value in a breadcrumb's `data`
+  map** are scrubbed (v1 patterns: `oobCode`, `Bearer`/token, email-in-URL)
+  before forwarding. On any redaction failure it **fails closed** — the field is
+  replaced with a placeholder derived from the error's `runtimeType` (e.g.
+  `[redaction-error: NotAllowedError]`), **never** `toString()` (which could
+  embed a secret), with a console-only diagnostic; nothing unredacted is ever
+  forwarded (ERH-005, ERH-017, ERH-047 / BEH-8). Redaction now also runs on the
+  `loge()` → `_crashReport` forward path, so a direct `loge()`, the early-error
+  buffer flush, and deferred bootstrap diagnostics all get the same scrubbing as
+  the chokepoint (the original object is returned untouched in the common
+  no-secret case, so the `loge()` regression path is unchanged).
+* **Error chokepoint** (`_recordErrorSafe`, reached via the public
+  `recordZoneError` / `recordCapturedError`): a module-level re-entrancy guard
+  (`_reportingInFlight` — an error raised while reporting is console-only, never
+  re-entered), a bounded `(error, stackTrace)`-identity dedup set (capacity 20,
+  FIFO) checked on the **original** identity **before** redaction (so a
+  fail-closed placeholder can never collapse two distinct errors — ERH-003,
+  ERH-028 / BEH-9), and a pre-attach buffering fallback so zone/web-JS/isolate
+  errors fired before attach are retained (ERH-011 / BEH-12).
+* **Pre-attach early-breadcrumb buffer** (`_earlyBreadcrumbBuffer`, ~50 cap,
+  drop-oldest) parallel to the early-error buffer. `Logger.breadcrumb()` buffers
+  into it (after gate + redaction) when no reporter is attached; on attach
+  `appInitErrorHandling()` flushes **breadcrumbs first, then errors** so each
+  early error carries its preceding breadcrumb context, and flushed breadcrumbs
+  are **not** re-redacted (ERH-022, ERH-032 / BEH-12).
+* **Isolate listener re-routed** (mobile) — the existing
+  `Isolate.current.addErrorListener` now calls the chokepoint
+  (`_recordErrorSafe`) instead of the reporter directly, so isolate errors get
+  the same re-entrancy guard, dedup, and redaction (ERH-021 / BEH-1, BEH-9,
+  BEH-11). Registered at attach, apply-once; it does **not** buffer pre-attach
+  isolate errors (those are covered by the early `FlutterError.onError` /
+  `PlatformDispatcher.onError` handlers — ERH-029).
+* **Wakelock is mobile-only.** `WakelockPlus.enable()` in `app_configs_init.dart`
+  is now guarded with `if (!kIsWeb)` (hard, non-configurable, no web re-enable
+  path) — web never requests wake lock, so the production web
+  `NotAllowedError` ("Document is hidden") is gone. The `.catchError` is retained
+  for mobile defensiveness (BEH-6).
+
+#### Web capture mechanism — Path A′ (the recorded decision)
+
+Excluding the Sentry JS SDK's web `globalHandlersIntegration` via the public
+options API is **infeasible** (ERH-042, supersedes ERH-002). The web capture
+mechanism is therefore a **build-time** consumer commitment, gated by a single
+consumer constant `kWebDartCapture` that gates **both** the boot-step-3
+`installEarlyWebErrorHandlers()` call **and** the reporter's `SentryFlutter.init`
+web config (so they can never disagree). The error-reporting-hardening spike
+**passed ⇒ Path A′** (Dart owns web capture):
+
+* On web, set `options.autoInitializeNativeSdk = false` **and** assign an
+  **explicit** `options.transport = HttpTransport(options, RateLimiter(options))`.
+  The flag **alone silently drops all web events** (it forces a now-inert
+  JS-bound transport) — the explicit transport is mandatory. The Dart web-JS
+  handler then becomes the **sole** web surface, so web errors gain Dart context
+  + breadcrumbs + redaction + dedup + exactly-once (BEH-1/5/8/9 on web).
+* **Path-A′ cost:** `HttpTransport` and `RateLimiter` are **not** exported by
+  `package:sentry` (only the abstract `Transport` is). Import them via
+  `package:sentry/src/transport/http_transport.dart` +
+  `.../rate_limiter.dart` with `// ignore: implementation_imports,
+  depend_on_referenced_packages` (stable for the pinned `sentry_flutter 9.22.0` —
+  re-verify on any bump), OR wrap a small custom public `Transport`.
+* This config lives in the **consumer's `SentryFlutter.init`** and the canonical
+  Sentry example — **not** in dreamic-public (which has no Sentry dependency). The
+  web-JS handler module is built in dreamic regardless; under Path C you would
+  omit the web block + the early-install call and keep the JS SDK as the web
+  surface (BEH-5/8/9 re-scoped to mobile/best-effort-web).
+
+#### Canonical examples + retired templates (ERH-024)
+
+* `lib/error_reporting/error_reporter_example.dart` is now the **single source of
+  truth**: COMMENTED Sentry, Crashlytics, and Sentry+Crashlytics
+  `CompositeErrorReporter` examples carrying the full hardening —
+  `maxBreadcrumbs = 250` on all platforms (Part 3.3 / BEH-10), the
+  `beforeBreadcrumb`/`beforeSend` redaction safety net, the Sentry-side
+  `LogLevel`→`SentryLevel` map, the breadcrumb ingress contract, the `runGuarded`
+  boot wiring, and the Path-A′ web-capture config. Backend imports are kept
+  commented so dreamic-public stays dependency-free.
+* The dreamic-dev `scaffolding/app/template_sentry_error_reporter.dart` and
+  `template_crashlytics_error_reporter.dart` are **retired** (replaced by a
+  one-line pointer to the canonical examples above).
+
+#### Migration
+
+* **Wrap `runApp` in the guarded zone.** In `main()`, after
+  `installEarlyErrorHandlers()` → (Path A′ only)
+  `DreamicErrorHandling.installEarlyWebErrorHandlers()` →
+  `configureErrorReporting(...)`, change `runApp(...)` to
+  `DreamicErrorHandling.runGuarded(() => runApp(...))`.
+* **Set `maxBreadcrumbs = 250` on all platforms** in your `SentryFlutter.init`
+  (remove any web-only / lower cap). Measure against the ~1 MB per-event limit at
+  `breadcrumbLevel = debug`; lower (e.g. 150) if a verbose event approaches it.
+* **Route all breadcrumbs through `Logger.breadcrumb()` / `logBreadcrumb()`** —
+  remove any direct `Sentry.addBreadcrumb()` calls (the ingress/redaction
+  contract). Pass `level:` to set a breadcrumb's level (default `info`).
+* **Add the redaction safety net** (`beforeBreadcrumb` / `beforeSend`) and the
+  Sentry-side `LogLevel`→`SentryLevel` map to your Sentry reporter (see the
+  canonical example).
+* **Wire the web-capture path** (Path A′): on web set
+  `autoInitializeNativeSdk = false` + explicit `options.transport =
+  HttpTransport(options, RateLimiter(options))`, and call
+  `DreamicErrorHandling.installEarlyWebErrorHandlers()` in `main()` at
+  boot-step-3 — both gated by your single `kWebDartCapture` constant.
+* **Multi-backend** (optional): wrap reporters in `CompositeErrorReporter([...])`
+  and pass the OR'd `requiresFirebase` / `managesOwnErrorHandlers` flags in the
+  `ErrorReportingConfig`.
+* **Wakelock:** no action — dreamic now guards it `!kIsWeb` for you. Drop any
+  app-side web-only wakelock hotfix.
+* **`breadcrumbLevel` Remote Config (deferred):** seed the key per environment
+  (default `info`, domain `{debug,info,warn,error}`) to exercise BEH-4; until
+  then it falls back to `info`.
+
 ## 0.10.0
 
 ### Backend-agnostic error reporting (breaking) + Firebase App Check + startup resilience

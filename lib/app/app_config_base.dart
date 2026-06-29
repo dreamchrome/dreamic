@@ -115,6 +115,13 @@ class AppConfigBase {
     'minimumAppVersionRecommendedGoogle': '0.0.0',
     'minimumAppVersionRecommendedWeb': '0.0.0',
     'logLevel': kDebugMode ? 'debug' : 'error',
+    // Threshold for forwarding breadcrumbs to the error reporter, independent of
+    // [logLevel] (console). Domain is the restricted set {debug, info, warn,
+    // error} (excludes `debugVerbose` — no backend equivalent). Validated inline
+    // in the [breadcrumbLevel] getter (NOT via configBounds, which holds only
+    // numeric clamps). Lowerable via Remote Config for no-redeploy verbose
+    // (`logd`) capture.
+    'breadcrumbLevel': 'info',
     'retryAttemptsCountMax': kDebugMode ? 1 : 5,
     'timeoutBeforeShowingLoadingMill': 750,
     'timeoutNetworkProcessMill': 10000,
@@ -184,6 +191,8 @@ class AppConfigBase {
   static set minimumAppVersionRecommendedWebDefault(String value) =>
       defaultRemoteConfig['minimumAppVersionRecommendedWeb'] = value;
   static set logLevelDefault(String value) => defaultRemoteConfig['logLevel'] = value;
+  static set breadcrumbLevelDefault(String value) =>
+      defaultRemoteConfig['breadcrumbLevel'] = value;
   static set retryAttemptsCountMaxDefault(int value) =>
       defaultRemoteConfig['retryAttemptsCountMax'] = value;
   static set timeoutBeforeShowingLoadingMillDefault(int value) =>
@@ -338,6 +347,63 @@ class AppConfigBase {
       }
     }
     return LogLevel.values.firstWhere((e) => e.name == value, orElse: () => LogLevel.error);
+  }
+
+  /// The set of valid [breadcrumbLevel] string values. Restricted to the levels
+  /// with a backend equivalent — `debugVerbose` is excluded (no Sentry/backend
+  /// level maps to it), so it is not a valid breadcrumb threshold.
+  static const Set<String> _breadcrumbLevelDomain = {'debug', 'info', 'warn', 'error'};
+
+  /// One-time guard so an invalid `breadcrumbLevel` Remote Config string warns
+  /// to the console exactly once (not on every breadcrumb emit, which reads this
+  /// getter). Module-level so it survives the getter being a pure function.
+  static bool _breadcrumbLevelWarned = false;
+
+  /// Threshold for forwarding breadcrumbs to the error reporter, evaluated at
+  /// breadcrumb-emit time and **independent of the console [logLevel]**. Mirrors
+  /// [logLevel] exactly: dart-define `breadcrumbLevel` → Remote Config
+  /// `breadcrumbLevel` → [defaultRemoteConfig] default `info`, with the same
+  /// GetIt-not-ready try/catch fallback so early-boot reads never throw (ERH-008).
+  ///
+  /// The valid domain is restricted to `{debug, info, warn, error}` — validated
+  /// **inline here**, NOT via [configBounds] (which holds only numeric clamps and
+  /// cannot express a string enum — ERH-027). An out-of-domain value (incl.
+  /// `debugVerbose`, which has no backend equivalent — ERH-019) falls back to
+  /// `info` with a one-time console warning.
+  static LogLevel get breadcrumbLevel {
+    const envValue = String.fromEnvironment('breadcrumbLevel');
+    String value;
+    if (envValue.isNotEmpty) {
+      value = envValue;
+    } else {
+      try {
+        final remoteValue = g<RemoteConfigRepoInt>().getString('breadcrumbLevel');
+        if (remoteValue.isNotEmpty) {
+          value = remoteValue;
+        } else {
+          value = defaultRemoteConfig['breadcrumbLevel'] as String;
+        }
+      } catch (_) {
+        // GetIt not initialized (e.g., in tests), use default
+        value = defaultRemoteConfig['breadcrumbLevel'] as String;
+      }
+    }
+
+    // Inline domain validation (ERH-019, ERH-027): restrict to the backend-
+    // mappable levels, fall back to `info` with a one-time console warning.
+    if (!_breadcrumbLevelDomain.contains(value)) {
+      if (!_breadcrumbLevelWarned) {
+        _breadcrumbLevelWarned = true;
+        // ignore: avoid_print
+        print(
+          'WARNING: invalid breadcrumbLevel "$value" — must be one of '
+          '$_breadcrumbLevelDomain. Falling back to "info".',
+        );
+      }
+      value = 'info';
+    }
+
+    return LogLevel.values.firstWhere((e) => e.name == value, orElse: () => LogLevel.info);
   }
 
   static int get retryAttemptsCountMax {
@@ -1203,6 +1269,11 @@ class AppConfigBase {
   /// For testing only: override the doForceErrorReporting value
   @visibleForTesting
   static set doForceErrorReportingOverride(bool? value) => _doForceErrorReporting = value;
+
+  /// For testing only: reset the one-time invalid-`breadcrumbLevel` warning guard
+  /// so order-dependent tests can re-assert the warning fires.
+  @visibleForTesting
+  static void resetBreadcrumbLevelWarnedForTest() => _breadcrumbLevelWarned = false;
 
   static bool? _isStandalonePwaOverride;
   static bool get isStandalonePwaOverride {

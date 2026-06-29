@@ -166,6 +166,48 @@ void main() {
 
       expect(mockReporter.recordedErrors, hasLength(3));
     });
+
+    test('loge() redacts a secret in the error payload before forwarding (BEH-8)', () {
+      // The loge() path funnels through Logger._crashReport, which now redacts
+      // (fail-closed) before forwarding — so an oobCode/token in an error string
+      // never reaches the backend (BEH-8), matching the _recordErrorSafe path.
+      Logger.setErrorReportingConfig(
+        ErrorReportingConfig.customOnly(
+          reporter: mockReporter,
+          managesOwnErrorHandlers: false,
+          enableInDebug: true,
+        ),
+      );
+      Logger.setCustomErrorReporter(mockReporter);
+
+      loge(Exception(
+        'reset failed for https://app.example/finish?oobCode=SUPERSECRET123&x=1',
+      ));
+
+      expect(mockReporter.recordedErrors, hasLength(1));
+      final forwarded = mockReporter.recordedErrors.first.toString();
+      expect(forwarded, contains('oobCode=[redacted]'));
+      expect(forwarded, isNot(contains('SUPERSECRET123')));
+    });
+
+    test('loge() forwards the original error object untouched when no secret is present', () {
+      // No secret → the rich error object is preserved (no stringification), so
+      // the loge regression path is unchanged for the common case.
+      Logger.setErrorReportingConfig(
+        ErrorReportingConfig.customOnly(
+          reporter: mockReporter,
+          managesOwnErrorHandlers: false,
+          enableInDebug: true,
+        ),
+      );
+      Logger.setCustomErrorReporter(mockReporter);
+
+      final error = Exception('plain failure, no secrets');
+      loge(error);
+
+      expect(mockReporter.recordedErrors, hasLength(1));
+      expect(mockReporter.recordedErrors.first, same(error));
+    });
   });
 
   group('Logger.breadcrumb — routes to the reporter', () {

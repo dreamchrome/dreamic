@@ -17,7 +17,40 @@ import 'package:flutter/foundation.dart';
 /// reporter override just what it supports. (`implements ErrorReporter` forces
 /// you to supply all six.)
 ///
-/// Example (Sentry):
+/// ## Canonical examples + sync (ERH-024, ERH-025)
+///
+/// The **canonical reporter references** are the COMMENTED examples in
+/// `error_reporter_example.dart` (beside this file) — Sentry, Crashlytics, and a
+/// Sentry+Crashlytics [CompositeErrorReporter], each carrying the full hardening
+/// (`maxBreadcrumbs = 250`, `beforeBreadcrumb`/`beforeSend` redaction safety net,
+/// the Sentry-side `LogLevel`→`SentryLevel` map, and the Path-A′ web-capture
+/// config). Copy/reconcile your reporter against them. The dreamic-dev
+/// `scaffolding/app/template_*_error_reporter.dart` files are retired and point
+/// here. Reporters stay in sync with the canonical example via the dreamic
+/// **`CHANGELOG.md`** version-bump entry (which lists every contract change with
+/// per-backend migration steps) — there is **no automated parity test**.
+///
+/// ## Load-bearing rules (ERH-020, ERH-025)
+///
+///  - **All breadcrumbs flow through `Logger.breadcrumb()` / `logBreadcrumb()`**
+///    — never `Sentry.addBreadcrumb()` (or any SDK breadcrumb API) directly. The
+///    `Logger` applies the `breadcrumbLevel` gate + central fail-closed redaction
+///    before forwarding here; a direct SDK call bypasses both (only the SDK's own
+///    `beforeBreadcrumb` net can then catch it). This is the redaction ingress
+///    contract.
+///  - **`main()` wraps `runApp` in `DreamicErrorHandling.runGuarded(...)`** — the
+///    lifelong, outermost guarded zone, so every uncaught async error reaches the
+///    chokepoint (boot order: `installEarlyErrorHandlers()` → (Path A′ only)
+///    `DreamicErrorHandling.installEarlyWebErrorHandlers()` →
+///    `configureErrorReporting()` → `runGuarded(() => runApp(...))`).
+///  - **Wakelock is mobile-only** — dreamic guards `WakelockPlus.enable()` with
+///    `!kIsWeb` for you (it is never requested on web), so no reporter wiring is
+///    needed; just don't re-enable it on web.
+///  - Every override here must be **non-throwing** (failures are swallowed so the
+///    capture path never crashes the app — BEH-11).
+///
+/// Example (Sentry — abbreviated; the full hardened version is the canonical
+/// commented example in `error_reporter_example.dart`):
 /// ```dart
 /// class SentryErrorReporter extends ErrorReporter {
 ///   @override

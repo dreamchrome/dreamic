@@ -70,6 +70,157 @@ void _bufferEarlyError(Object error, StackTrace? stackTrace) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Error chokepoint (`_recordErrorSafe`) — Phase 3 (ERH-011/003/028/021/032).
+//
+// Every capture surface (the isolate listener here; the guarded zone + web-JS
+// handlers wired in Phase 4) routes through `_recordErrorSafe` so they share one
+// re-entrancy guard, one cross-surface dedup, one redaction pass, and one
+// pre-attach buffering fallback.
+// ---------------------------------------------------------------------------
+
+/// The reporter `_recordErrorSafe` forwards to once attached. Set ONLY on the
+/// active production path in [appInitErrorHandling] (the same place
+/// `Logger.setCustomErrorReporter` is set), and cleared on every disabled/
+/// blocked path so `_recordErrorSafe` falls back to buffering. `null` ⇒ no
+/// reporter attached yet (or reporting suppressed) ⇒ buffer into
+/// [_earlyErrorBuffer] (ERH-011 / BEH-12).
+ErrorReporter? _activeReporter;
+
+/// Re-entrancy guard for the whole record path (redaction + dedup + forward).
+/// While a report is in flight, any error raised inside it is logged to console
+/// only and never re-reported, so a failing reporter/redaction cannot recurse
+/// (ERH-011 / BEH-11). Cleared in a `finally` so a thrown report still resets it.
+bool _reportingInFlight = false;
+
+/// Capacity of the cross-surface dedup set. The same `(error, stack)` re-arriving
+/// (e.g. via both the zone and `PlatformDispatcher.onError`) is reported once
+/// (ERH-003, ERH-028 / BEH-9). Small + FIFO drop-oldest so a long-running app
+/// never accumulates keys without bound.
+const int _dedupSetCapacity = 20;
+
+/// FIFO-ordered identity keys of the most-recent [_dedupSetCapacity] reported
+/// errors. Keyed on the ORIGINAL `(error.toString(), stackTrace.toString())`
+/// identity **before** redaction (ERH-028), so a fail-closed redaction
+/// placeholder can never collapse two distinct errors into one (BEH-9). A List
+/// (not a Set) preserves insertion order for the drop-oldest eviction; the set
+/// is small so the linear `contains` is negligible.
+final List<String> _recentErrorKeys = <String>[];
+
+/// Returns the dedup identity for an `(error, stackTrace)` pair, computed on the
+/// ORIGINAL (pre-redaction) values.
+String _dedupKey(Object error, StackTrace? stackTrace) =>
+    '${error.toString()} ${stackTrace?.toString() ?? ''}';
+
+/// Records [key] in the bounded dedup set, evicting the oldest beyond the cap.
+void _rememberErrorKey(String key) {
+  _recentErrorKeys.add(key);
+  while (_recentErrorKeys.length > _dedupSetCapacity) {
+    _recentErrorKeys.removeAt(0);
+  }
+}
+
+/// The single error chokepoint. Every capture surface routes here so they all
+/// share: a re-entrancy guard, cross-surface dedup (keyed pre-redaction), a
+/// central redaction pass, and a pre-attach buffering fallback. Non-throwing.
+///
+/// Order is load-bearing:
+///  1. Re-entrancy short-circuit (an error raised WHILE reporting → console only).
+///  2. Dedup check on the ORIGINAL `(error, stack)` identity, BEFORE redaction
+///     (ERH-028 / BEH-9) — a redaction placeholder can never over-collapse.
+///  3. If no reporter is attached → buffer the ORIGINAL into [_earlyErrorBuffer]
+///     (reported via `loge()` on the attach flush) and return — pre-attach
+///     zone/web-JS/isolate errors are retained (ERH-011 / BEH-12).
+///  4. Redact (ERH-005, fail-closed) and forward to the attached reporter.
+///
+/// The whole path (including redaction + forward) runs inside the re-entrancy
+/// guard so a redaction or reporter failure cannot re-enter (ERH-011 / BEH-11).
+void _recordErrorSafe(Object error, StackTrace? stackTrace) {
+  // (1) Re-entrancy: never report an error raised while reporting.
+  if (_reportingInFlight) {
+    debugPrint('Suppressed re-entrant error during reporting: $error');
+    return;
+  }
+  _reportingInFlight = true;
+  try {
+    // (2) Dedup on the ORIGINAL identity, before redaction (ERH-028 / BEH-9).
+    final key = _dedupKey(error, stackTrace);
+    if (_recentErrorKeys.contains(key)) {
+      return; // Already reported this exact (error, stack) — skip.
+    }
+    _rememberErrorKey(key);
+
+    // (3) No reporter attached → buffer for the attach-time flush (BEH-12).
+    //     Buffer the ORIGINAL (un-redacted): the flush re-reports via `loge()`,
+    //     and the dedup key (recorded above on the original) already prevents a
+    //     post-attach re-arrival of this same (error, stack) from double-
+    //     reporting. The `loge()` flush IS redacted (fail-closed) centrally in
+    //     `Logger._crashReport` before it reaches any backend, so a pre-attach
+    //     error carrying a secret is scrubbed on flush just like a post-attach
+    //     direct report (BEH-8) — buffering the original keeps the dedup key and
+    //     rich type intact until that single central redaction runs.
+    if (_activeReporter == null) {
+      _bufferEarlyError(error, stackTrace);
+      return;
+    }
+
+    // (4) Redact (fail-closed) + forward to the attached reporter.
+    final redacted = Logger.redactErrorForReporting(error);
+    _activeReporter!.recordError(redacted, stackTrace);
+  } catch (e) {
+    // The record path itself must never throw into the caller (BEH-11). The
+    // re-entrancy guard above already prevents this from re-reporting.
+    debugPrint('Error while recording an error (suppressed): $e');
+  } finally {
+    _reportingInFlight = false;
+  }
+}
+
+/// Public production entry point into the single error chokepoint.
+///
+/// Routes [error] / [stackTrace] through the private `_recordErrorSafe` (the
+/// re-entrancy guard + cross-surface dedup + redaction + pre-attach buffering),
+/// keeping `_recordErrorSafe` itself private. Used by the guarded zone's
+/// `onError` ([DreamicErrorHandling.runGuarded] / [DreamicErrorHandling.recordZoneError])
+/// and by the conditional-import web-JS handler module, so every Dart-side
+/// capture surface funnels through the one chokepoint (ERH-001 / BEH-1, BEH-9).
+///
+/// Non-throwing (the chokepoint swallows its own failures).
+void recordCapturedError(Object error, StackTrace? stackTrace) {
+  _recordErrorSafe(error, stackTrace);
+}
+
+/// Test-only access to the current dedup-set size (ERH-003/028).
+@visibleForTesting
+int get dedupSetLengthForTest => _recentErrorKeys.length;
+
+/// Test-only seam: route an `(error, stackTrace)` through the real chokepoint so
+/// the re-entrancy / dedup / buffering behavior can be unit-tested without
+/// driving a real isolate/zone/web-JS surface (mirrors `bufferEarlyErrorForTest`
+/// but exercises the full `_recordErrorSafe` path).
+@visibleForTesting
+void recordErrorSafeForTest(Object error, [StackTrace? stackTrace]) {
+  _recordErrorSafe(error, stackTrace);
+}
+
+/// Test-only seam: install a reporter as the active chokepoint target without
+/// running the whole [appInitErrorHandling] branch, so `_recordErrorSafe`'s
+/// attached-vs-buffering split can be exercised in isolation. Pass `null` to
+/// simulate the pre-attach (unattached) state.
+@visibleForTesting
+void setActiveReporterForTest(ErrorReporter? reporter) {
+  _activeReporter = reporter;
+}
+
+/// Test-only reset of the chokepoint module state (re-entrancy guard, dedup set,
+/// active reporter) so module-level statics do not leak across test cases.
+@visibleForTesting
+void resetRecordErrorSafeStateForTest() {
+  _reportingInFlight = false;
+  _recentErrorKeys.clear();
+  _activeReporter = null;
+}
+
 /// In debug builds, forwards [details] to Flutter's default error presenter
 /// ([FlutterError.presentError]) so the error still reaches DevTools / the IDE
 /// runtime-error inspector and the console still gets the standard, fully
@@ -142,6 +293,33 @@ void _flushAndClearEarlyErrorBuffer() {
   }
 }
 
+/// Flushes every breadcrumb buffered (already gated + redacted at emit time)
+/// before the reporter attached to the now-attached [reporter], then clears the
+/// early-breadcrumb buffer.
+///
+/// **Ordering (ERH-032 / BEH-12):** this runs BEFORE [_flushAndClearEarlyErrorBuffer]
+/// so each buffered early error is reported with its preceding breadcrumb context
+/// already in place (rather than orphaning the breadcrumbs onto a later event).
+///
+/// The drained crumbs were redacted once at emit time — forward them **without**
+/// re-redacting (`Logger.drainEarlyBreadcrumbs()` returns the already-redacted
+/// snapshot and clears the buffer). Wrapped per-crumb so one failed `addBreadcrumb`
+/// can't abort the flush (breadcrumbs are diagnostic — BEH-11).
+void _flushAndClearEarlyBreadcrumbs(ErrorReporter reporter) {
+  final crumbs = Logger.drainEarlyBreadcrumbs();
+  for (final crumb in crumbs) {
+    try {
+      reporter.addBreadcrumb(
+        crumb.message,
+        category: crumb.category,
+        data: crumb.data,
+      );
+    } catch (e) {
+      debugPrint('Failed to flush an early breadcrumb (suppressed): $e');
+    }
+  }
+}
+
 /// Drops every buffered early error WITHOUT reporting (error reporting is
 /// disabled on this path) and clears the buffer.
 ///
@@ -208,6 +386,11 @@ void resetEarlyErrorHandlersForTest() {
   _earlyErrorBuffer.clear();
   _deferredBootstrapReports.clear();
   _errorHandlingAttached = false;
+  // Phase 3 chokepoint state is module-level too — reset it alongside so the
+  // dedup/re-entrancy/active-reporter assertions stay order-independent.
+  _reportingInFlight = false;
+  _recentErrorKeys.clear();
+  _activeReporter = null;
 }
 
 /// Resets the isolate error-listener apply-once flag (Issue 31/63) so the
@@ -282,6 +465,9 @@ Future<void> appInitErrorHandling() async {
     // be flushed anywhere; drop+clear it (a no-op when the installer was never
     // called). MUST run before the early `return`, or the buffer leaks (Issue 35).
     _logAndClearEarlyErrorBuffer('error reporting disabled (kill switch)');
+    // Reporting is off — no chokepoint target, so `_recordErrorSafe` (e.g. a
+    // re-routed isolate error) buffers (and that buffer is dropped next attach).
+    _activeReporter = null;
     // Reporting is off — drop any deferred bootstrap diagnostics and mark
     // attached so later ones short-circuit (loge no-ops under the kill switch).
     _errorHandlingAttached = true;
@@ -328,6 +514,14 @@ Future<void> appInitErrorHandling() async {
     await config.customReporter!.initialize();
     // Set the custom error reporter in Logger for crash reporting
     Logger.setCustomErrorReporter(config.customReporter);
+    // Attach the chokepoint target so `_recordErrorSafe` (the isolate listener,
+    // plus the Phase-4 zone/web-JS surfaces) forwards instead of buffering
+    // (ERH-011/021). Set here so it is live BEFORE the buffer flush below.
+    _activeReporter = config.customReporter;
+  } else {
+    // No active reporter on this path — `_recordErrorSafe` falls back to
+    // buffering (its buffer is dropped on the disabled/blocked branch below).
+    _activeReporter = null;
   }
 
   // Disable analytics and crashlytics for web or emulator (unless configured otherwise)
@@ -390,24 +584,35 @@ Future<void> appInitErrorHandling() async {
       // Errors outside the Flutter framework (isolates), non-web only.
       // Apply-once across gate-retry re-runs: `addErrorListener` allows multiple
       // listeners, so an unguarded re-run would accumulate them (Issue 31).
+      //
+      // Registered AT attach and routed through `_recordErrorSafe` (ERH-021), so
+      // isolate errors get the same re-entrancy guard, cross-surface dedup, and
+      // redaction as every other surface (BEH-1/9/11). Pre-attach uncaught main-
+      // isolate errors are already covered by the early `FlutterError.onError` /
+      // `PlatformDispatcher.onError` handlers (which buffer) — this listener does
+      // NOT buffer pre-attach isolate errors (ERH-029).
       if (!kIsWeb && !_isolateErrorListenerAdded) {
         _isolateErrorListenerAdded = true;
         Isolate.current.addErrorListener(
           RawReceivePort((pair) {
             final List<dynamic> errorAndStacktrace = pair;
-            final error = errorAndStacktrace.first;
+            final error = errorAndStacktrace.first as Object;
             final stackTrace = errorAndStacktrace.last as StackTrace;
-            if (shouldUseCustomReporter) {
-              config.customReporter!.recordError(error, stackTrace);
-            }
+            _recordErrorSafe(error, stackTrace);
           }).sendPort,
         );
       }
     }
 
-    // (a) Production branch — the reporter is now attached. Flush every error
-    // buffered by the early handlers before this point to it, then clear the
-    // buffer (a no-op when the installer was never called — the buffer is empty).
+    // (a) Production branch — the reporter is now attached. Flush the early
+    // buffers in BREADCRUMBS-then-ERRORS order (ERH-032 / BEH-12) so each
+    // buffered early error is reported with its preceding breadcrumb trail
+    // already in place. Flushed breadcrumbs were redacted at emit time and are
+    // NOT re-redacted. Both flushes are safe no-ops when their buffers are empty
+    // (e.g. the installer was never called — Issue 36).
+    if (_activeReporter != null) {
+      _flushAndClearEarlyBreadcrumbs(_activeReporter!);
+    }
     _flushAndClearEarlyErrorBuffer();
     // Reporter attached: deliver any deferred bootstrap diagnostics (e.g. the
     // appInitFirebase recovery, which fired at the Firebase step before this
