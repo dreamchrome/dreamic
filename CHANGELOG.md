@@ -1,3 +1,46 @@
+## 0.11.1
+
+Two **non-breaking** fixes — a GetIt registration-order bug fix and a correction
+to the canonical error-reporter example. No API changes; consumers on `^0.11.0`
+pick this up with no constraint change.
+
+### Fix: `AuthServiceInt` is registered in GetIt before its initial auth-state callbacks fire
+
+`DreamicServices.initialize` previously registered `AuthServiceInt` in GetIt as the
+LAST step, *after* the `await Future.wait(...)` on the parallel device/notification
+init. But the `AuthService`'s Firebase auth-state listener (attached in its
+constructor) fires its initial event **asynchronously** on that very `await` yield —
+so on a cold start with no signed-in user, the app's `onLoggedOut` callback ran
+*before* `AuthServiceInt` was registered. Any callback that resolves
+`g<AuthServiceInt>()` — directly or transitively (e.g. a repo factory that takes it
+as a constructor dependency) — threw `Object/factory with type AuthServiceInt is
+not registered`.
+
+`AuthServiceInt` is now registered **synchronously right after the `AuthService` is
+constructed** (new "step 4.5"), before the first `await`, so it is always resolvable
+when the initial auth-state callbacks run. Because it now registers *before* the
+`Future.wait` failure point, the init-failure cleanup also **unregisters** it
+(`identical`-guarded, mirroring device/notification) so a gate retry re-registers a
+fresh, live instance rather than serving a disposed one.
+
+Impact: apps whose `onAuthenticated`/`onLoggedOut` callbacks resolve `AuthServiceInt`
+(or a service/repo that does) during the initial cold-start auth state no longer
+throw. No call-site changes required.
+
+### Docs: canonical `main()` examples now call `ensureInitialized()` inside the guarded zone
+
+`lib/error_reporting/error_reporter_example.dart` (CANONICAL 1/2/3) previously showed
+`WidgetsFlutterBinding.ensureInitialized()` **above**
+`DreamicErrorHandling.runGuarded(...)`. Because `runGuarded` is `runZonedGuarded`
+(a child zone), initializing the binding in the root zone while `runApp` runs in the
+child zone trips Flutter's debug **"Zone mismatch"** warning. The examples now call
+`ensureInitialized()` as the **first line inside** the guarded zone (same zone as
+`runApp`), and note the body may be `() async { ... }` when pre-`runApp` setup needs
+an `await`. Debug-only — the check is `assert`-gated and stripped from
+release/profile — but the corrected pattern removes the warning. **Consumers should
+make the same change in their `main()`** (move `ensureInitialized()` inside
+`runGuarded`).
+
 ## 0.11.0
 
 ### Error-reporting hardening: capture completeness, breadcrumb gating, fail-closed redaction, multi-backend fan-out
