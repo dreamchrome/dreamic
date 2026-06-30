@@ -40,7 +40,11 @@
 ///  - All breadcrumbs flow through `Logger.breadcrumb()` (never
 ///    `Sentry.addBreadcrumb()` directly) — the central-redaction ingress
 ///    contract (ERH-020).
-///  - `main()` wraps `runApp` in `DreamicErrorHandling.runGuarded(...)`.
+///  - `main()` wraps `runApp` in `DreamicErrorHandling.runGuarded(...)`, and calls
+///    `WidgetsFlutterBinding.ensureInitialized()` as the FIRST line INSIDE that
+///    zone — never above it. The binding must be initialized in the SAME zone
+///    `runApp` runs in, or Flutter logs a "Zone mismatch" warning (runGuarded forks
+///    a child `runZonedGuarded` zone). See the canonical mains below.
 ///  - Wakelock is mobile-only (dreamic guards it `!kIsWeb` for you).
 library;
 
@@ -157,29 +161,37 @@ import 'package:flutter/widgets.dart';
 /// guarded zone and (Path A′) installs the early web-JS handlers.
 void exampleMainSentry() async {
   /*
-  WidgetsFlutterBinding.ensureInitialized();   // boot step 1
-  installEarlyErrorHandlers();                 // boot step 2
-
-  // boot step 3 — Path A′ ONLY (gated by the consumer's kWebDartCapture):
-  // install the Dart window 'error'/'unhandledrejection' listeners as the sole
-  // web capture surface. Omit under Path C. No-op on mobile.
-  if (kWebDartCapture) {
-    DreamicErrorHandling.installEarlyWebErrorHandlers();
-  }
-
-  // boot step 4 — register the reporter. managesOwnErrorHandlers: false (dreamic
-  // installs the handlers); requiresFirebase: false (Sentry attaches BEFORE
-  // Firebase for maximal startup coverage, incl. web).
-  configureErrorReporting(
-    ErrorReportingConfig.customOnly(
-      reporter: SentryErrorReporter(dsn: AppConfig.sentryDsn),
-      enableOnWeb: true,
-    ),
-  );
-
-  // boot step 5 — the lifelong, outermost guarded zone. onError defaults to
-  // DreamicErrorHandling.recordZoneError, so this is all that's needed.
+  // The guarded zone is the OUTERMOST thing in main(). All boot steps — STARTING
+  // with WidgetsFlutterBinding.ensureInitialized() — run INSIDE it: the binding
+  // must be initialized in the SAME zone runApp runs in (runGuarded forks a child
+  // runZonedGuarded zone, and Flutter logs a "Zone mismatch" warning if
+  // ensureInitialized() ran in a different zone). Running the rest of boot in-zone
+  // also routes any setup-time error through the chokepoint. (If your pre-runApp
+  // setup needs an `await`, make the body `() async { ... }` — the future is
+  // fire-and-forget and the zone still owns its errors.)
   DreamicErrorHandling.runGuarded(() {
+    WidgetsFlutterBinding.ensureInitialized();   // boot step 1 (FIRST, in-zone)
+    installEarlyErrorHandlers();                 // boot step 2
+
+    // boot step 3 — Path A′ ONLY (gated by the consumer's kWebDartCapture):
+    // install the Dart window 'error'/'unhandledrejection' listeners as the sole
+    // web capture surface. Omit under Path C. No-op on mobile.
+    if (kWebDartCapture) {
+      DreamicErrorHandling.installEarlyWebErrorHandlers();
+    }
+
+    // boot step 4 — register the reporter. managesOwnErrorHandlers: false (dreamic
+    // installs the handlers); requiresFirebase: false (Sentry attaches BEFORE
+    // Firebase for maximal startup coverage, incl. web).
+    configureErrorReporting(
+      ErrorReportingConfig.customOnly(
+        reporter: SentryErrorReporter(dsn: AppConfig.sentryDsn),
+        enableOnWeb: true,
+      ),
+    );
+
+    // boot step 5 — run the app in this SAME zone. onError defaults to
+    // DreamicErrorHandling.recordZoneError, so this is all that's needed.
     runApp(DreamicAppInitHost(
       initFutureFactory: () => dreamicBootstrap(/* firebaseOptions, hooks, ... */),
       splash: const DreamicSplash(),
@@ -249,18 +261,22 @@ void exampleMainSentry() async {
 /// handler + a web-capable backend (e.g. Sentry); Crashlytics stays mobile.
 void exampleMainCrashlytics() async {
   /*
-  WidgetsFlutterBinding.ensureInitialized();
-  installEarlyErrorHandlers();
-
-  configureErrorReporting(
-    ErrorReportingConfig.customOnly(
-      reporter: CrashlyticsErrorReporter(),
-      requiresFirebase: true, // attach AFTER Firebase init (Crashlytics needs it)
-      enableOnWeb: false,     // Crashlytics has no web support
-    ),
-  );
-
+  // ensureInitialized() is the FIRST line INSIDE the guarded zone — the SAME zone
+  // as runApp — or Flutter logs a "Zone mismatch" warning (runGuarded forks a child
+  // runZonedGuarded zone). Use `() async { ... }` if your pre-runApp setup needs an
+  // `await`.
   DreamicErrorHandling.runGuarded(() {
+    WidgetsFlutterBinding.ensureInitialized();
+    installEarlyErrorHandlers();
+
+    configureErrorReporting(
+      ErrorReportingConfig.customOnly(
+        reporter: CrashlyticsErrorReporter(),
+        requiresFirebase: true, // attach AFTER Firebase init (Crashlytics needs it)
+        enableOnWeb: false,     // Crashlytics has no web support
+      ),
+    );
+
     runApp(DreamicAppInitHost(
       initFutureFactory: () => dreamicBootstrap(/* firebaseOptions, hooks, ... */),
       splash: const DreamicSplash(),
@@ -294,25 +310,29 @@ void exampleMainCrashlytics() async {
 /// true, managesOwnErrorHandlers: false.)
 void exampleMainComposite() async {
   /*
-  WidgetsFlutterBinding.ensureInitialized();
-  installEarlyErrorHandlers();
-  if (kWebDartCapture) {
-    DreamicErrorHandling.installEarlyWebErrorHandlers(); // Path A′ only
-  }
-
-  configureErrorReporting(
-    ErrorReportingConfig.customOnly(
-      reporter: CompositeErrorReporter([
-        SentryErrorReporter(dsn: AppConfig.sentryDsn),
-        CrashlyticsErrorReporter(),
-      ]),
-      enableOnWeb: true,       // Sentry is web-capable; Crashlytics self-guards web
-      requiresFirebase: true,  // OR'd: Crashlytics needs Firebase first
-      // managesOwnErrorHandlers: false → dreamic installs the handlers.
-    ),
-  );
-
+  // ensureInitialized() is the FIRST line INSIDE the guarded zone — the SAME zone
+  // as runApp — or Flutter logs a "Zone mismatch" warning (runGuarded forks a child
+  // runZonedGuarded zone). Use `() async { ... }` if your pre-runApp setup needs an
+  // `await`.
   DreamicErrorHandling.runGuarded(() {
+    WidgetsFlutterBinding.ensureInitialized();
+    installEarlyErrorHandlers();
+    if (kWebDartCapture) {
+      DreamicErrorHandling.installEarlyWebErrorHandlers(); // Path A′ only
+    }
+
+    configureErrorReporting(
+      ErrorReportingConfig.customOnly(
+        reporter: CompositeErrorReporter([
+          SentryErrorReporter(dsn: AppConfig.sentryDsn),
+          CrashlyticsErrorReporter(),
+        ]),
+        enableOnWeb: true,       // Sentry is web-capable; Crashlytics self-guards web
+        requiresFirebase: true,  // OR'd: Crashlytics needs Firebase first
+        // managesOwnErrorHandlers: false → dreamic installs the handlers.
+      ),
+    );
+
     runApp(DreamicAppInitHost(
       initFutureFactory: () => dreamicBootstrap(/* firebaseOptions, hooks, ... */),
       splash: const DreamicSplash(),
