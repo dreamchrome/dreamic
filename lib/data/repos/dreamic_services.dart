@@ -216,13 +216,16 @@ class DreamicServices {
     // just-constructed/early-registered services before rethrowing (Issue
     // 47/52/56), so a gate retry re-registers fresh, live instances rather than
     // accumulating orphaned auth/FCM/lifecycle subscriptions or serving disposed
-    // ones. The unregister is load-bearing: device/notif register EARLY (above)
-    // while auth registers LAST (step 6), so the canonical `Future.wait` failure
-    // leaves device/notif registered — dispose-only would make the retry's
-    // `isRegistered` guard serve disposed instances. Auth needs no unregister
-    // (it registers after the failure point, so it was never registered).
+    // ones. The unregister is load-bearing: device/notif AND auth all register
+    // EARLY (auth right after construction, step 4.5 below — it must be resolvable
+    // before its own initial auth-state callbacks fire on the first `Future.wait`
+    // yield), so the canonical `Future.wait` failure leaves all three registered —
+    // dispose-only would make the retry's `isRegistered` guard serve disposed
+    // instances. (Auth previously registered LAST, after the failure point, so it
+    // needed no unregister; registering it early to fix the initial-callback
+    // resolution race means the cleanup must now unregister it too.)
     // Holds the AuthService once constructed, so the catch handler can dispose
-    // it on a post-construction failure.
+    // and unregister it on a post-construction failure.
     AuthServiceImpl? auth;
     try {
       // 3. Collect callbacks with priorities
@@ -275,6 +278,24 @@ class DreamicServices {
       );
 
       logd('DreamicServices: Created AuthService with pre-registered callbacks');
+
+      // 4.5. Register auth in GetIt NOW — synchronously, BEFORE the parallel
+      //      service init below performs its first `await` (Future.wait).
+      //      CRITICAL: the AuthService's initial auth-state callbacks are fired
+      //      ASYNCHRONOUSLY by Firebase right after the listener attaches in the
+      //      constructor above — i.e. on the first event-loop turn, which is the
+      //      `await Future.wait` yield below. Those callbacks (e.g. an app
+      //      onAuthenticated/onLoggedOut) can resolve `g<AuthServiceInt>()`
+      //      transitively (through a repo factory that depends on it), so
+      //      AuthServiceInt MUST already be registered before that yield.
+      //      Registering at step 6 (after Future.wait) was too late: on a cold
+      //      start with no user, the initial "logged out" callback ran first and
+      //      threw "AuthServiceInt not registered". Mirrors the EARLY device/notif
+      //      registration above; the failure path unregisters it the same way.
+      if (registerInGetIt && !GetIt.I.isRegistered<AuthServiceInt>()) {
+        GetIt.I.registerSingleton<AuthServiceInt>(auth);
+        logd('DreamicServices: Registered AuthServiceInt in GetIt (before service init)');
+      }
 
       // 5. Initialize services with auth reference IN PARALLEL
       //    CRITICAL: All initialize() calls must START synchronously before any awaits.
@@ -329,13 +350,10 @@ class DreamicServices {
         logd('DreamicServices: Completed parallel service initialization');
       }
 
-      // 6. Register auth in GetIt (after services are initialized)
-      //    Auth is registered last because services may need to be resolved
-      //    during AuthService's initial auth state callbacks.
-      if (registerInGetIt && !GetIt.I.isRegistered<AuthServiceInt>()) {
-        GetIt.I.registerSingleton<AuthServiceInt>(auth);
-        logd('DreamicServices: Registered AuthServiceInt in GetIt');
-      }
+      // 6. (AuthServiceInt was registered in GetIt at step 4.5 above — BEFORE
+      //    service init — so its own initial auth-state callbacks can resolve it.
+      //    See the note there for why registering it here, after Future.wait, was
+      //    too late.)
 
       logd('DreamicServices: Initialization complete');
 
@@ -366,8 +384,10 @@ class DreamicServices {
         loge(disposeErr, 'DreamicServices: DeviceServiceImpl.dispose failed '
             'during init-failure cleanup');
       }
-      // Auth registers LAST (step 6), so on the canonical Future.wait failure it
-      // was never registered; dispose it anyway if it was constructed.
+      // Auth now registers EARLY (step 4.5), so on the canonical Future.wait
+      // failure it IS registered; dispose it (cancels its auth/idToken
+      // subscriptions) and unregister it below so the retry re-registers a fresh,
+      // live instance instead of serving this disposed one.
       try {
         auth?.dispose();
       } catch (disposeErr) {
@@ -392,6 +412,15 @@ class DreamicServices {
             identical(GetIt.I<NotificationService>(), notificationService)) {
           GetIt.I.unregister<NotificationService>();
           logd('DreamicServices: Unregistered NotificationService after failure');
+        }
+        // Auth registers EARLY now (step 4.5), so unregister it too — same
+        // identical() guard so a good instance from a prior successful run is left
+        // intact.
+        if (auth != null &&
+            GetIt.I.isRegistered<AuthServiceInt>() &&
+            identical(GetIt.I<AuthServiceInt>(), auth)) {
+          GetIt.I.unregister<AuthServiceInt>();
+          logd('DreamicServices: Unregistered AuthServiceInt after failure');
         }
       }
 
